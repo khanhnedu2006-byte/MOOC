@@ -1,0 +1,10 @@
+openai
+azure-ai-documentintelligence
+pydantic
+rapidfuzz
+unidecode
+dateparser
+python-magic
+pypdfium2
+python-dotenv
+tenacity
