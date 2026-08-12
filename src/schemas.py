@@ -4,11 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class ThongTinTrichXuat(BaseModel):
-    """Thông tin LLM đọc được từ ảnh chứng chỉ.
-
-    Mọi trường đều có thể là None: nếu LLM không tìm thấy trên ảnh thì để None,
-    KHÔNG được bịa. ngay_het_han thường None vì nhiều chứng chỉ vô thời hạn.
-    """
+    "Thông tin LLM đọc được từ ảnh chứng chỉ."
 
     ten_nguoi_nhan: str | None = Field(
         default=None, description="Tên đầy đủ của người được cấp chứng chỉ"

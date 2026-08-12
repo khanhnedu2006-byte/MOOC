@@ -7,9 +7,6 @@ Hai việc:
   2. Chuyển file thành ảnh dạng bytes để đưa cho Gemma (LLM nhận ảnh):
      - Ảnh sẵn: đọc thẳng bytes.
      - PDF: render trang thành ảnh PNG (pypdfium2).
-
-LƯU Ý WINDOWS: python-magic cần libmagic. Nếu import lỗi 'failed to find
-libmagic', cài: pip install python-magic-bin
 """
 
 from pathlib import Path
