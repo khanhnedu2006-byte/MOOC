@@ -1,3 +1,16 @@
+"""Gemma đọc ảnh chứng chỉ qua FPT (llm_vision) — đây là LLM1.
+
+Nhận ảnh (bytes) -> trích 4 trường -> trả về ThongTinTrichXuat.
+
+Cách ép JSON: yêu cầu rõ trong prompt + tự parse bằng Pydantic. Không dùng
+with_structured_output vì không chắc endpoint FPT hỗ trợ json_schema mode;
+cách này chạy được với mọi endpoint OpenAI-compatible.
+
+Dùng trong pipeline:
+    from llm_vision import trich_tu_anh
+    thong_tin = trich_tu_anh(anh_bytes)
+"""
+
 import base64
 import json
 
@@ -15,6 +28,7 @@ markdown:
 {
   "ten_nguoi_nhan": "tên đầy đủ người được cấp, hoặc null",
   "ten_chung_chi": "tên CỤ THỂ của chứng chỉ/khóa học/danh hiệu, hoặc null",
+  "ten_chung_chi_phu": "nếu tên khóa học in SONG NGỮ thì đây là phần ngôn ngữ còn lại, ngược lại null",
   "ngay_nhan": "ngày cấp giữ nguyên như in trên chứng chỉ, hoặc null",
   "ngay_het_han": "ngày hết hạn, hoặc null nếu vô thời hạn/không ghi"
 }
@@ -23,6 +37,15 @@ QUY TẮC ten_chung_chi:
 - Lấy tên CỤ THỂ (vd "Certified Management Accountant", "Data Analyst Nanodegree").
 - KHÔNG lấy cụm chung chung như "Certificate of Completion", "Chứng nhận hoàn thành".
 - Nếu có cả hai, ưu tiên tên cụ thể.
+
+QUY TẮC SONG NGỮ:
+- Nếu tên khóa học được in bằng CẢ tiếng Việt VÀ tiếng Anh (ví dụ "An toàn
+  thông tin / Information Security", hoặc "Data Analysis (Phân tích dữ liệu)"),
+  hãy TÁCH thành hai phần:
+  - ten_chung_chi: một ngôn ngữ (ưu tiên tiếng Việt nếu có)
+  - ten_chung_chi_phu: ngôn ngữ còn lại
+- Nếu tên khóa học chỉ có MỘT ngôn ngữ thì ten_chung_chi_phu = null.
+- KHÔNG tự dịch. Chỉ tách khi ảnh THẬT SỰ in cả hai ngôn ngữ.
 
 QUY TẮC ngày: giữ nguyên như in trên ảnh, không đổi định dạng, không suy diễn.
 Số hiệu chứng chỉ KHÔNG phải ngày.

@@ -1,9 +1,27 @@
+"""Cấu hình hệ thống (config).
+
+Đọc mọi key và cấu hình từ file .env, và cung cấp hàm get_llm() để tạo client
+gọi model qua FPT.
+
+Cách dùng ở module khác:
+    from config import settings, get_llm
+    llm = get_llm()
+
+File .env đặt ở thư mục gốc dự án (mooc/.env), KHÔNG commit lên git.
+"""
+
 from langchain_openai import ChatOpenAI
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Toàn bộ cấu hình, đọc từ .env.
+
+    Tên biến khớp với tên trong .env (không phân biệt hoa/thường).
+    Ví dụ AZURE_KEY trong .env -> settings.azure_key.
+    """
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -18,6 +36,7 @@ class Settings(BaseSettings):
     )
     fpt_model: str = Field(
         default="gemma-4-31B-it",
+        description="Tên model (chú ý chữ B hoa)",
     )
     # temperature thấp cho việc trích xuất (cần ổn định, không sáng tạo).
     llm_temperature: float = Field(default=0.2)
@@ -30,6 +49,13 @@ class Settings(BaseSettings):
     # ===== API ELIS =====
     elis_base_url: str = Field(description="Base URL API của hệ thống ELIS")
     elis_token: str = Field(default="", description="Token xác thực với ELIS")
+
+    # ===== Luật thời gian hoàn thành =====
+    # Chứng chỉ hợp lệ nếu ngày hoàn thành nằm TRONG khoảng [đầu, cuối].
+    # Ngoài khoảng -> REJECTED (lý do: thời gian hoàn thành không hợp lệ).
+    # Đổi hai giá trị này khi sang năm mới. Định dạng: YYYY-MM-DD.
+    thoi_gian_hop_le_tu: str = Field(default="2026-01-01")
+    thoi_gian_hop_le_den: str = Field(default="2026-09-30")
 
     # ===== Tham số vận hành =====
     poll_interval_giay: int = Field(default=60)

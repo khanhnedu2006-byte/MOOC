@@ -7,6 +7,9 @@ Hai việc:
   2. Chuyển file thành ảnh dạng bytes để đưa cho Gemma (LLM nhận ảnh):
      - Ảnh sẵn: đọc thẳng bytes.
      - PDF: render trang thành ảnh PNG (pypdfium2).
+
+LƯU Ý WINDOWS: python-magic cần libmagic. Nếu import lỗi 'failed to find
+libmagic', cài: pip install python-magic-bin
 """
 
 from pathlib import Path
@@ -28,6 +31,10 @@ class FileKhongHopLe(Exception):
 
 
 def kiem_tra_loai(duong_dan: str | Path) -> str:
+    """Trả về MIME thật của file. Ném FileKhongHopLe nếu không hỗ trợ.
+
+    Đọc nội dung thật, không tin đuôi file.
+    """
     duong_dan = Path(duong_dan)
     if not duong_dan.is_file():
         raise FileKhongHopLe(f"Không tìm thấy file: {duong_dan}")

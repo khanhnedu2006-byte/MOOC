@@ -1,3 +1,16 @@
+"""OCR bằng Azure Document Intelligence (ocr_azure).
+
+Chỉ lo một việc: nhận ảnh (bytes) -> trả text thô.
+
+Khác với bản cũ ở phần chứng chỉ: module này KHÔNG kiểm tra định dạng file
+hay render PDF — file_utils đã làm việc đó và đưa vào đây ảnh bytes sạch sẽ.
+
+Dùng trong pipeline:
+    from ocr_azure import tao_client, ocr_bytes
+    client = tao_client()
+    text = ocr_bytes(client, anh_bytes)
+"""
+
 from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import HttpResponseError
@@ -5,6 +18,7 @@ from azure.core.exceptions import HttpResponseError
 from config import settings
 
 MODEL_READ = "prebuilt-read"
+
 
 class OcrError(Exception):
     """Lỗi khi gọi Azure OCR, đã diễn giải sang tiếng Việt."""
@@ -16,6 +30,7 @@ def tao_client() -> DocumentIntelligenceClient:
         endpoint=settings.azure_endpoint,
         credential=AzureKeyCredential(settings.azure_key),
     )
+
 
 def ocr_bytes(client: DocumentIntelligenceClient, anh_bytes: bytes) -> str:
     """OCR một ảnh (bytes), trả về text thô.
