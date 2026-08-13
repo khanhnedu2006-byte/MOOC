@@ -45,6 +45,8 @@ def _get_azure():
 
 def _anh_de_hien_thi(anh_path):
     """Đọc file thành danh sách ảnh PIL để hiển thị (PDF -> nhiều trang ảnh)."""
+    if not anh_path:
+        return []
     try:
         anh_bytes_list = file_utils.doc_thanh_anh(anh_path)
     except file_utils.FileKhongHopLe:
@@ -132,18 +134,19 @@ def tao_giao_dien():
                     file_types=["image", ".pdf"],
                     type="filepath",
                 )
+                # Ảnh hiện ngay dưới ô upload, cùng cột với các ô nhập.
+                anh_xem = gr.Gallery(
+                    label="Ảnh chứng chỉ đã tải",
+                    columns=1,
+                    height=400,
+                    object_fit="contain",  # thu nhỏ trọn ảnh cho lọt khuôn, không cắt góc
+                    preview=True,           # click để xem ảnh phóng to
+                )
                 ten = gr.Textbox(label="Tên nhân viên")
                 ma = gr.Textbox(label="Mã nhân viên")
                 khoa_hoc = gr.Textbox(label="Tên khóa học")
                 nut = gr.Button("Kiểm tra", variant="primary")
             with gr.Column():
-                anh_xem = gr.Gallery(
-                    label="click to see full image",
-                    columns=1,
-                    height=500,
-                    object_fit="contain",  # thu nhỏ trọn ảnh cho lọt khuôn, không cắt góc
-                    preview=True,           # click để xem ảnh phóng to
-                )
                 ket_qua = gr.Markdown(label="Kết quả")
 
         # Hiện ảnh NGAY khi vừa chọn file, không chờ bấm nút.
@@ -162,5 +165,7 @@ def tao_giao_dien():
 
 
 if __name__ == "__main__":
-    # share=True: tạo link công khai tạm thời (~72h) để chia sẻ qua internet.
+    # share=True: cố tạo link công khai tạm thời (~72h) để chia sẻ qua internet.
+    # Nếu mạng chặn (không tạo được share link), Gradio tự chạy link nội bộ
+    # http://127.0.0.1:7860 — vẫn dùng được trên máy này, chỉ không share ra ngoài.
     tao_giao_dien().launch(share=True)

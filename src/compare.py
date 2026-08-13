@@ -101,15 +101,34 @@ def khop_ten_hoac_ma(ten_tren_anh, ten_nhan_vien, ma_nhan_vien):
     return False
 
 
-def khop_khoa_hoc(gia_tri_llm, gia_tri_nhap):
-    """So trường TÊN KHÓA HỌC với input (một target).
+def input_la_tap_con(gia_tri_nhap, gia_tri_anh):
+    """True khi MỌI từ người nhập đều có trong tên trên ảnh (ảnh được phép thừa).
 
-    Dùng so tập hợp từ (bỏ qua thứ tự), so chặt tuyệt đối từng từ.
+    Dùng cho chế độ "long": nhập "khóa học code online" khớp ảnh "khóa học code
+    online (code-bc-06)" vì mọi từ nhập đều nằm trong ảnh.
+
+    An toàn hơn substring: "Python nâng cao" (nhập) KHÔNG khớp "Python" (ảnh)
+    vì "nâng"/"cao" không có trong ảnh. Chỉ chấp nhận ảnh thừa, không nhập thừa.
     """
-    return giong_tap_hop_tu(gia_tri_llm, gia_tri_nhap)
+    tu_nhap = set(chuan_hoa(gia_tri_nhap).split())
+    tu_anh = set(chuan_hoa(gia_tri_anh).split())
+    if not tu_nhap or not tu_anh:
+        return False
+    return tu_nhap.issubset(tu_anh)
 
 
-def khop_khoa_hoc_song_ngu(chinh, phu, gia_tri_nhap):
+def khop_khoa_hoc(gia_tri_anh, gia_tri_nhap, che_do="chat"):
+    """So trường TÊN KHÓA HỌC với input.
+
+    che_do="chat": trùng khớp hoàn toàn (cùng tập từ).
+    che_do="long": người nhập chỉ cần là TẬP CON của tên trên ảnh (ảnh thừa OK).
+    """
+    if che_do == "long":
+        return input_la_tap_con(gia_tri_nhap, gia_tri_anh)
+    return giong_tap_hop_tu(gia_tri_anh, gia_tri_nhap)
+
+
+def khop_khoa_hoc_song_ngu(chinh, phu, gia_tri_nhap, che_do="chat"):
     """So tên khóa học với input, chấp nhận cả hai ngôn ngữ.
 
     Dùng khi ảnh in tên khóa song ngữ: LLM tách thành 'chinh' và 'phu'
@@ -121,8 +140,8 @@ def khop_khoa_hoc_song_ngu(chinh, phu, gia_tri_nhap):
       - Người nhập "An toàn thông tin" -> khớp phần chính -> True
       - Người nhập "Information Security" -> khớp phần phụ -> True
     """
-    if giong_tap_hop_tu(chinh, gia_tri_nhap):
+    if khop_khoa_hoc(chinh, gia_tri_nhap, che_do):
         return True
-    if giong_tap_hop_tu(phu, gia_tri_nhap):
+    if khop_khoa_hoc(phu, gia_tri_nhap, che_do):
         return True
     return False

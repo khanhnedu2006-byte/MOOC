@@ -1,10 +1,19 @@
-@"
 .env
+.env.*
+!.env.example
+ 
+# ===== Môi trường Python =====
 .venv/
+venv/
 __pycache__/
 *.pyc
+ 
+# ===== Dữ liệu / output =====
 data/*
 !data/.gitkeep
 database/*.db
 *.log
-"@ | Set-Content mooc\.gitignore
+ 
+# ===== Cache công cụ =====
+.pytest_cache/
+.gradio/

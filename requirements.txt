@@ -1,10 +1,33 @@
+# ===== Gọi LLM (Gemma qua FPT, endpoint OpenAI-compatible) =====
 openai
+langchain-core
+langchain-openai
+
+# ===== OCR =====
 azure-ai-documentintelligence
+
+# ===== Cấu hình & kiểu dữ liệu =====
 pydantic
+pydantic-settings
+python-dotenv
+
+# ===== Xử lý chuỗi / ngày tháng =====
 rapidfuzz
 unidecode
 dateparser
+
+# ===== Xử lý file =====
 python-magic
+python-magic-bin; sys_platform == "win32"   # Windows cần bản này để có libmagic
 pypdfium2
-python-dotenv
+pillow
+
+# ===== Gọi API ELIS =====
+requests
 tenacity
+
+# ===== Giao diện demo =====
+gradio
+
+# ===== Test =====
+pytest
