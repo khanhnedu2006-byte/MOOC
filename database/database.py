@@ -1,152 +1,207 @@
-"""Log kết quả xử lý chứng chỉ (database).
+"""Ghi log xử lý chứng chỉ vào SQLite (database).
 
-Lo hai việc:
-  1. Nhớ chứng chỉ nào đã xử lý rồi -> vòng poll sau không chạy AI lại và
-     không nộp lại. Quan trọng vì mỗi lần chạy lại tốn tiền LLM + Azure, và
-     ELIS sẽ trả về failList vì bản ghi không còn ở trạng thái WAITING.
-  2. Lưu vết để tra cứu khi cần rà soát: chứng chỉ này bị REJECTED vì lý do
-     gì, đọc ra thông tin gì, kết luận ở tầng nào.
+Mỗi lần xử lý một chứng chỉ -> ghi một dòng log: thời điểm, thông tin nhận
+diện, kết quả, lý do, tầng xử lý. Dùng để xem lại / kiểm toán sau này.
 
-Dùng SQLite (có sẵn trong Python, không cần cài thêm) — đủ cho một job chạy
-đơn luồng. Nếu sau này chạy nhiều instance song song thì đổi sang
-Postgres/MySQL, phần còn lại của code không phải sửa vì chỉ gọi qua các hàm
-trong file này.
+Dùng sqlite3 có sẵn trong Python — không cần cài server, không thêm thư viện.
+Database là một file (.db), mặc định mooc_log.db ở gốc dự án.
 
-File .db được .gitignore che sẵn (dòng "database/*.db").
+Có HAI trường định danh người, đừng nhầm:
+  - employee_id  : mã nhân viên do ELIS cấp (vd "00332383"). Dùng để đối
+                   soát với dữ liệu nhân sự, và là thứ gửi ngược về ELIS.
+  - ma_nhan_vien : username lấy từ employeeEmail (vd "hoabd3"). CHỈ dùng để
+                   đối chiếu với tên in trên chứng chỉ, vì nhiều chứng chỉ
+                   in username thay cho tên thật.
+
+Dùng:
+    from database.database import ghi_log, khoi_tao
+    khoi_tao()                              # tạo/nâng cấp bảng khi khởi động
+    ghi_log(ket_qua_xu_ly, employee_id="00332383")
 """
 
 import sqlite3
-from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "elis_log.db"
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS xu_ly_log (
-    user_course_id   TEXT PRIMARY KEY,  -- id từ getCert, khóa chính chống trùng
-    certificate_id   TEXT,
-    course_id        TEXT,
-    employee_id      TEXT,              -- mã NV, LƯU DẠNG CHUỖI (giữ số 0 đầu)
-    employee_name    TEXT,
-    course_name      TEXT,
-
-    ket_qua          TEXT,              -- APPROVED / REJECTED
-    ly_do            TEXT,              -- lý do chi tiết từ pipeline
-    tang_xu_ly       TEXT,              -- llm1 / llm2 / llm1_vs_llm2 / soft_fail_zip...
-
-    elis_submit_ok   INTEGER,           -- 1=successList, 0=failList, NULL=chưa nộp
-    elis_message     TEXT,              -- message ELIS trả về khi fail
-
-    thoi_gian_xu_ly     TEXT,
-    thoi_gian_nop_elis  TEXT
-);
-"""
+DB_PATH = Path(__file__).parent.parent / "mooc_log.db"
 
 
-@contextmanager
-def ket_noi():
-    """Mở kết nối SQLite, tự tạo bảng nếu chưa có, tự commit và đóng."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+def _ket_noi(db_path=None):
+    """Mở kết nối tới file SQLite."""
+    return sqlite3.connect(str(db_path or DB_PATH))
+
+
+# Các cột thêm sau khi bảng đã tồn tại ngoài thực tế. Xem giải thích ở
+# khoi_tao() về việc vì sao phải liệt kê riêng thay vì chỉ sửa CREATE TABLE.
+_COT_THEM_SAU = {
+    "employee_id": "TEXT",     # mã NV của ELIS, khác ma_nhan_vien (username)
+    "user_course_id": "TEXT",  # id bản ghi, để cập nhật trạng thái gửi sau
+    "elis_gui_ok": "INTEGER",  # 1=successList, 0=failList, NULL=chưa gửi
+    "elis_message": "TEXT",    # message ELIS trả về khi từ chối
+}
+
+
+def khoi_tao(db_path=None):
+    """Tạo bảng log nếu chưa có, và thêm cột mới nếu bảng cũ còn thiếu.
+
+    Vì sao cần phần "thêm cột": CREATE TABLE IF NOT EXISTS chỉ chạy khi bảng
+    CHƯA tồn tại. Với máy đã chạy job trước đó, bảng đã có sẵn nên câu lệnh
+    đó bị bỏ qua HOÀN TOÀN — thêm cột vào phần CREATE cũng không có tác dụng,
+    và chương trình sẽ lỗi "no such column" dù code trông đúng.
+
+    Nên phải hỏi bảng hiện có những cột nào rồi ALTER TABLE thêm phần thiếu.
+    Cách này an toàn với cả DB mới lẫn DB đã có dữ liệu — dữ liệu cũ giữ
+    nguyên, cột mới nhận giá trị NULL.
+    """
+    conn = _ket_noi(db_path)
     try:
-        conn.execute(_SCHEMA)
-        yield conn
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS log_xu_ly (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                thoi_diem       TEXT NOT NULL,
+                user_course_id  TEXT,
+                employee_id     TEXT,
+                ma_nhan_vien    TEXT,
+                ten_tren_anh    TEXT,
+                ten_chung_chi   TEXT,
+                ngay_tren_anh   TEXT,
+                ket_qua         TEXT NOT NULL,
+                ly_do           TEXT,
+                tang_xu_ly      TEXT,
+                elis_gui_ok     INTEGER,
+                elis_message    TEXT
+            )
+        """)
+
+        dang_co = {r[1] for r in conn.execute("PRAGMA table_info(log_xu_ly)")}
+        for ten_cot, kieu in _COT_THEM_SAU.items():
+            if ten_cot not in dang_co:
+                conn.execute(f"ALTER TABLE log_xu_ly ADD COLUMN {ten_cot} {kieu}")
+
         conn.commit()
     finally:
         conn.close()
 
 
-def _bay_gio() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+def ghi_log(ket_qua_xu_ly, employee_id=None, user_course_id=None, db_path=None):
+    """Ghi một dòng log từ KetQuaXuLy. Trả về id dòng vừa ghi.
 
+    employee_id: mã nhân viên do ELIS cấp (getCert.employeeId). Truyền riêng
+    vì KetQuaXuLy không mang theo trường này — nó chỉ giữ ma_nhan_vien
+    (username dùng để đối chiếu với ảnh).
 
-def da_xu_ly(conn: sqlite3.Connection, user_course_id: str) -> bool:
-    """True nếu chứng chỉ này đã được xử lý VÀ đã nộp ELIS thành công.
+    user_course_id: id bản ghi trên ELIS. Cần để sau khi gọi API ③ còn biết
+    dòng log nào ứng với item nào mà cập nhật trạng thái gửi.
 
-    Cố tình KHÔNG tính các bản ghi nộp thất bại (elis_submit_ok = 0 hoặc
-    NULL) là "đã xử lý" — như vậy vòng poll sau sẽ thử lại những cái nộp
-    hụt do mạng lỗi, thay vì bỏ quên chúng vĩnh viễn.
+    LƯU DẠNG CHUỖI: mã NV có thể có số 0 ở đầu ("00332383"), ép sang số là
+    mất số 0 và không đối soát được với dữ liệu nhân sự.
     """
-    row = conn.execute(
-        "SELECT 1 FROM xu_ly_log WHERE user_course_id = ? AND elis_submit_ok = 1",
-        (user_course_id,),
-    ).fetchone()
-    return row is not None
+    trich = ket_qua_xu_ly.trich_xuat
+    conn = _ket_noi(db_path)
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO log_xu_ly
+                (thoi_diem, user_course_id, employee_id, ma_nhan_vien,
+                 ten_tren_anh, ten_chung_chi, ngay_tren_anh, ket_qua,
+                 ly_do, tang_xu_ly)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.now().isoformat(timespec="seconds"),
+                str(user_course_id) if user_course_id is not None else None,
+                str(employee_id) if employee_id is not None else None,
+                ket_qua_xu_ly.ma_nhan_vien,
+                trich.ten_nguoi_nhan if trich else None,
+                trich.ten_chung_chi if trich else None,
+                trich.ngay_nhan if trich else None,
+                ket_qua_xu_ly.ket_qua.value,
+                ket_qua_xu_ly.ly_do,
+                ket_qua_xu_ly.tang_xu_ly,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
 
 
-def ghi_ket_qua_xu_ly(
-    conn: sqlite3.Connection,
-    user_course_id: str,
-    certificate_id: str,
-    course_id: str | None,
-    employee_id: str,
-    employee_name: str,
-    course_name: str,
-    ket_qua: str,
-    ly_do: str,
-    tang_xu_ly: str,
-) -> None:
-    """Ghi kết quả AI scan một chứng chỉ (trước khi biết ELIS có nhận không).
+def ghi_log_that_bai(user_course_id, employee_id, ket_qua, ly_do,
+                     tang_xu_ly, db_path=None):
+    """Ghi log cho chứng chỉ KHÔNG chạy được pipeline (vd tải ZIP hỏng).
 
-    Dùng UPSERT để chạy lại không bị lỗi trùng khóa chính.
+    Vì sao cần riêng: những ca này không có đối tượng KetQuaXuLy để truyền
+    vào ghi_log(). Nếu bỏ qua không ghi gì, chúng biến mất khỏi mọi báo cáo
+    — người đọc thấy "hôm nay xử lý 30" mà không biết thật ra có 50 cái chờ,
+    20 cái còn lại thất bại lặng lẽ.
     """
-    conn.execute(
-        """
-        INSERT INTO xu_ly_log (
-            user_course_id, certificate_id, course_id, employee_id,
-            employee_name, course_name, ket_qua, ly_do, tang_xu_ly,
-            thoi_gian_xu_ly
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_course_id) DO UPDATE SET
-            certificate_id = excluded.certificate_id,
-            course_id      = excluded.course_id,
-            employee_id    = excluded.employee_id,
-            employee_name  = excluded.employee_name,
-            course_name    = excluded.course_name,
-            ket_qua        = excluded.ket_qua,
-            ly_do          = excluded.ly_do,
-            tang_xu_ly     = excluded.tang_xu_ly,
-            thoi_gian_xu_ly = excluded.thoi_gian_xu_ly
-        """,
-        (
-            user_course_id, certificate_id, course_id, str(employee_id),
-            employee_name, course_name, ket_qua, ly_do, tang_xu_ly, _bay_gio(),
-        ),
-    )
+    conn = _ket_noi(db_path)
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO log_xu_ly
+                (thoi_diem, user_course_id, employee_id, ket_qua,
+                 ly_do, tang_xu_ly)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.now().isoformat(timespec="seconds"),
+                str(user_course_id) if user_course_id is not None else None,
+                str(employee_id) if employee_id is not None else None,
+                ket_qua, ly_do, tang_xu_ly,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
 
 
-def ghi_ket_qua_nop_elis(
-    conn: sqlite3.Connection,
-    user_course_id: str,
-    thanh_cong: bool,
-    message: str | None = None,
-) -> None:
-    """Ghi lại ELIS có nhận kết quả không (từ successList / failList của API ③)."""
-    conn.execute(
-        """
-        UPDATE xu_ly_log
-        SET elis_submit_ok = ?, elis_message = ?, thoi_gian_nop_elis = ?
-        WHERE user_course_id = ?
-        """,
-        (1 if thanh_cong else 0, message, _bay_gio(), user_course_id),
-    )
+def cap_nhat_ket_qua_gui(user_course_id, thanh_cong, message=None, db_path=None):
+    """Ghi lại ELIS có nhận kết quả không (từ successList / failList API ③).
 
-
-def thong_ke() -> dict:
-    """Thống kê nhanh để xem job chạy có bình thường không.
-
-    Tỷ lệ REJECTED tăng vọt bất thường thường là dấu hiệu sai mapping
-    (vd gửi nhầm Guid vào employeeId thay vì mã NV).
+    Chỉ cập nhật dòng log MỚI NHẤT của user_course_id đó, phòng khi một bản
+    ghi bị xử lý lại nhiều lần qua các vòng poll.
     """
-    with ket_noi() as conn:
-        theo_ket_qua = {
-            r["ket_qua"]: r["sl"]
-            for r in conn.execute(
-                "SELECT ket_qua, COUNT(*) AS sl FROM xu_ly_log GROUP BY ket_qua"
+    conn = _ket_noi(db_path)
+    try:
+        conn.execute(
+            """
+            UPDATE log_xu_ly
+            SET elis_gui_ok = ?, elis_message = ?
+            WHERE id = (
+                SELECT id FROM log_xu_ly
+                WHERE user_course_id = ?
+                ORDER BY id DESC LIMIT 1
             )
-        }
-        chua_nop = conn.execute(
-            "SELECT COUNT(*) AS sl FROM xu_ly_log WHERE elis_submit_ok IS NOT 1"
-        ).fetchone()["sl"]
-        return {"theo_ket_qua": theo_ket_qua, "chua_nop_duoc": chua_nop}
+            """,
+            (1 if thanh_cong else 0, message, str(user_course_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def doc_log_gan_nhat(so_dong=20, db_path=None):
+    """Đọc các dòng log gần nhất. Trả về list dict."""
+    conn = _ket_noi(db_path)
+    try:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM log_xu_ly ORDER BY id DESC LIMIT ?", (so_dong,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def dem_theo_ket_qua(db_path=None):
+    """Đếm số log theo từng kết quả (APPROVED/REJECTED). Trả về dict."""
+    conn = _ket_noi(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT ket_qua, COUNT(*) FROM log_xu_ly GROUP BY ket_qua"
+        ).fetchall()
+        return {ket_qua: so for ket_qua, so in rows}
+    finally:
+        conn.close()

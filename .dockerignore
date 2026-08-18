@@ -1,0 +1,43 @@
+# Mọi thứ liệt kê ở đây KHÔNG được gửi vào build context, nên không thể
+# lọt vào image dù Dockerfile có lỡ COPY nhầm.
+
+# ===== BÍ MẬT — quan trọng nhất =====
+# .env chứa key FPT, Azure, ELIS. Nhúng vào image là ai kéo về cũng đọc
+# được, kể cả khi layer sau đã xóa file.
+.env
+.env.*
+!.env.example
+
+# ===== Dữ liệu =====
+# data/ chứa ảnh chứng chỉ thật của nhân viên — dữ liệu cá nhân, không
+# đóng vào image. Cũng nặng (~11MB) làm build chậm.
+data/
+*.db
+*.log
+test_cert_*.bin
+
+# ===== Không cần lúc chạy =====
+.git/
+.gitignore
+tests/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.gradio/
+_to_delete/
+run_local.py
+web_demo.py
+src/config_additions.py
+
+# ===== Docker =====
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# ===== Tài liệu / editor =====
+*.md
+.vscode/
+.idea/

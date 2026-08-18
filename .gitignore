@@ -12,8 +12,14 @@ __pycache__/
 data/*
 !data/.gitkeep
 database/*.db
+*.db
 *.log
  
 # ===== Cache công cụ =====
 .pytest_cache/
 .gradio/
+
+# ===== File sinh ra khi chan doan / xem truoc =====
+response_tho.bin
+bao_cao.html
+test_cert_*.bin

@@ -1,71 +1,102 @@
-"""Client gọi 3 API partner của ELIS (client).
+"""Client gọi 3 API của ELIS (client).
 
-Theo tài liệu "Partner Integration Guide — AI Certificate Scan (3 APIs —
-Full Spec)" v1.1 (2026-08-03):
+Luồng:
+  ① getCert          -> lấy danh sách chứng chỉ chờ duyệt (WAITING)
+  ② download ZIP     -> tải file chứng chỉ theo id, giải nén lấy ảnh/PDF
+  ③ ProcessStatus    -> gửi kết quả APPROVED/REJECTED
 
-    ① GET  /api/v1/UserCourse/elearning/getCert       — danh sách chờ duyệt
-    ② POST /api/v1/files/download-certificates-zip    — tải ZIP (tối đa 20 cặp)
-    ③ POST /api/v1/UserCourse/ProcessUserCourseStatus — nộp kết quả (tối đa 500)
+Mỗi API là một hàm riêng, test được độc lập. Việc nối 3 bước + chạy pipeline
+nằm ở run.py.
 
-Module này CHỈ lo việc nói chuyện với ELIS: gửi request, đọc response, dịch
-lỗi. Không chứa logic nghiệp vụ (việc quyết định APPROVED/REJECTED nằm ở
-pipeline.py, việc điều phối nằm ở run.py).
-
-Hai điểm quan trọng khi đọc response của ELIS:
-
-1. LUÔN đọc field `isError` trong body, không chỉ nhìn HTTP status. Một số
-   lỗi nghiệp vụ (vd "vượt quá 500 bản ghi") trả về HTTP 200 nhưng
-   isError=true.
-
-2. API ② có HAI loại lỗi khác hẳn nhau, không được xử lý giống nhau:
-   - fail-fast (file_101 / file_102 / file_105): cả request bị từ chối,
-     KHÔNG có ZIP nào. Hàm ném ElisApiError.
-   - soft-fail (file_103 / file_104): VẪN có ZIP, chỉ riêng file đó lỗi,
-     đánh dấu success=false trong manifest.json. Hàm KHÔNG ném lỗi — nơi
-     giải nén (run.py) tự xử lý từng entry.
+Thông tin để đối chiếu (tên NV, khóa học, mã NV) lấy từ API ①.
+Ảnh chứng chỉ lấy từ API ②.
 """
 
 import io
 import json
-import logging
 import zipfile
 
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from config import settings
 
-logger = logging.getLogger(__name__)
-
-# Giới hạn batch theo mục 7 "Giới hạn batch" của tài liệu.
-MAX_SIZE_GET_CERT = 1000        # size tối đa mỗi trang getCert
-MAX_ITEMS_DOWNLOAD_ZIP = 20     # số cặp tối đa mỗi request download zip
-MAX_DTO_PROCESS_STATUS = 500    # số dto tối đa mỗi request nộp kết quả
-
-TIMEOUT_NGAN = 30    # giây, cho request JSON thường
-TIMEOUT_DAI = 120    # giây, cho tải ZIP (có thể nặng)
+# Header chung. API key gửi trong 'apikey' theo tài liệu.
+def _headers(json_body: bool = True) -> dict:
+    h = {"apikey": settings.elis_api_key, "Accept": "application/json"}
+    if json_body:
+        h["Content-Type"] = "application/json"
+    return h
 
 
-class ElisApiError(Exception):
-    """Lỗi request-level: không lấy được dữ liệu hợp lệ từ ELIS.
+class ElisError(Exception):
+    """Lỗi khi gọi API ELIS."""
 
-    Dùng cho các trường hợp fail-fast. KHÔNG dùng cho lỗi từng item
-    (item lỗi nằm trong manifest.json hoặc failList, không phải exception).
+
+# ===== API ① — Lấy danh sách chờ duyệt =====
+
+def lay_danh_sach_cho_duyet(page: int = 1, size: int = 100) -> list[dict]:
+    """GET getCert?status=WAITING — trả về list item chờ duyệt.
+
+    Mỗi item chứa: id, certificate_id, courseId, employeeId, employeeName,
+    courseName... (xem tài liệu mục 3.5).
     """
+    url = f"{settings.elis_base_url}/api/v1/UserCourse/elearning/getCert"
+    params = {"status": "WAITING", "page": page, "size": size}
+
+    try:
+        resp = requests.get(url, headers=_headers(json_body=False),
+                            params=params, timeout=30)
+    except requests.RequestException as e:
+        raise ElisError(f"Lỗi kết nối getCert: {e}") from e
+
+    if resp.status_code != 200:
+        raise ElisError(f"getCert HTTP {resp.status_code}: {resp.text[:200]}")
+
+    data = resp.json()
+    if data.get("isError"):
+        raise ElisError(f"getCert lỗi: {data.get('message')}")
+
+    return data.get("data", [])
+
+
+# ===== API ② — Download ZIP chứng chỉ =====
+
+def tai_zip_chung_chi(cac_cap: list[dict]) -> list[dict]:
+    """POST download-certificates-zip — tải ZIP, giải nén.
+
+    cac_cap: list dict {"UserCourseId": ..., "certificate_id": ...}, tối đa 20.
+
+    Trả về list dict: {"userCourseId", "certificate_id", "anh_bytes", "ten_file"}
+    cho các item scan được (success=true trong manifest). Item lỗi bị bỏ qua.
+    """
+    if not cac_cap:
+        return []
+    if len(cac_cap) > 20:
+        raise ElisError("Tối đa 20 cặp mỗi request (giới hạn API ②).")
+
+    url = f"{settings.elis_file_base_url}/api/v1/files/download-certificates-zip"
+
+    try:
+        resp = requests.post(
+            url,
+            headers={**_headers(), "Accept": "application/zip, application/json"},
+            json=cac_cap,
+            timeout=60,
+        )
+    except requests.RequestException as e:
+        raise ElisError(f"Lỗi kết nối download ZIP: {e}") from e
+
+    zip_bytes = _lay_zip_tu_response(resp)
+    return _giai_nen_zip(zip_bytes)
 
 
 def _co_phai_zip(noi_dung: bytes) -> bool:
     """Nội dung này có phải file ZIP không.
 
-    KHÔNG dựa vào Content-Type (gateway hay khai sai), cũng không chỉ dựa
-    vào magic bytes "PK" ở đầu — một số server chèn thêm byte ở đầu stream,
-    khi đó "PK" không nằm ở offset 0 nữa.
-
-    Cách chắc nhất: bảo thư viện zipfile thử mở. ZIP lưu bảng mục lục
-    (central directory) ở CUỐI file, nên zipfile vẫn đọc được kể cả khi
-    đầu file có rác. Mở được = đúng là ZIP.
+    Thử mở bằng zipfile thay vì kiểm tra 2 byte "PK" ở đầu: ZIP lưu bảng
+    mục lục ở CUỐI file nên vẫn mở được kể cả khi đầu stream có byte lạ.
     """
-    if len(noi_dung) < 22:  # nhỏ hơn kích thước tối thiểu của một ZIP rỗng
+    if len(noi_dung) < 22:  # nhỏ hơn kích thước tối thiểu của ZIP rỗng
         return False
     try:
         with zipfile.ZipFile(io.BytesIO(noi_dung)) as zf:
@@ -75,251 +106,239 @@ def _co_phai_zip(noi_dung: bytes) -> bool:
         return False
 
 
-def _giai_ma_zip_boc_json(chuoi: str) -> bytes | None:
-    """Khôi phục file ZIP bị ELIS bọc thành chuỗi JSON. None nếu không phải.
+def _giai_ma_zip_boc_json(than: bytes) -> bytes | None:
+    """Khôi phục ZIP bị ELIS bọc thành chuỗi JSON. None nếu không phải kiểu đó.
 
-    ELIS trả về API ② với Content-Type: application/json, và thân là MỘT
+    ELIS hiện trả API ② với Content-Type: application/json và thân là MỘT
     CHUỖI JSON chứa toàn bộ byte của file ZIP:
 
         "PK\\u0003\\u0004\\u0014\\u0000..."
 
-    Nguyên nhân: phía server đem mảng byte[] serialize qua JSON. Bộ
-    serialize coi mỗi byte là một ký tự (latin-1: byte 0x50 -> ký tự U+0050),
-    escape các ký tự điều khiển thành \\uXXXX, rồi đóng gói thành chuỗi JSON.
+    Nguyên nhân: phía server đem mảng byte[] serialize qua JSON. Bộ serialize
+    coi mỗi byte là một ký tự, escape ký tự điều khiển thành \\uXXXX rồi
+    đóng gói thành chuỗi.
 
-    Giải mã ngược: encode chuỗi trở lại latin-1, mỗi ký tự U+0000..U+00FF
-    thành đúng một byte 0x00..0xFF như ban đầu. Không mất mát dữ liệu.
+    PHẢI nhận BYTE THÔ (resp.content), TUYỆT ĐỐI KHÔNG dùng resp.json().
+    Lý do: resp.json() giải mã thân theo UTF-8 với errors="replace". Thân
+    response chứa byte 0x80-0xFF ghi thô, không phải UTF-8 hợp lệ, nên hàng
+    nghìn byte bị thay bằng ký tự thay thế U+FFFD. Dữ liệu mất TRƯỚC KHI
+    code kịp xử lý, và không cách nào khôi phục. Đo thực tế trên một file
+    22KB: 6.408 byte bị nuốt.
 
-    ĐÂY LÀ CÁCH ĐI VÒNG cho một lỗi phía ELIS — đúng ra API phải trả
-    Content-Type: application/zip với thân nhị phân thuần như tài liệu mô
-    tả (mục 4.3). Nên báo lại đội eLIS; khi nào họ sửa thì nhánh này tự
-    không dùng tới nữa, vì hàm đã thử đọc ZIP nhị phân trước rồi.
+    Cách đúng: decode latin-1 (ánh xạ 1-1 byte <-> ký tự, không bao giờ mất),
+    parse JSON, rồi encode lại latin-1 để lấy đúng byte ban đầu.
+
+    Thử vài kiểu đóng gói vì không biết server dùng bộ serialize nào:
+      1. Byte ghi thô hoặc escape hết về ASCII -> latin-1 một lần là ra.
+      2. Ký tự non-ASCII ghi dưới dạng UTF-8   -> cần bóc thêm một lớp.
+
+    ĐÂY LÀ CÁCH ĐI VÒNG cho lỗi phía ELIS — đúng ra API phải trả
+    Content-Type: application/zip với thân nhị phân (tài liệu mục 4.3).
+    Khi họ sửa, hàm này tự động không được dùng tới nữa vì
+    _lay_zip_tu_response() thử đọc ZIP nhị phân TRƯỚC.
     """
-    if not chuoi.startswith("PK"):
+    if not than[:3] in (b'"PK', b"'PK") and not than.lstrip()[:3] == b'"PK':
         return None
+
     try:
-        # latin-1: ánh xạ 1-1 giữa code point 0..255 và byte 0x00..0xFF.
-        du_lieu = chuoi.encode("latin-1")
-    except UnicodeEncodeError:
-        # Có ký tự > U+00FF -> không phải kiểu đóng gói này.
+        # latin-1: mỗi byte thành đúng một ký tự, không bao giờ lỗi.
+        chuoi = json.loads(than.decode("latin-1"))
+    except (ValueError, UnicodeDecodeError):
         return None
-    return du_lieu if _co_phai_zip(du_lieu) else None
+    if not isinstance(chuoi, str):
+        return None
+
+    try:
+        ung_vien = chuoi.encode("latin-1")
+    except UnicodeEncodeError:
+        return None
+
+    # Kiểu 1: ra ngay.
+    if _co_phai_zip(ung_vien):
+        return ung_vien
+
+    # Kiểu 2: server ghi non-ASCII dưới dạng UTF-8 -> bóc thêm một lớp.
+    try:
+        ung_vien_2 = ung_vien.decode("utf-8").encode("latin-1")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return None
+    return ung_vien_2 if _co_phai_zip(ung_vien_2) else None
 
 
-def _an_toan_de_in(du_lieu, gioi_han: int = 300) -> str:
-    """Biến dữ liệu bất kỳ thành chuỗi AN TOÀN để in ra terminal.
+def _an_toan_de_in(du_lieu, gioi_han: int = 200) -> str:
+    """Chuỗi AN TOÀN để in ra terminal.
 
-    Dữ liệu nhị phân in thẳng ra console sẽ chứa ký tự điều khiển (\\r, \\b,
-    mã ANSI...) làm loạn màn hình, đè mất chính thông báo lỗi mình đang cần
-    đọc. repr() bọc chúng lại thành dạng \\xNN nhìn được.
+    Dữ liệu nhị phân in thẳng ra console chứa ký tự điều khiển (\\r, \\b, mã
+    ANSI) làm loạn màn hình, đè mất chính thông báo lỗi đang cần đọc.
+    repr() bọc chúng thành dạng \\xNN nhìn được.
     """
     if isinstance(du_lieu, bytes):
         return repr(du_lieu[:gioi_han])
-    chuoi = du_lieu if isinstance(du_lieu, str) else str(du_lieu)
-    # repr() để ký tự điều khiển hiện dạng escape thay vì tác động lên terminal.
-    return repr(chuoi[:gioi_han])
+    return repr((du_lieu if isinstance(du_lieu, str) else str(du_lieu))[:gioi_han])
 
 
-def _headers(api_key: str) -> dict:
-    """Header chuẩn cho mọi request. Tên header lấy từ config (thường 'apikey')."""
-    return {
-        settings.api_key_header: api_key,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
+def _lay_zip_tu_response(resp) -> bytes:
+    """Rút file ZIP ra khỏi response. Ném ElisError nếu không có ZIP.
 
+    Thử theo thứ tự, KHÔNG tin Content-Type (gateway hay khai sai):
 
-def _kiem_tra_loi(body, ngu_canh: str) -> None:
-    """Ném ElisApiError nếu body báo isError=true.
-
-    Không giả định body luôn là dict: có lúc ELIS trả về JSON dạng chuỗi
-    hoặc mảng. Gọi thẳng .get() lên chúng sẽ ném AttributeError khó hiểu,
-    che mất thông báo lỗi thật.
+      1. Thân là ZIP nhị phân       -> dùng luôn (đường chuẩn theo tài liệu)
+      2. Thân là chuỗi JSON "PK..." -> gỡ ra (lỗi hiện tại của ELIS)
+      3. Thân là object JSON        -> đúng là báo lỗi, đọc message
     """
-    if isinstance(body, dict):
-        if body.get("isError"):
-            raise ElisApiError(
-                f"[{ngu_canh}] ELIS báo lỗi (code={body.get('code')}): {body.get('message')}"
-            )
-        return
-
-    # Không phải dict -> in ra để còn lần được, nhưng phải qua _an_toan_de_in.
-    raise ElisApiError(
-        f"[{ngu_canh}] ELIS trả về {type(body).__name__} thay vì object JSON: "
-        f"{_an_toan_de_in(body)}"
-    )
-
-
-def chia_batch(danh_sach: list, kich_thuoc: int) -> list[list]:
-    """Chia list thành các batch con, mỗi batch tối đa kich_thuoc phần tử."""
-    return [danh_sach[i:i + kich_thuoc] for i in range(0, len(danh_sach), kich_thuoc)]
-
-
-# =====================================================================
-# API ① — Lấy danh sách chờ duyệt
-# =====================================================================
-
-@retry(
-    stop=stop_after_attempt(settings.so_lan_retry),
-    wait=wait_exponential(multiplier=1, min=1, max=10),
-    reraise=True,
-)
-def lay_mot_trang_cho_duyet(page: int = 1, size: int = 100, **loc_them) -> dict:
-    """GET getCert?status=WAITING — trả nguyên response envelope.
-
-    loc_them: các filter tùy chọn của tài liệu mục 3.2 — startSubmitDate,
-    endSubmitDate, courseCode, courseName, employeeEmail.
-    """
-    size = min(size, MAX_SIZE_GET_CERT)
-    params = {"status": "WAITING", "page": page, "size": size}
-    params.update({k: v for k, v in loc_them.items() if v})
-
-    url = settings.url_api("/api/v1/UserCourse/elearning/getCert")
-    resp = requests.get(
-        url, headers=_headers(settings.api_key), params=params, timeout=TIMEOUT_NGAN
-    )
-    resp.raise_for_status()
-    body = resp.json()
-    _kiem_tra_loi(body, "getCert")
-    return body
-
-
-def lay_toan_bo_cho_duyet(size: int = 100, **loc_them) -> list[dict]:
-    """Lặp hết các trang, trả về TOÀN BỘ item đang WAITING.
-
-    Không dựa vào totalPage vì tài liệu ghi rõ field này hiện luôn = 0.
-    Dừng khi trang trả về rỗng, hoặc đã gom đủ totalRecords.
-    """
-    ket_qua: list[dict] = []
-    page = 1
-    while True:
-        body = lay_mot_trang_cho_duyet(page=page, size=size, **loc_them)
-        items = body.get("data") or []
-        ket_qua.extend(items)
-
-        tong = body.get("totalRecords") or 0
-        if not items or len(ket_qua) >= tong:
-            break
-        page += 1
-
-    logger.info("getCert: lấy được %d chứng chỉ WAITING.", len(ket_qua))
-    return ket_qua
-
-
-# =====================================================================
-# API ② — Download ZIP chứng chỉ
-# =====================================================================
-
-@retry(
-    stop=stop_after_attempt(settings.so_lan_retry),
-    wait=wait_exponential(multiplier=1, min=1, max=10),
-    reraise=True,
-)
-def tai_zip_chung_chi(danh_sach_cap: list[dict]) -> bytes:
-    """POST download-certificates-zip — trả về nội dung file ZIP (bytes).
-
-    danh_sach_cap: [{"UserCourseId": ..., "certificate_id": ...}, ...]
-    Tối đa 20 phần tử — hàm KHÔNG tự chia batch, gọi chia_batch() trước.
-
-    Tên field phải viết ĐÚNG hoa/thường như trên ("UserCourseId" chữ U hoa,
-    "certificate_id" chữ thường có gạch dưới) — tài liệu ghi rõ là
-    case-sensitive.
-    """
-    if not danh_sach_cap:
-        raise ValueError("tai_zip_chung_chi: danh sách rỗng.")
-    if len(danh_sach_cap) > MAX_ITEMS_DOWNLOAD_ZIP:
-        raise ValueError(
-            f"tai_zip_chung_chi: {len(danh_sach_cap)} cặp, vượt giới hạn "
-            f"{MAX_ITEMS_DOWNLOAD_ZIP}/request — phải chia batch trước."
-        )
-
-    url = settings.url_file("/api/v1/files/download-certificates-zip")
-    # khoa_file = kong_api_key nếu có, ngược lại dùng chung api_key. Trên UAT
-    # hiện tại hai service chung một key nên chỉ cần dán một lần vào .env.
-    headers = _headers(settings.khoa_file)
-    headers["Accept"] = "application/zip, application/json"
-
-    resp = requests.post(url, headers=headers, json=danh_sach_cap, timeout=TIMEOUT_DAI)
-
-    # Thử mở như ZIP trước tiên — chắc chắn hơn mọi cách đoán qua header.
+    # 1. Đường chuẩn: thân là ZIP nhị phân.
     if _co_phai_zip(resp.content):
         return resp.content
 
-    # Không phải ZIP nhị phân -> đọc JSON.
-    resp.raise_for_status()
-    try:
-        body = resp.json()
-    except ValueError:
-        raise ElisApiError(
-            f"[download-zip] HTTP {resp.status_code}, response không phải ZIP "
-            f"cũng không phải JSON. Content-Type="
-            f"{resp.headers.get('Content-Type')!r}, "
-            f"{len(resp.content)} byte, bắt đầu bằng "
-            f"{_an_toan_de_in(resp.content, 80)}"
-        ) from None
+    # 2. ZIP bị bọc thành chuỗi JSON.
+    #    Đọc từ resp.content (BYTE THÔ) — xem giải thích trong
+    #    _giai_ma_zip_boc_json về việc resp.json() làm mất dữ liệu.
+    zip_bytes = _giai_ma_zip_boc_json(resp.content)
+    if zip_bytes is not None:
+        return zip_bytes
 
-    # ELIS hiện bọc ZIP thành chuỗi JSON — gỡ ra nếu đúng kiểu đó.
-    if isinstance(body, str):
-        zip_khoi_phuc = _giai_ma_zip_boc_json(body)
-        if zip_khoi_phuc is not None:
-            logger.debug(
-                "download-zip: ZIP bị bọc trong chuỗi JSON, đã giải mã "
-                "(%d ký tự -> %d byte).", len(body), len(zip_khoi_phuc)
-            )
-            return zip_khoi_phuc
-
-    # message của file_102 là một JSON string lồng — bóc ra cho dễ đọc.
-    if isinstance(body, dict) and isinstance(body.get("message"), str):
-        try:
-            body = {**body, "message": json.loads(body["message"])}
-        except (ValueError, TypeError):
-            pass
-
-    _kiem_tra_loi(body, "download-zip")
-    raise ElisApiError(
-        f"[download-zip] HTTP {resp.status_code}, không có ZIP trong response: "
-        f"{_an_toan_de_in(body)}"
-    )
-
-
-# =====================================================================
-# API ③ — Cập nhật trạng thái duyệt
-# =====================================================================
-
-@retry(
-    stop=stop_after_attempt(settings.so_lan_retry),
-    wait=wait_exponential(multiplier=1, min=1, max=10),
-    reraise=True,
-)
-def cap_nhat_trang_thai(danh_sach_dto: list[dict]) -> dict:
-    """POST ProcessUserCourseStatus — trả {"successList": [...], "failList": [...]}.
-
-    Mỗi dto gồm: id, certificate_id, status (APPROVED/REJECTED), courseId,
-    employeeId, comment (bắt buộc), comment_cer (tùy chọn).
-    Tối đa 500 dto — hàm KHÔNG tự chia batch.
-
-    Partial success: một item lỗi KHÔNG làm rollback các item khác, và cũng
-    không phải lỗi hệ thống — nên hàm trả về cả hai list cho nơi gọi tự xử
-    lý, không ném exception. Chỉ ném khi CẢ request bị từ chối.
-    """
-    if not danh_sach_dto:
-        raise ValueError("cap_nhat_trang_thai: danh sách rỗng.")
-    if len(danh_sach_dto) > MAX_DTO_PROCESS_STATUS:
-        raise ValueError(
-            f"cap_nhat_trang_thai: {len(danh_sach_dto)} dto, vượt giới hạn "
-            f"{MAX_DTO_PROCESS_STATUS}/request — phải chia batch trước."
+    if resp.status_code != 200:
+        raise ElisError(
+            f"Download ZIP HTTP {resp.status_code}: "
+            f"{_an_toan_de_in(resp.text)}"
         )
 
-    url = settings.url_api("/api/v1/UserCourse/ProcessUserCourseStatus")
-    resp = requests.post(
-        url, headers=_headers(settings.api_key), json=danh_sach_dto, timeout=TIMEOUT_DAI
-    )
-    resp.raise_for_status()
-    body = resp.json()
-    _kiem_tra_loi(body, "ProcessUserCourseStatus")  # body rỗng / vượt 500
+    try:
+        data = resp.json()
+    except ValueError:
+        raise ElisError(
+            f"Download ZIP: response không phải ZIP cũng không phải JSON. "
+            f"Content-Type={resp.headers.get('Content-Type')!r}, "
+            f"{len(resp.content)} byte, bắt đầu bằng "
+            f"{_an_toan_de_in(resp.content, 60)}"
+        ) from None
 
-    data = body.get("data") or {}
-    return {
-        "successList": data.get("successList") or [],
-        "failList": data.get("failList") or [],
-    }
+    # Envelope lỗi có thể bị bọc thêm một hoặc vài lớp chuỗi JSON.
+    data = _boc_json_long(data)
+
+    # 3. Báo lỗi thật (file_101 / file_102 / file_105 — tài liệu mục 4.4).
+    if isinstance(data, dict):
+        raise ElisError(f"Download ZIP lỗi: {_mo_ta_loi(data)}")
+
+    raise ElisError(
+        f"Download ZIP: response lạ ({type(data).__name__}): "
+        f"{_an_toan_de_in(data)}"
+    )
+
+
+def _boc_json_long(gia_tri, toi_da: int = 4):
+    """Bóc JSON bị đóng gói nhiều lớp chuỗi lồng nhau.
+
+    ELIS trả lỗi API ② dạng chuỗi JSON, mà bên trong chuỗi đó lại có field
+    'message' cũng là chuỗi JSON nữa. Hàm này bóc dần cho tới khi ra được
+    object thật, tối đa toi_da lớp để không lặp vô hạn.
+    """
+    for _ in range(toi_da):
+        if not isinstance(gia_tri, str):
+            break
+        try:
+            gia_tri = json.loads(gia_tri)
+        except ValueError:
+            break
+    return gia_tri
+
+
+def _mo_ta_loi(body: dict) -> str:
+    """Diễn giải envelope lỗi của ELIS thành câu đọc được.
+
+    file_102 kèm danh sách 'items' cho biết CẶP NÀO không khớp — thông tin
+    quan trọng nhất để sửa, nên phải nêu ra thay vì cắt cụt.
+    """
+    message = _boc_json_long(body.get("message"))
+
+    if not isinstance(message, dict):
+        return f"(code={body.get('code')}) {message}"
+
+    ma_loi = message.get("errorCode") or body.get("code")
+    giai_thich = {
+        "file_101": "gửi quá 20 cặp trong một request",
+        "file_102": "cặp UserCourseId + certificate_id KHÔNG khớp dữ liệu "
+                    "trên eLIS, hoặc bản ghi không còn ở trạng thái WAITING",
+        "file_105": "danh sách gửi lên bị rỗng",
+    }.get(str(ma_loi), "")
+
+    dong = [f"{ma_loi}" + (f" — {giai_thich}" if giai_thich else "")]
+
+    items = message.get("items")
+    if isinstance(items, list) and items:
+        dong.append(f"  {len(items)} cặp bị từ chối:")
+        for it in items[:5]:
+            if not isinstance(it, dict):
+                continue
+            dong.append(
+                f"    UserCourseId  : {it.get('userCourseId')}\n"
+                f"    certificateId : {it.get('certificateId')}\n"
+                f"    success={it.get('success')} errorCode={it.get('errorCode')}"
+            )
+        if len(items) > 5:
+            dong.append(f"    ... và {len(items) - 5} cặp nữa")
+    return "\n".join(dong)
+
+
+def _giai_nen_zip(zip_bytes: bytes) -> list[dict]:
+    """Giải nén ZIP, đọc manifest.json, trả về ảnh cho item success=true."""
+    ket_qua = []
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        # Đọc manifest để biết entry nào ứng với item nào.
+        try:
+            manifest_raw = zf.read("manifest.json").decode("utf-8")
+            manifest = json.loads(manifest_raw)
+        except (KeyError, json.JSONDecodeError) as e:
+            raise ElisError(f"ZIP thiếu/lỗi manifest.json: {e}") from e
+
+        for item in manifest:
+            # Chỉ scan item có file thật (xem tài liệu 4.3).
+            if not item.get("success"):
+                continue
+            entry = item.get("entryName", "")
+            if not entry:
+                continue
+            try:
+                anh_bytes = zf.read(entry)
+            except KeyError:
+                continue
+            ket_qua.append({
+                "userCourseId": item.get("userCourseId"),
+                "certificate_id": item.get("certificateId"),
+                "anh_bytes": anh_bytes,
+                "ten_file": item.get("originalFileName"),
+            })
+    return ket_qua
+
+
+# ===== API ③ — Cập nhật trạng thái duyệt =====
+
+def cap_nhat_trang_thai(cac_ket_qua: list[dict]) -> dict:
+    """POST ProcessUserCourseStatus — gửi kết quả APPROVED/REJECTED.
+
+    cac_ket_qua: list dict, mỗi cái đủ field:
+      id, certificate_id, status (APPROVED/REJECTED), courseId, employeeId,
+      comment (bắt buộc), comment_cer (tùy chọn). Tối đa 500.
+
+    Trả về dict data chứa successList / failList.
+    """
+    if not cac_ket_qua:
+        raise ElisError("Danh sách kết quả rỗng.")
+    if len(cac_ket_qua) > 500:
+        raise ElisError("Tối đa 500 bản ghi mỗi request (giới hạn API ③).")
+
+    url = f"{settings.elis_base_url}/api/v1/UserCourse/ProcessUserCourseStatus"
+
+    try:
+        resp = requests.post(url, headers=_headers(), json=cac_ket_qua, timeout=60)
+    except requests.RequestException as e:
+        raise ElisError(f"Lỗi kết nối ProcessStatus: {e}") from e
+
+    if resp.status_code != 200:
+        raise ElisError(f"ProcessStatus HTTP {resp.status_code}: {resp.text[:200]}")
+
+    data = resp.json()
+    if data.get("isError"):
+        raise ElisError(f"ProcessStatus lỗi: {data.get('message')}")
+
+    return data.get("data", {})

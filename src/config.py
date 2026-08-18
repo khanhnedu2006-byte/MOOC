@@ -46,40 +46,19 @@ class Settings(BaseSettings):
     azure_endpoint: str = Field(description="Endpoint Azure Document Intelligence")
     azure_key: str = Field(description="Key Azure Document Intelligence")
 
-    # ===== ELIS Partner API — AI Certificate Scan (3 API) =====
-    # Theo tài liệu "Partner Integration Guide — AI Certificate Scan v1.1".
-    #
-    # Mọi request đều đi qua Kong (API Gateway). Kong định tuyến dựa vào
-    # PREFIX trong URL, dẫn tới hai service khác nhau phía sau:
-    #   - eLIS API   (nghiệp vụ) -> API ① getCert, API ③ ProcessUserCourseStatus
-    #   - FileService (kho file) -> API ② download-certificates-zip
-    # Vì vậy có HAI cặp base+prefix, và có thể là hai key khác nhau.
-
-    # --- Nhánh eLIS API: dùng cho API ① và ③ ---
-    # Vd: https://apitest.fpt.com + /uat-elis-gw
-    api_base_url: str = Field(description="Host Kong dẫn tới eLIS API")
-    kong_api_prefix: str = Field(
-        default="", description="Route prefix của eLIS API trên Kong, vd /uat-elis-gw"
+    # ===== API ELIS =====
+    # Base URL cho API nghiệp vụ (getCert, ProcessUserCourseStatus).
+    elis_base_url: str = Field(
+        default="https://apitest.fpt.com/uat-elis-gw",
+        description="Base URL API nghiệp vụ ELIS",
     )
-    api_key: str = Field(description="API key gọi eLIS API (giá trị của header apikey)")
-
-    # --- Nhánh FileService: dùng cho API ② ---
-    # Trên UAT thực tế, FileService nằm CÙNG host và CÙNG prefix với eLIS API
-    # (đều là https://apitest.fpt.com/uat-elis-gw) — tài liệu tách riêng vì
-    # môi trường khác có thể mount ở chỗ khác.
-    kong_base_url: str = Field(default="", description="Host Kong dẫn tới FileService")
-    kong_file_prefix: str = Field(
-        default="", description="Route prefix của FileService trên Kong"
+    # Base URL cho download ZIP (có thể trùng elis_base_url ở môi trường test).
+    elis_file_base_url: str = Field(
+        default="https://apitest.fpt.com/uat-elis-gw",
+        description="Base URL service download ZIP chứng chỉ",
     )
-    # Để RỖNG nghĩa là dùng chung key với eLIS API (trường hợp phổ biến khi
-    # hai service nằm sau cùng một route Kong). Chỉ điền khi eLIS cấp key riêng.
-    kong_api_key: str = Field(default="", description="Key riêng cho FileService, rỗng = dùng chung api_key")
-
-    # Tên header mang API key. Tách thành config vì tài liệu ghi "thường là
-    # apikey" — môi trường khác có thể đổi (x-api-key, Ocp-Apim-...).
-    api_key_header: str = Field(default="apikey")
-
-    env: str = Field(default="UAT", description="UAT hoặc Production")
+    # API key — ELIS cấp qua kênh bảo mật, gửi trong header 'apikey'.
+    elis_api_key: str = Field(default="", description="API key ELIS (header apikey)")
 
     # ===== Chế độ khớp khóa học =====
     # "long"  : người nhập chỉ cần là TẬP CON của tên khóa trên ảnh cũng khớp.
@@ -96,55 +75,45 @@ class Settings(BaseSettings):
     thoi_gian_hop_le_tu: str = Field(default="2026-01-01")
     thoi_gian_hop_le_den: str = Field(default="2026-09-30")
 
+    # ===== Gửi báo cáo =====
+    # "teams" hoặc "email". Mặc định teams vì không cần mật khẩu và không
+    # phụ thuộc việc công ty có bật SMTP AUTH hay không.
+    kenh_bao_cao: str = Field(default="teams")
+
+    # --- Teams (Workflows webhook) ---
+    # Tạo: mở kênh Teams -> ... -> Workflows -> mẫu "Post to a channel when
+    # a webhook request is received" -> chọn kênh -> Create -> copy URL.
+    # Cách cũ qua Connectors đã bị Microsoft TẮT VĨNH VIỄN trong 5/2026.
+    #
+    # URL này CHÍNH LÀ thứ xác thực — ai có nó cũng đăng bài vào kênh được.
+    # Coi như mật khẩu, đừng commit lên git.
+    teams_webhook_url: str = Field(default="")
+
+    # ===== Gửi báo cáo qua email =====
+    # Báo cáo NỘI BỘ gửi cho mentor, không phải cho khách hàng eLIS.
+    #
+    # SMTP_PASSWORD phải là App Password, KHÔNG phải mật khẩu đăng nhập —
+    # Office 365 không nhận mật khẩu thường khi tài khoản có bật MFA.
+    #
+    # HẠN SỬ DỤNG: Microsoft đang khai tử Basic Auth cho SMTP AUTH trên
+    # Exchange Online, mốc hiện tại là 31/12/2026. Sau đó phải chuyển sang
+    # Microsoft Graph API hoặc SMTP relay nội bộ của công ty.
+    smtp_host: str = Field(default="smtp.office365.com")
+    smtp_port: int = Field(default=587)
+    smtp_user: str = Field(default="", description="Email công ty dùng để gửi")
+    smtp_password: str = Field(default="", description="App Password")
+    mail_tu: str = Field(default="", description="Địa chỉ From; rỗng = dùng smtp_user")
+    mail_den: str = Field(default="", description="Email nhận, nhiều người cách nhau dấu phẩy")
+
     # ===== Tham số vận hành =====
-    # Hai nhịp nghỉ khác nhau, tùy vòng vừa rồi có việc hay không:
-    #
-    #   poll_interval_giay      — nghỉ sau khi VỪA xử lý xong một mẻ.
-    #       Để ngắn, vì nếu vừa có người nộp thì nhiều khả năng còn cái khác
-    #       đang xếp hàng; xử lý nốt cho nhanh.
-    #
-    #   poll_interval_rong_giay — nghỉ khi KHÔNG có gì để làm.
-    #       Để dài hơn, tránh gọi API liên tục vô ích suốt đêm.
-    poll_interval_giay: int = Field(default=10)
-    poll_interval_rong_giay: int = Field(default=60)
-
+    # Số giây nghỉ giữa mỗi vòng lặp hỏi ELIS (khi không còn việc).
+    poll_interval_giay: int = Field(default=60)
+    # Số lần thử lại khi gọi API gặp lỗi tạm thời (vd 502, timeout).
     so_lan_retry: int = Field(default=3)
-
-    # ----- Helper ghép URL -----
-    # Đặt ở đây để không nơi nào phải tự nối chuỗi (dễ quên prefix, dễ thừa
-    # hoặc thiếu dấu "/").
-
-    def url_api(self, path: str) -> str:
-        """URL đầy đủ cho API ① và ③ (nhánh eLIS API).
-
-        Vd: url_api("/api/v1/UserCourse/elearning/getCert")
-            -> https://apitest.fpt.com/uat-elis-gw/api/v1/UserCourse/elearning/getCert
-        """
-        return f"{self.api_base_url.rstrip('/')}{self.kong_api_prefix.rstrip('/')}{path}"
-
-    def url_file(self, path: str) -> str:
-        """URL đầy đủ cho API ② (nhánh FileService).
-
-        Ném ValueError nếu chưa cấu hình — thà báo lỗi rõ ràng còn hơn gửi
-        request tới URL rỗng rồi nhận lỗi khó hiểu.
-        """
-        if not self.kong_base_url:
-            raise ValueError(
-                "Chưa cấu hình KONG_BASE_URL trong .env — không gọi được API "
-                "download-certificates-zip. Hỏi đội eLIS host + route prefix "
-                "của FileService trên Kong."
-            )
-        return f"{self.kong_base_url.rstrip('/')}{self.kong_file_prefix.rstrip('/')}{path}"
-
-    @property
-    def khoa_file(self) -> str:
-        """Key thực tế dùng cho API ② (FileService).
-
-        Trả kong_api_key nếu có, ngược lại dùng chung api_key. Nhờ vậy khi
-        hai service nằm sau cùng một route Kong — như trên UAT hiện tại —
-        chỉ phải dán key MỘT lần vào .env, không lo dán lệch hai chỗ.
-        """
-        return self.kong_api_key or self.api_key
+    # Số giây nghỉ giữa các lần thử lại.
+    retry_delay_giay: int = Field(default=5)
+    # Timeout (giây) cho lời gọi API.
+    timeout_giay: int = Field(default=60)
 
 
 # Instance dùng chung. Thiếu key bắt buộc sẽ báo lỗi ngay lúc khởi động.

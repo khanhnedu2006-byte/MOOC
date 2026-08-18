@@ -1,0 +1,36 @@
+# Thư viện cho CONTAINER chạy job (run.py) — chỉ những gì thật sự cần.
+#
+# Khác requirements.txt (dùng khi lập trình ở máy) ở chỗ BỎ:
+#   - gradio      : chỉ web_demo.py dùng, job không cần. Bỏ đi tiết kiệm
+#                   ~20 package kéo theo (fastapi, starlette, huggingface_hub,
+#                   brotli, pydub...) và hàng trăm MB image.
+#   - pytest      : chỉ để chạy test, không cần lúc chạy thật.
+#   - rapidfuzz   : không chỗ nào trong code dùng tới.
+#   - openai      : langchain-openai đã tự kéo về đúng phiên bản nó cần.
+#   - python-magic-bin : chỉ dành cho Windows; trên Linux dùng libmagic1
+#                   cài qua apt trong Dockerfile.
+
+# ===== Gọi LLM (Gemma qua FPT) =====
+langchain-core
+langchain-openai
+
+# ===== OCR =====
+azure-ai-documentintelligence
+
+# ===== Cấu hình =====
+pydantic
+pydantic-settings
+python-dotenv
+
+# ===== Chuẩn hóa chuỗi / ngày tháng =====
+unidecode
+dateparser
+
+# ===== Đọc file chứng chỉ =====
+python-magic
+pypdfium2
+pillow
+
+# ===== Gọi API ELIS =====
+# (bỏ tenacity: code hiện tự viết retry trong run.goi_co_retry)
+requests

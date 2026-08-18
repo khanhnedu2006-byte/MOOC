@@ -1,0 +1,40 @@
+# Chạy job AI scan chứng chỉ MOOC.
+#
+#   docker compose up -d --build     # dựng và chạy nền
+#   docker compose logs -f           # xem log trực tiếp
+#   docker compose down              # dừng
+#
+# .env được GẮN LÚC CHẠY, không nằm trong image.
+
+services:
+  job:
+    build: .
+    image: mooc-elis:latest
+    container_name: mooc-elis-job
+
+    # Nạp biến trong .env vào container. File nằm ngoài image nên đổi key
+    # chỉ cần sửa .env rồi `docker compose restart`, không build lại.
+    env_file:
+      - .env
+
+    volumes:
+      # pydantic-settings đọc trực tiếp FILE .env (không chỉ biến môi trường),
+      # nên phải gắn cả file vào. Chỉ đọc.
+      - ./.env:/app/.env:ro
+
+      # File log SQLite. database/database.py đặt DB_PATH ở GỐC dự án
+      # (mooc_log.db), không phải trong thư mục database/ — nên phải gắn
+      # đúng file này. Thiếu nó thì mỗi lần dựng lại container là mất sạch
+      # lịch sử xử lý.
+      - ./mooc_log.db:/app/mooc_log.db
+
+    # Tự bật lại khi container chết hoặc khi máy khởi động lại.
+    # "unless-stopped": tôn trọng khi bạn chủ động `docker compose down`.
+    restart: unless-stopped
+
+    # Giới hạn dung lượng log, tránh đầy ổ khi chạy dài ngày.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

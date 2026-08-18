@@ -1,0 +1,55 @@
+# Job AI scan chứng chỉ MOOC — vòng lặp nền nối với ELIS.
+#
+# Build:  docker compose build
+# Chạy :  docker compose up -d
+#
+# KHÔNG nhúng .env vào image. Key được gắn lúc chạy (xem docker-compose.yml).
+# Lý do: image có thể bị push lên registry; key nằm trong layer thì ai kéo về
+# cũng moi ra được, kể cả khi lệnh sau đó đã xóa file.
+
+FROM python:3.13-slim
+
+# ---- Gói hệ thống ----
+# libmagic1: python-magic cần thư viện này để đoán loại file theo NỘI DUNG.
+#            Thiếu nó, src/file_utils.py chết ngay lúc import.
+# tzdata   : để log in đúng giờ Việt Nam thay vì UTC.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libmagic1 \
+        tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV TZ=Asia/Ho_Chi_Minh
+
+# PYTHONUNBUFFERED: in log ra ngay. Thiếu nó thì `docker logs` trống trơn
+#     hàng phút dù job vẫn đang chạy.
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    KMP_DUPLICATE_LIB_OK=TRUE
+
+WORKDIR /app
+
+# ---- Cài thư viện trước, copy code sau ----
+# Tách hai bước để tận dụng cache: sửa code không phải cài lại thư viện.
+COPY requirements-job.txt .
+RUN pip install --no-cache-dir -r requirements-job.txt
+
+# ---- Code ----
+COPY src/ ./src/
+COPY database/ ./database/
+COPY run.py test_api.py ./
+
+# ---- Chạy bằng user thường, không phải root ----
+RUN useradd --create-home --shell /bin/bash mooc \
+    && chown -R mooc:mooc /app
+USER mooc
+
+# Đọc được config = .env đã gắn đúng và thư viện nạp được.
+# Không gọi API ELIS để khỏi tốn request vô ích.
+HEALTHCHECK --interval=5m --timeout=30s --start-period=30s --retries=3 \
+    CMD python -c "import sys; sys.path.insert(0,'src'); import config" || exit 1
+
+# QUAN TRỌNG: phải truyền "loop".
+# run.py nhận chế độ qua tham số VỊ TRÍ, mặc định là "once" — nếu để trống,
+# container xử lý một mẻ rồi THOÁT, và restart policy sẽ dựng lại liên tục
+# thành vòng lặp khởi động, không phải vòng lặp poll như mong muốn.
+CMD ["python", "run.py", "loop"]
