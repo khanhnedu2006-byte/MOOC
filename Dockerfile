@@ -48,8 +48,8 @@ USER mooc
 HEALTHCHECK --interval=5m --timeout=30s --start-period=30s --retries=3 \
     CMD python -c "import sys; sys.path.insert(0,'src'); import config" || exit 1
 
-# QUAN TRỌNG: phải truyền "loop".
-# run.py nhận chế độ qua tham số VỊ TRÍ, mặc định là "once" — nếu để trống,
-# container xử lý một mẻ rồi THOÁT, và restart policy sẽ dựng lại liên tục
-# thành vòng lặp khởi động, không phải vòng lặp poll như mong muốn.
+# Ghi rõ "loop" cho tường minh, dù run.py nay đã mặc định chạy liên tục.
+# Container PHẢI chạy tiến trình sống mãi: nếu nó xử lý một mẻ rồi thoát thì
+# restart policy sẽ dựng lại liên tục, thành vòng lặp KHỞI ĐỘNG chứ không
+# phải vòng lặp poll.
 CMD ["python", "run.py", "loop"]

@@ -67,7 +67,7 @@ def bao_cao_ngay(ngay: str | None = None, db_path=None) -> dict:
         # khai sai. Tách riêng vì hai loại này cần hành động khác nhau.
         that_bai = _dem(
             conn, ngay,
-            "tang_xu_ly IN ('loi_tai_file','soft_fail_zip','file_loi','loi_he_thong')"
+            "tang_xu_ly IN ('loi_tai_file','khong_co_file','soft_fail_zip','file_loi','loi_he_thong')"
         )
 
         # Nộp lên ELIS có được nhận không.
@@ -121,7 +121,7 @@ def bao_cao_ngay(ngay: str | None = None, db_path=None) -> dict:
                        tang_xu_ly, elis_gui_ok, elis_message
                 FROM log_xu_ly
                 WHERE substr(thoi_diem,1,10)=?
-                  AND (tang_xu_ly IN ('loi_tai_file','soft_fail_zip',
+                  AND (tang_xu_ly IN ('loi_tai_file','khong_co_file','soft_fail_zip',
                                       'file_loi','loi_he_thong')
                        OR elis_gui_ok = 0)
                 ORDER BY id
@@ -130,8 +130,8 @@ def bao_cao_ngay(ngay: str | None = None, db_path=None) -> dict:
         ]
         tong_ca_loi = _dem(
             conn, ngay,
-            "(tang_xu_ly IN ('loi_tai_file','soft_fail_zip','file_loi',"
-            "'loi_he_thong') OR elis_gui_ok = 0)")
+            "(tang_xu_ly IN ('loi_tai_file','khong_co_file','soft_fail_zip',"
+            "'file_loi','loi_he_thong') OR elis_gui_ok = 0)")
 
         tong_hom_truoc = _dem(conn, hom_truoc)
         approved_hom_truoc = _dem(conn, hom_truoc, "ket_qua='APPROVED'")

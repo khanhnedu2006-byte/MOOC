@@ -2,23 +2,26 @@
 
 Luồng:
   ① getCert          -> lấy danh sách chứng chỉ chờ duyệt (WAITING)
-  ② download ZIP     -> tải file chứng chỉ theo id, giải nén lấy ảnh/PDF
+  ② download          -> tải file chứng chỉ (JSON, nội dung dạng base64)
   ③ ProcessStatus    -> gửi kết quả APPROVED/REJECTED
 
 Mỗi API là một hàm riêng, test được độc lập. Việc nối 3 bước + chạy pipeline
 nằm ở run.py.
 
 Thông tin để đối chiếu (tên NV, khóa học, mã NV) lấy từ API ①.
-Ảnh chứng chỉ lấy từ API ②.
+Nội dung file chứng chỉ lấy từ API ② dưới dạng base64.
 """
 
-import io
+import base64
+import binascii
 import json
-import zipfile
+import logging
 
 import requests
 
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 # Header chung. API key gửi trong 'apikey' theo tài liệu.
 def _headers(json_body: bool = True) -> dict:
@@ -59,110 +62,270 @@ def lay_danh_sach_cho_duyet(page: int = 1, size: int = 100) -> list[dict]:
     return data.get("data", [])
 
 
-# ===== API ② — Download ZIP chứng chỉ =====
+# ===== API ② — Tải file chứng chỉ =====
 
-def tai_zip_chung_chi(cac_cap: list[dict]) -> list[dict]:
-    """POST download-certificates-zip — tải ZIP, giải nén.
+def tai_chung_chi(cac_cap: list[dict]) -> list[dict]:
+    """POST download-certificates — tải file chứng chỉ.
 
     cac_cap: list dict {"UserCourseId": ..., "certificate_id": ...}, tối đa 20.
 
     Trả về list dict: {"userCourseId", "certificate_id", "anh_bytes", "ten_file"}
-    cho các item scan được (success=true trong manifest). Item lỗi bị bỏ qua.
+    cho các item lấy được file. Item lỗi bị bỏ qua (đã ghi log ở run.py).
+
+    Response là JSON, mỗi item có một trường chứa nội dung file dạng base64.
+
+    KHÔNG hardcode tên trường base64: tài liệu chưa mô tả định dạng này, và
+    eLIS đã đổi hợp đồng API hai lần rồi. _tim_base64_trong_item() dò theo
+    NỘI DUNG — giải base64 ra rồi kiểm chữ ký file — nên đổi tên trường cũng
+    không vỡ.
     """
     if not cac_cap:
         return []
     if len(cac_cap) > 20:
         raise ElisError("Tối đa 20 cặp mỗi request (giới hạn API ②).")
 
-    url = f"{settings.elis_file_base_url}/api/v1/files/download-certificates-zip"
+    url = f"{settings.elis_file_base_url}/api/v1/files/download-certificates"
 
     try:
         resp = requests.post(
             url,
-            headers={**_headers(), "Accept": "application/zip, application/json"},
+            headers=_headers(),
             json=cac_cap,
             timeout=60,
         )
     except requests.RequestException as e:
-        raise ElisError(f"Lỗi kết nối download ZIP: {e}") from e
+        raise ElisError(f"Lỗi kết nối download: {e}") from e
 
-    zip_bytes = _lay_zip_tu_response(resp)
-    return _giai_nen_zip(zip_bytes)
+    if resp.status_code != 200:
+        raise ElisError(
+            f"Download HTTP {resp.status_code}: {_an_toan_de_in(resp.text)}")
+
+    try:
+        body = resp.json()
+    except ValueError:
+        raise ElisError(
+            f"Download: response không phải JSON. "
+            f"Content-Type={resp.headers.get('Content-Type')!r}, "
+            f"{len(resp.content)} byte, bắt đầu bằng "
+            f"{_an_toan_de_in(resp.content, 60)}"
+        ) from None
+
+    body = _boc_json_long(body)
+
+    # Envelope báo lỗi thật (file_101 / file_102 / file_105).
+    if isinstance(body, dict) and body.get("isError"):
+        raise ElisError(f"Download lỗi: {_mo_ta_loi(body)}")
+
+    return _ghep_id(_doc_file_tu_json(body), cac_cap)
 
 
-def _co_phai_zip(noi_dung: bytes) -> bool:
-    """Nội dung này có phải file ZIP không.
+def _ghep_id(ket_qua: list[dict], cac_cap: list[dict]) -> list[dict]:
+    """Bù lại userCourseId cho những item eLIS trả về mà thiếu trường này.
 
-    Thử mở bằng zipfile thay vì kiểm tra 2 byte "PK" ở đầu: ZIP lưu bảng
-    mục lục ở CUỐI file nên vẫn mở được kể cả khi đầu stream có byte lạ.
+    Vì sao cần: response API ② không đảm bảo có userCourseId. Thiếu nó thì
+    run.py không nối được file với bản ghi ban đầu, và chứng chỉ bị bỏ qua
+    dù đã tải về thành công — tốn công tải mà không xử lý được.
+
+    Đối chiếu ngược từ request theo thứ tự ưu tiên:
+      1. certificate_id — chắc chắn nhất, không phụ thuộc thứ tự
+      2. Vị trí trong danh sách — chỉ dùng khi số lượng khớp nhau, vì lúc
+         đó gần như chắc chắn eLIS trả về theo đúng thứ tự nhận vào
+
+    Khi phải đoán, ghi log tên trường thật của item để lần sau biết đường.
     """
-    if len(noi_dung) < 22:  # nhỏ hơn kích thước tối thiểu của ZIP rỗng
-        return False
-    try:
-        with zipfile.ZipFile(io.BytesIO(noi_dung)) as zf:
-            zf.namelist()
-        return True
-    except (zipfile.BadZipFile, OSError, EOFError):
-        return False
+    theo_cert = {
+        str(c.get("certificate_id")): c.get("UserCourseId")
+        for c in cac_cap if c.get("certificate_id")
+    }
+
+    for vi_tri, item in enumerate(ket_qua):
+        if item.get("userCourseId"):
+            continue
+
+        cert = item.get("certificate_id")
+        if cert and str(cert) in theo_cert:
+            item["userCourseId"] = theo_cert[str(cert)]
+            continue
+
+        if len(ket_qua) == len(cac_cap):
+            item["userCourseId"] = cac_cap[vi_tri].get("UserCourseId")
+            logger.warning(
+                "Item thứ %d không có userCourseId lẫn certificate_id — ghép "
+                "theo vị trí. Các trường eLIS trả về: %s",
+                vi_tri + 1, sorted(item.get("_cac_truong") or []))
+            continue
+
+        logger.error(
+            "Không ghép được userCourseId cho item thứ %d và không suy ra "
+            "được (nhận %d item cho %d yêu cầu). Các trường eLIS trả về: %s",
+            vi_tri + 1, len(ket_qua), len(cac_cap),
+            sorted(item.get("_cac_truong") or []))
+
+    for item in ket_qua:
+        item.pop("_cac_truong", None)
+    return ket_qua
 
 
-def _giai_ma_zip_boc_json(than: bytes) -> bytes | None:
-    """Khôi phục ZIP bị ELIS bọc thành chuỗi JSON. None nếu không phải kiểu đó.
+# --- Đọc định dạng JSON + base64 ---------------------------------------
 
-    ELIS hiện trả API ② với Content-Type: application/json và thân là MỘT
-    CHUỖI JSON chứa toàn bộ byte của file ZIP:
+# Chữ ký nhận dạng loại file, dùng để xác nhận chuỗi base64 giải ra đúng là
+# file chứ không phải chuỗi văn bản dài ngẫu nhiên nào đó.
+_CHU_KY_FILE = (
+    b"%PDF",            # PDF
+    b"\x89PNG",         # PNG
+    b"\xff\xd8\xff",    # JPEG
+    b"BM",              # BMP
+    b"II*\x00",         # TIFF little-endian
+    b"MM\x00*",         # TIFF big-endian
+    b"PK\x03\x04",      # ZIP/DOCX (một số chứng chỉ nộp dưới dạng này)
+)
 
-        "PK\\u0003\\u0004\\u0014\\u0000..."
+# Tên trường có thể chứa id, thử theo thứ tự. Không phân biệt hoa/thường và
+# bỏ qua dấu gạch dưới khi so, nên "UserCourseId" = "usercourseid" =
+# "user_course_id".
+_KHOA_UC_ID = ("usercourseid", "id")
+_KHOA_CERT_ID = ("certificateid", "certificateid", "certid")
+_KHOA_TEN_FILE = ("originalfilename", "filename", "name", "entryname")
 
-    Nguyên nhân: phía server đem mảng byte[] serialize qua JSON. Bộ serialize
-    coi mỗi byte là một ký tự, escape ký tự điều khiển thành \\uXXXX rồi
-    đóng gói thành chuỗi.
 
-    PHẢI nhận BYTE THÔ (resp.content), TUYỆT ĐỐI KHÔNG dùng resp.json().
-    Lý do: resp.json() giải mã thân theo UTF-8 với errors="replace". Thân
-    response chứa byte 0x80-0xFF ghi thô, không phải UTF-8 hợp lệ, nên hàng
-    nghìn byte bị thay bằng ký tự thay thế U+FFFD. Dữ liệu mất TRƯỚC KHI
-    code kịp xử lý, và không cách nào khôi phục. Đo thực tế trên một file
-    22KB: 6.408 byte bị nuốt.
+def _chuan_khoa(ten: str) -> str:
+    return ten.replace("_", "").replace("-", "").lower()
 
-    Cách đúng: decode latin-1 (ánh xạ 1-1 byte <-> ký tự, không bao giờ mất),
-    parse JSON, rồi encode lại latin-1 để lấy đúng byte ban đầu.
 
-    Thử vài kiểu đóng gói vì không biết server dùng bộ serialize nào:
-      1. Byte ghi thô hoặc escape hết về ASCII -> latin-1 một lần là ra.
-      2. Ký tự non-ASCII ghi dưới dạng UTF-8   -> cần bóc thêm một lớp.
+def _lay_theo_khoa(item: dict, cac_khoa: tuple[str, ...]):
+    """Lấy giá trị theo tên khóa, bỏ qua hoa/thường và dấu gạch dưới.
 
-    ĐÂY LÀ CÁCH ĐI VÒNG cho lỗi phía ELIS — đúng ra API phải trả
-    Content-Type: application/zip với thân nhị phân (tài liệu mục 4.3).
-    Khi họ sửa, hàm này tự động không được dùng tới nữa vì
-    _lay_zip_tu_response() thử đọc ZIP nhị phân TRƯỚC.
+    eLIS trộn lẫn nhiều quy ước đặt tên giữa các API (UserCourseId khi gửi
+    lên, userCourseId khi nhận về, certificate_id ở chỗ khác), nên tra cứu
+    linh hoạt sẽ đỡ vỡ khi họ đổi tiếp.
     """
-    if not than[:3] in (b'"PK', b"'PK") and not than.lstrip()[:3] == b'"PK':
+    ban_do = {_chuan_khoa(k): v for k, v in item.items()}
+    for khoa in cac_khoa:
+        gia_tri = ban_do.get(_chuan_khoa(khoa))
+        if gia_tri:
+            return gia_tri
+    return None
+
+
+def _giai_base64(gia_tri: str) -> bytes | None:
+    """Giải base64 thành bytes, None nếu không phải file hợp lệ.
+
+    Chấp nhận cả dạng data URL ("data:application/pdf;base64,JVBER...") vì
+    một số backend trả kèm tiền tố đó.
+
+    Chỉ nhận kết quả khi byte đầu khớp một chữ ký file đã biết — tránh nhận
+    nhầm một chuỗi văn bản dài (vd tên khóa học) thành nội dung file.
+    """
+    if not isinstance(gia_tri, str) or len(gia_tri) < 64:
         return None
+
+    chuoi = gia_tri.strip()
+    if chuoi.startswith("data:") and "," in chuoi:
+        chuoi = chuoi.split(",", 1)[1]
 
     try:
-        # latin-1: mỗi byte thành đúng một ký tự, không bao giờ lỗi.
-        chuoi = json.loads(than.decode("latin-1"))
-    except (ValueError, UnicodeDecodeError):
-        return None
-    if not isinstance(chuoi, str):
+        du_lieu = base64.b64decode(chuoi, validate=False)
+    except (ValueError, binascii.Error):
         return None
 
-    try:
-        ung_vien = chuoi.encode("latin-1")
-    except UnicodeEncodeError:
-        return None
+    return du_lieu if du_lieu.startswith(_CHU_KY_FILE) else None
 
-    # Kiểu 1: ra ngay.
-    if _co_phai_zip(ung_vien):
-        return ung_vien
 
-    # Kiểu 2: server ghi non-ASCII dưới dạng UTF-8 -> bóc thêm một lớp.
-    try:
-        ung_vien_2 = ung_vien.decode("utf-8").encode("latin-1")
-    except (UnicodeDecodeError, UnicodeEncodeError):
-        return None
-    return ung_vien_2 if _co_phai_zip(ung_vien_2) else None
+def _tim_base64_trong_item(item: dict) -> bytes | None:
+    """Tìm trường chứa nội dung file trong một item, KHÔNG dựa vào tên trường.
+
+    Vì sao không hardcode tên: tài liệu chưa mô tả định dạng mới, và eLIS đã
+    đổi hợp đồng API hai lần. Dò theo NỘI DUNG (giải base64 ra có đúng chữ ký
+    file không) chắc chắn hơn là đoán tên trường là fileBase64 hay base64 hay
+    fileContent.
+
+    Ưu tiên trường có tên gợi ý base64/file/content trước, để không phải giải
+    mã thử mọi trường khi item có nhiều chuỗi dài.
+    """
+    goi_y, con_lai = [], []
+    for ten, gia_tri in item.items():
+        if not isinstance(gia_tri, str):
+            continue
+        t = _chuan_khoa(ten)
+        (goi_y if any(x in t for x in ("base64", "file", "content", "data"))
+         else con_lai).append(gia_tri)
+
+    for gia_tri in goi_y + con_lai:
+        du_lieu = _giai_base64(gia_tri)
+        if du_lieu is not None:
+            return du_lieu
+    return None
+
+
+def _tim_danh_sach_item(body) -> list[dict]:
+    """Tìm mảng item trong response, dù nó nằm ở gốc hay trong 'data'/'items'."""
+    if isinstance(body, list):
+        return [x for x in body if isinstance(x, dict)]
+    if isinstance(body, dict):
+        for khoa in ("data", "items", "result", "files", "certificates"):
+            gia_tri = _lay_theo_khoa(body, (khoa,))
+            if isinstance(gia_tri, list):
+                return [x for x in gia_tri if isinstance(x, dict)]
+        # Response chỉ chứa MỘT file, không bọc mảng.
+        if _tim_base64_trong_item(body) is not None:
+            return [body]
+    return []
+
+
+def _doc_file_tu_json(body) -> list[dict]:
+    """Rút danh sách file từ response JSON định dạng mới."""
+    items = _tim_danh_sach_item(body)
+    if not items:
+        raise ElisError(
+            "Download: response JSON không chứa item nào đọc được. "
+            f"Cấu trúc nhận được: {_mo_ta_cau_truc(body)}")
+
+    ket_qua = []
+    for item in items:
+        # success=false -> eLIS không có file (soft-fail). Bỏ qua, run.py đã
+        # ghi log những item gửi lên mà không nhận về.
+        if item.get("success") is False:
+            continue
+
+        noi_dung = _tim_base64_trong_item(item)
+        if noi_dung is None:
+            continue
+
+        ket_qua.append({
+            "userCourseId": _lay_theo_khoa(item, _KHOA_UC_ID),
+            "certificate_id": _lay_theo_khoa(item, _KHOA_CERT_ID),
+            "anh_bytes": noi_dung,
+            "ten_file": _lay_theo_khoa(item, _KHOA_TEN_FILE),
+            # Giữ tạm tên các trường để _ghep_id() ghi log khi phải đoán id.
+            # Bị xoá ngay sau đó, không lọt ra ngoài client.py.
+            "_cac_truong": list(item.keys()),
+        })
+
+    if not ket_qua:
+        raise ElisError(
+            "Download: không giải được base64 của file nào. "
+            f"Cấu trúc nhận được: {_mo_ta_cau_truc(body)}")
+    return ket_qua
+
+
+def _mo_ta_cau_truc(gia_tri, sau: int = 0) -> str:
+    """Tóm tắt cấu trúc JSON (tên trường + kiểu) để báo lỗi cho dễ lần.
+
+    In tên trường chứ KHÔNG in giá trị: giá trị base64 dài hàng trăm KB, in
+    ra chỉ làm ngập log mà không giúp gì.
+    """
+    if sau > 3:
+        return "..."
+    if isinstance(gia_tri, dict):
+        phan = [f"{k}: {_mo_ta_cau_truc(v, sau + 1)}" for k, v in list(gia_tri.items())[:12]]
+        return "{" + ", ".join(phan) + "}"
+    if isinstance(gia_tri, list):
+        if not gia_tri:
+            return "[]"
+        return f"[{len(gia_tri)} phần tử: {_mo_ta_cau_truc(gia_tri[0], sau + 1)}]"
+    if isinstance(gia_tri, str):
+        return f"str({len(gia_tri)} ký tự)"
+    return type(gia_tri).__name__
 
 
 def _an_toan_de_in(du_lieu, gioi_han: int = 200) -> str:
@@ -175,55 +338,6 @@ def _an_toan_de_in(du_lieu, gioi_han: int = 200) -> str:
     if isinstance(du_lieu, bytes):
         return repr(du_lieu[:gioi_han])
     return repr((du_lieu if isinstance(du_lieu, str) else str(du_lieu))[:gioi_han])
-
-
-def _lay_zip_tu_response(resp) -> bytes:
-    """Rút file ZIP ra khỏi response. Ném ElisError nếu không có ZIP.
-
-    Thử theo thứ tự, KHÔNG tin Content-Type (gateway hay khai sai):
-
-      1. Thân là ZIP nhị phân       -> dùng luôn (đường chuẩn theo tài liệu)
-      2. Thân là chuỗi JSON "PK..." -> gỡ ra (lỗi hiện tại của ELIS)
-      3. Thân là object JSON        -> đúng là báo lỗi, đọc message
-    """
-    # 1. Đường chuẩn: thân là ZIP nhị phân.
-    if _co_phai_zip(resp.content):
-        return resp.content
-
-    # 2. ZIP bị bọc thành chuỗi JSON.
-    #    Đọc từ resp.content (BYTE THÔ) — xem giải thích trong
-    #    _giai_ma_zip_boc_json về việc resp.json() làm mất dữ liệu.
-    zip_bytes = _giai_ma_zip_boc_json(resp.content)
-    if zip_bytes is not None:
-        return zip_bytes
-
-    if resp.status_code != 200:
-        raise ElisError(
-            f"Download ZIP HTTP {resp.status_code}: "
-            f"{_an_toan_de_in(resp.text)}"
-        )
-
-    try:
-        data = resp.json()
-    except ValueError:
-        raise ElisError(
-            f"Download ZIP: response không phải ZIP cũng không phải JSON. "
-            f"Content-Type={resp.headers.get('Content-Type')!r}, "
-            f"{len(resp.content)} byte, bắt đầu bằng "
-            f"{_an_toan_de_in(resp.content, 60)}"
-        ) from None
-
-    # Envelope lỗi có thể bị bọc thêm một hoặc vài lớp chuỗi JSON.
-    data = _boc_json_long(data)
-
-    # 3. Báo lỗi thật (file_101 / file_102 / file_105 — tài liệu mục 4.4).
-    if isinstance(data, dict):
-        raise ElisError(f"Download ZIP lỗi: {_mo_ta_loi(data)}")
-
-    raise ElisError(
-        f"Download ZIP: response lạ ({type(data).__name__}): "
-        f"{_an_toan_de_in(data)}"
-    )
 
 
 def _boc_json_long(gia_tri, toi_da: int = 4):
@@ -279,39 +393,6 @@ def _mo_ta_loi(body: dict) -> str:
             dong.append(f"    ... và {len(items) - 5} cặp nữa")
     return "\n".join(dong)
 
-
-def _giai_nen_zip(zip_bytes: bytes) -> list[dict]:
-    """Giải nén ZIP, đọc manifest.json, trả về ảnh cho item success=true."""
-    ket_qua = []
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        # Đọc manifest để biết entry nào ứng với item nào.
-        try:
-            manifest_raw = zf.read("manifest.json").decode("utf-8")
-            manifest = json.loads(manifest_raw)
-        except (KeyError, json.JSONDecodeError) as e:
-            raise ElisError(f"ZIP thiếu/lỗi manifest.json: {e}") from e
-
-        for item in manifest:
-            # Chỉ scan item có file thật (xem tài liệu 4.3).
-            if not item.get("success"):
-                continue
-            entry = item.get("entryName", "")
-            if not entry:
-                continue
-            try:
-                anh_bytes = zf.read(entry)
-            except KeyError:
-                continue
-            ket_qua.append({
-                "userCourseId": item.get("userCourseId"),
-                "certificate_id": item.get("certificateId"),
-                "anh_bytes": anh_bytes,
-                "ten_file": item.get("originalFileName"),
-            })
-    return ket_qua
-
-
-# ===== API ③ — Cập nhật trạng thái duyệt =====
 
 def cap_nhat_trang_thai(cac_ket_qua: list[dict]) -> dict:
     """POST ProcessUserCourseStatus — gửi kết quả APPROVED/REJECTED.

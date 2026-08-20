@@ -106,8 +106,21 @@ class Settings(BaseSettings):
     mail_den: str = Field(default="", description="Email nhận, nhiều người cách nhau dấu phẩy")
 
     # ===== Tham số vận hành =====
-    # Số giây nghỉ giữa mỗi vòng lặp hỏi ELIS (khi không còn việc).
-    poll_interval_giay: int = Field(default=60)
+    # Số giây nghỉ giữa mỗi vòng lặp hỏi ELIS.
+    poll_interval_giay: int = Field(default=5)
+
+    # Số chứng chỉ xử lý trong MỘT lô: tải file -> scan -> nộp kết quả.
+    #
+    # Lô càng nhỏ thì mất mát càng ít khi có sự cố giữa chừng (rớt mạng,
+    # container restart): những lô đã nộp xong vẫn được giữ, chỉ lô đang dở
+    # phải làm lại. Đổi lại là gọi API nhiều lần hơn.
+    #
+    # Đặt 1 nghĩa là nộp ngay sau mỗi chứng chỉ — an toàn nhất, và với lượng
+    # chứng chỉ hiện tại thì chi phí gọi API thêm không đáng kể.
+    #
+    # eLIS giới hạn 20 cặp mỗi request tải file, nên giá trị lớn hơn 20 sẽ
+    # bị ép về 20 (xem run.py).
+    kich_thuoc_lo: int = Field(default=1)
     # Số lần thử lại khi gọi API gặp lỗi tạm thời (vd 502, timeout).
     so_lan_retry: int = Field(default=3)
     # Số giây nghỉ giữa các lần thử lại.

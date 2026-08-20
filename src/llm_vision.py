@@ -57,11 +57,30 @@ class LlmVisionError(Exception):
     """Lỗi khi gọi Gemma hoặc parse kết quả."""
 
 
+# Chữ ký byte đầu file -> kiểu MIME. Nhận dạng theo NỘI DUNG, không theo
+# đuôi file hay giả định, vì file_utils.nen_cho_vua() có thể đã đổi ảnh sang
+# JPEG để lọt giới hạn kích thước request.
+_CHU_KY_MIME = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff",      "image/jpeg"),
+    (b"BM",                "image/bmp"),
+    (b"II*\x00",           "image/tiff"),
+    (b"MM\x00*",           "image/tiff"),
+)
+
+
 def _anh_thanh_data_url(anh_bytes: bytes) -> str:
-    """Mã hóa ảnh thành data URL base64 để gửi qua API."""
+    """Mã hóa ảnh thành data URL base64 để gửi qua API.
+
+    Kiểu MIME lấy từ CHỮ KÝ BYTE thật. Trước đây hàm khai cứng "image/png"
+    cho mọi ảnh — chấp nhận được khi mọi ảnh đều là PNG, nhưng sai kể từ khi
+    nen_cho_vua() đổi ảnh lớn sang JPEG. Khai sai MIME thì API có thể từ
+    chối, hoặc tệ hơn là đọc sai ảnh mà không báo gì.
+    """
+    kieu = next((mime for chu_ky, mime in _CHU_KY_MIME
+                 if anh_bytes.startswith(chu_ky)), "image/png")
     b64 = base64.b64encode(anh_bytes).decode("ascii")
-    # Dùng png cho an toàn; API chấp nhận data URL cho hầu hết định dạng ảnh.
-    return f"data:image/png;base64,{b64}"
+    return f"data:{kieu};base64,{b64}"
 
 
 def _lam_sach_json(text: str) -> str:
