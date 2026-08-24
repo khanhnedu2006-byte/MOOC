@@ -1,7 +1,7 @@
 """Tiện ích xử lý file (file_utils).
 
 Hai việc:
-  1. Kiểm tra file có phải ảnh hoặc PDF hợp lệ không — dựa trên NỘI DUNG thật
+  1. Kiểm tra file có phải ảnh hoặc PDF hợp lệ không — dựa trên NỘI CORRECT thật
      (python-magic đọc byte đầu), không tin đuôi file. Bắt được cả trường hợp
      file HEIC/WebP bị đổi đuôi thành .jpg.
   2. Chuyển file thành ảnh dạng bytes để đưa cho Gemma (LLM nhận ảnh):
@@ -18,7 +18,7 @@ import magic
 import pypdfium2 as pdfium
 
 # Các MIME được chấp nhận. Azure và Gemma đều đọc được các loại này.
-MIME_ANH = {"image/jpeg", "image/png", "image/bmp", "image/tiff"}
+MIME_IMAGE = {"image/jpeg", "image/png", "image/bmp", "image/tiff"}
 MIME_PDF = "application/pdf"
 
 # Độ phân giải render PDF. 200 DPI đủ rõ để đọc chữ, kể cả dấu tiếng Việt.
@@ -26,63 +26,63 @@ MIME_PDF = "application/pdf"
 PDF_SCALE = 200 / 72
 
 
-class FileKhongHopLe(Exception):
+class InvalidFileError(Exception):
     """File không phải ảnh/PDF hợp lệ, hoặc không đọc được."""
 
 
-def kiem_tra_loai(duong_dan: str | Path) -> str:
-    """Trả về MIME thật của file. Ném FileKhongHopLe nếu không hỗ trợ.
+def check_mime(path: str | Path) -> str:
+    """Trả về MIME thật của file. Ném InvalidFileError nếu không hỗ trợ.
 
     Đọc nội dung thật, không tin đuôi file.
     """
-    duong_dan = Path(duong_dan)
-    if not duong_dan.is_file():
-        raise FileKhongHopLe(f"Không tìm thấy file: {duong_dan}")
+    path = Path(path)
+    if not path.is_file():
+        raise InvalidFileError(f"Không tìm thấy file: {path}")
 
-    mime = magic.from_file(str(duong_dan), mime=True)
+    mime = magic.from_file(str(path), mime=True)
 
-    if mime in MIME_ANH or mime == MIME_PDF:
+    if mime in MIME_IMAGE or mime == MIME_PDF:
         return mime
 
     # Chẩn đoán rõ vài loại hay bị đổi đuôi.
     if mime == "image/heic" or mime == "image/heif":
-        raise FileKhongHopLe(
-            f"File là HEIC (ảnh iPhone), không hỗ trợ. Chuyển sang JPEG. ({duong_dan.name})"
+        raise InvalidFileError(
+            f"File là HEIC (ảnh iPhone), không hỗ trợ. Chuyển sang JPEG. ({path.name})"
         )
     if mime == "image/webp":
-        raise FileKhongHopLe(
-            f"File là WebP, không hỗ trợ. Chuyển sang JPEG. ({duong_dan.name})"
+        raise InvalidFileError(
+            f"File là WebP, không hỗ trợ. Chuyển sang JPEG. ({path.name})"
         )
-    raise FileKhongHopLe(f"Loại file không hỗ trợ: {mime} ({duong_dan.name})")
+    raise InvalidFileError(f"Loại file không hỗ trợ: {mime} ({path.name})")
 
 
-def doc_thanh_anh(duong_dan: str | Path) -> list[bytes]:
+def read_as_images(path: str | Path) -> list[bytes]:
     """Đọc file thành danh sách ảnh (bytes).
 
     Trả về list vì PDF có thể nhiều trang. Ảnh đơn thì list có 1 phần tử.
       - Ảnh: đọc bytes gốc.
       - PDF: render từng trang thành ảnh.
 
-    Mọi ảnh trả về đều đã qua nen_cho_vua() để không vượt giới hạn kích
+    Mọi ảnh trả về đều đã qua compress_to_fit() để không vượt giới hạn kích
     thước request của API — xem giải thích ở hàm đó.
     """
-    duong_dan = Path(duong_dan)
-    mime = kiem_tra_loai(duong_dan)
+    path = Path(path)
+    mime = check_mime(path)
 
     if mime == MIME_PDF:
-        return _render_pdf(duong_dan)
+        return _render_pdf(path)
 
     # Ảnh sẵn: đọc thẳng bytes, nhưng vẫn phải ép vừa ngưỡng — ảnh chụp
     # từ điện thoại có thể 5-10 MB.
-    return [nen_cho_vua(duong_dan.read_bytes())]
+    return [compress_to_fit(path.read_bytes())]
 
 
-def _render_pdf(duong_dan: Path) -> list[bytes]:
+def _render_pdf(path: Path) -> list[bytes]:
     """Render mỗi trang PDF thành ảnh bytes, đã ép vừa ngưỡng."""
     import io
 
-    anh_list: list[bytes] = []
-    pdf = pdfium.PdfDocument(str(duong_dan))
+    images: list[bytes] = []
+    pdf = pdfium.PdfDocument(str(path))
     try:
         for i in range(len(pdf)):
             page = pdf[i]
@@ -90,13 +90,13 @@ def _render_pdf(duong_dan: Path) -> list[bytes]:
             pil_image = bitmap.to_pil()
             buf = io.BytesIO()
             pil_image.save(buf, format="PNG")
-            anh_list.append(nen_cho_vua(buf.getvalue()))
+            images.append(compress_to_fit(buf.getvalue()))
     finally:
         pdf.close()
 
-    if not anh_list:
-        raise FileKhongHopLe(f"PDF không có trang nào: {duong_dan.name}")
-    return anh_list
+    if not images:
+        raise InvalidFileError(f"PDF không có trang nào: {path.name}")
+    return images
 
 
 # ===== Ép ảnh vừa giới hạn kích thước request =====
@@ -112,17 +112,17 @@ def _render_pdf(duong_dan: Path) -> list[bytes]:
 # Đo thực tế trên một chứng chỉ Coursera: PDF render 200 DPI ra PNG 1,04 MB
 # -> request 1,4 MB -> nginx chặn. Cùng ảnh đó lưu JPEG chất lượng 85 chỉ
 # còn 357 KB mà KHÔNG giảm độ phân giải.
-GIOI_HAN_ANH = 600_000
+IMAGE_SIZE_LIMIT = 600_000
 
 # Chất lượng JPEG khi phải nén. 85 gần như không ảnh hưởng việc đọc chữ in
 # nhưng nhỏ hơn PNG khoảng ba lần.
-CHAT_LUONG_JPEG = 85
+JPEG_QUALITY = 85
 
 # Các mức cạnh dài thử lần lượt khi đổi JPEG vẫn chưa đủ nhỏ.
-_CAC_MUC_CANH = (2400, 2000, 1600, 1400, 1200, 1000)
+_EDGE_STEPS = (2400, 2000, 1600, 1400, 1200, 1000)
 
 
-def nen_cho_vua(anh_bytes: bytes, gioi_han: int = GIOI_HAN_ANH) -> bytes:
+def compress_to_fit(image_bytes: bytes, limit: int = IMAGE_SIZE_LIMIT) -> bytes:
     """Ép ảnh xuống dưới ngưỡng byte, giữ độ nét nhiều nhất có thể.
 
     Thứ tự ưu tiên — hy sinh thứ ít ảnh hưởng tới việc đọc chữ trước:
@@ -136,64 +136,64 @@ def nen_cho_vua(anh_bytes: bytes, gioi_han: int = GIOI_HAN_ANH) -> bytes:
     ảnh hơi to rồi nhận lỗi rõ ràng từ API, còn hơn chặn ngay tại đây và làm
     chứng chỉ thất bại vì một lý do người vận hành không nhìn thấy.
     """
-    if len(anh_bytes) <= gioi_han:
-        return anh_bytes
+    if len(image_bytes) <= limit:
+        return image_bytes
 
     import io
     from PIL import Image
 
     try:
-        anh = Image.open(io.BytesIO(anh_bytes))
-        anh.load()
+        image = Image.open(io.BytesIO(image_bytes))
+        image.load()
     except Exception:
         # Không mở được thì trả nguyên trạng, để tầng trên báo lỗi tử tế.
-        return anh_bytes
+        return image_bytes
 
     # JPEG không có kênh trong suốt; ghép nền trắng để không ra ảnh đen.
-    if anh.mode in ("RGBA", "LA", "P"):
-        anh = anh.convert("RGBA")
-        nen = Image.new("RGB", anh.size, (255, 255, 255))
-        nen.paste(anh, mask=anh.split()[-1])
-        anh = nen
+    if image.mode in ("RGBA", "LA", "P"):
+        image = image.convert("RGBA")
+        background = Image.new("RGB", image.size, (255, 255, 255))
+        background.paste(image, mask=image.split()[-1])
+        image = background
     else:
-        anh = anh.convert("RGB")
+        image = image.convert("RGB")
 
-    nho_nhat = _luu_jpeg(anh, CHAT_LUONG_JPEG)
-    if len(nho_nhat) <= gioi_han:
-        return nho_nhat
+    smallest = _save_jpeg(image, JPEG_QUALITY)
+    if len(smallest) <= limit:
+        return smallest
 
-    canh_goc = max(anh.size)
-    for canh in _CAC_MUC_CANH:
-        if canh >= canh_goc:
+    original_edge = max(image.size)
+    for edge in _EDGE_STEPS:
+        if edge >= original_edge:
             continue
-        thu = _luu_jpeg(_thu_nho(anh, canh / canh_goc), CHAT_LUONG_JPEG)
-        if len(thu) < len(nho_nhat):
-            nho_nhat = thu
-        if len(thu) <= gioi_han:
-            return thu
+        candidate = _save_jpeg(_resize(image, edge / original_edge), JPEG_QUALITY)
+        if len(candidate) < len(smallest):
+            smallest = candidate
+        if len(candidate) <= limit:
+            return candidate
 
     # Vẫn quá lớn: hạ chất lượng ở mức nhỏ nhất đã thử.
-    anh_nho = _thu_nho(anh, min(1.0, _CAC_MUC_CANH[-1] / canh_goc))
-    for chat_luong in (70, 55, 40):
-        thu = _luu_jpeg(anh_nho, chat_luong)
-        if len(thu) < len(nho_nhat):
-            nho_nhat = thu
-        if len(thu) <= gioi_han:
-            return thu
+    small_image = _resize(image, min(1.0, _EDGE_STEPS[-1] / original_edge))
+    for quality in (70, 55, 40):
+        candidate = _save_jpeg(small_image, quality)
+        if len(candidate) < len(smallest):
+            smallest = candidate
+        if len(candidate) <= limit:
+            return candidate
 
-    return nho_nhat
+    return smallest
 
 
-def _thu_nho(anh, ty_le: float):
+def _resize(image, ratio: float):
     from PIL import Image
-    if ty_le >= 1:
-        return anh
-    return anh.resize((max(1, int(anh.width * ty_le)),
-                       max(1, int(anh.height * ty_le))), Image.LANCZOS)
+    if ratio >= 1:
+        return image
+    return image.resize((max(1, int(image.width * ratio)),
+                       max(1, int(image.height * ratio))), Image.LANCZOS)
 
 
-def _luu_jpeg(anh, chat_luong: int) -> bytes:
+def _save_jpeg(image, quality: int) -> bytes:
     import io
     buf = io.BytesIO()
-    anh.save(buf, format="JPEG", quality=chat_luong, optimize=True)
+    image.save(buf, format="JPEG", quality=quality, optimize=True)
     return buf.getvalue()

@@ -31,7 +31,7 @@ import ocr_azure
 import pipeline
 import process_data
 from config import settings
-from schemas import ThongTinNhap
+from schemas import InputInfo
 
 _azure_client = None
 
@@ -39,127 +39,127 @@ _azure_client = None
 def _get_azure():
     global _azure_client
     if _azure_client is None:
-        _azure_client = ocr_azure.tao_client()
+        _azure_client = ocr_azure.create_client()
     return _azure_client
 
 
-def _anh_de_hien_thi(anh_path):
+def _image_for_display(image_path):
     """Đọc file thành danh sách ảnh PIL để hiển thị (PDF -> nhiều trang ảnh)."""
-    if not anh_path:
+    if not image_path:
         return []
     try:
-        anh_bytes_list = file_utils.doc_thanh_anh(anh_path)
-    except file_utils.FileKhongHopLe:
+        image_bytes_list = file_utils.read_as_images(image_path)
+    except file_utils.InvalidFileError:
         return []
-    anh_pil = []
-    for b in anh_bytes_list:
+    pil_image = []
+    for b in image_bytes_list:
         try:
-            anh_pil.append(Image.open(io.BytesIO(b)))
+            pil_image.append(Image.open(io.BytesIO(b)))
         except Exception:
             pass
-    return anh_pil
+    return pil_image
 
 
-def xu_ly_demo(anh_path, ten, ma, khoa_hoc):
+def process_demo(image_path, name, code, course):
     """Nhận input, chạy pipeline, trả về (ảnh hiển thị, text kết quả)."""
-    if not anh_path:
+    if not image_path:
         return [], "Vui lòng tải lên một ảnh chứng chỉ."
-    if not ten or not ma or not khoa_hoc:
+    if not name or not code or not course:
         return [], "Vui lòng nhập đủ: tên, mã nhân viên, tên khóa học."
 
-    anh_hien_thi = _anh_de_hien_thi(anh_path)
+    display_image = _image_for_display(image_path)
 
     try:
-        anh_list = file_utils.doc_thanh_anh(anh_path)
-    except file_utils.FileKhongHopLe as e:
-        return anh_hien_thi, f"Lỗi file: {e}"
+        images = file_utils.read_as_images(image_path)
+    except file_utils.InvalidFileError as e:
+        return display_image, f"Lỗi file: {e}"
 
-    nhap = ThongTinNhap(ten_nhan_vien=ten, ten_khoa_hoc=khoa_hoc, ma_nhan_vien=ma)
+    given = InputInfo(employee_name=name, course_name=course, employee_code=code)
 
     try:
-        kq = pipeline.xu_ly(
-            anh_list=anh_list,
-            nhap=nhap,
-            trich_tu_anh=llm_vision.trich_tu_anh,
-            ocr_nhieu_anh=ocr_azure.ocr_nhieu_anh,
-            trich_tu_text=llm_text.trich_tu_text,
+        kq = pipeline.process(
+            images=images,
+            given=given,
+            extract_from_image=llm_vision.extract_from_image,
+            ocr_images=ocr_azure.ocr_images,
+            extract_from_text=llm_text.extract_from_text,
             azure_client=_get_azure(),
         )
     except Exception as e:
-        return anh_hien_thi, f"Lỗi khi xử lý: {e}"
+        return display_image, f"Lỗi khi xử lý: {e}"
 
-    icon = "✅" if kq.ket_qua.value == "APPROVED" else "❌"
-    dong = [
-        f"## {icon} {kq.ket_qua.value}",
+    icon = "✅" if kq.verdict.value == "APPROVED" else "❌"
+    lines = [
+        f"## {icon} {kq.verdict.value}",
         "",
-        f"**Lý do:** {kq.ly_do}",
-        f"**Tầng xử lý:** {kq.tang_xu_ly}",
+        f"**Lý do:** {kq.reason}",
+        f"**Tầng xử lý:** {kq.stage}",
         "",
         "### Thông tin trích được từ ảnh",
     ]
-    if kq.trich_xuat:
-        t = kq.trich_xuat
-        dong.append(f"- Tên người nhận: **{t.ten_nguoi_nhan}**")
-        dong.append(f"- Tên chứng chỉ: **{t.ten_chung_chi}**")
-        if t.ten_chung_chi_phu:
-            dong.append(f"- Tên (ngôn ngữ 2): **{t.ten_chung_chi_phu}**")
-        dong.append(f"- Ngày nhận: **{t.ngay_nhan}**")
-        trong = process_data.ngay_hop_le(
-            t.ngay_nhan, settings.thoi_gian_hop_le_tu, settings.thoi_gian_hop_le_den
+    if kq.extracted:
+        t = kq.extracted
+        lines.append(f"- Tên người nhận: **{t.recipient_name}**")
+        lines.append(f"- Tên chứng chỉ: **{t.certificate_name}**")
+        if t.certificate_name_alt:
+            lines.append(f"- Tên (ngôn ngữ 2): **{t.certificate_name_alt}**")
+        lines.append(f"- Ngày nhận: **{t.issue_date}**")
+        in_range = process_data.date_in_range(
+            t.issue_date, settings.valid_from, settings.valid_to
         )
-        dong.append(
-            f"- Thời gian: {'trong khoảng ✅' if trong else 'ngoài khoảng ❌'} "
-            f"(khoảng hợp lệ: {settings.thoi_gian_hop_le_tu} .. {settings.thoi_gian_hop_le_den})"
+        lines.append(
+            f"- Thời gian: {'trong khoảng ✅' if in_range else 'ngoài khoảng ❌'} "
+            f"(khoảng hợp lệ: {settings.valid_from} .. {settings.valid_to})"
         )
 
-    dong += [
+    lines += [
         "",
         "### Thông tin đã nhập",
-        f"- Tên: {ten}",
-        f"- Mã: {ma}",
-        f"- Khóa học: {khoa_hoc}",
+        f"- Tên: {name}",
+        f"- Mã: {code}",
+        f"- Khóa học: {course}",
     ]
-    return anh_hien_thi, "\n".join(dong)
+    return display_image, "\n".join(lines)
 
 
-def tao_giao_dien():
+def build_ui():
     with gr.Blocks(title="MOOC - Demo xác minh chứng chỉ") as demo:
         gr.Markdown("# Demo xác minh chứng chỉ MOOC")
         gr.Markdown("Tải ảnh/PDF chứng chỉ và nhập thông tin để kiểm tra.")
 
         with gr.Row():
             with gr.Column():
-                anh = gr.File(
+                image = gr.File(
                     label="Ảnh chứng chỉ (JPG, PNG, PDF)",
                     file_types=["image", ".pdf"],
                     type="filepath",
                 )
                 # Ảnh hiện ngay dưới ô upload, cùng cột với các ô nhập.
-                anh_xem = gr.Gallery(
+                preview_image = gr.Gallery(
                     label="Ảnh chứng chỉ đã tải",
                     columns=1,
                     height=400,
                     object_fit="contain",  # thu nhỏ trọn ảnh cho lọt khuôn, không cắt góc
                     preview=True,           # click để xem ảnh phóng to
                 )
-                ten = gr.Textbox(label="Tên nhân viên")
-                ma = gr.Textbox(label="Mã nhân viên")
-                khoa_hoc = gr.Textbox(label="Tên khóa học")
-                nut = gr.Button("Kiểm tra", variant="primary")
+                name = gr.Textbox(label="Tên nhân viên")
+                code = gr.Textbox(label="Mã nhân viên")
+                course = gr.Textbox(label="Tên khóa học")
+                button = gr.Button("Kiểm tra", variant="primary")
             with gr.Column():
-                ket_qua = gr.Markdown(label="Kết quả")
+                verdict = gr.Markdown(label="Kết quả")
 
         # Hiện ảnh NGAY khi vừa chọn file, không chờ bấm nút.
-        anh.change(
-            fn=_anh_de_hien_thi,
-            inputs=anh,
-            outputs=anh_xem,
+        image.change(
+            fn=_image_for_display,
+            inputs=image,
+            outputs=preview_image,
         )
 
-        nut.click(
-            fn=xu_ly_demo,
-            inputs=[anh, ten, ma, khoa_hoc],
-            outputs=[anh_xem, ket_qua],
+        button.click(
+            fn=process_demo,
+            inputs=[image, name, code, course],
+            outputs=[preview_image, verdict],
         )
     return demo
 
@@ -168,4 +168,4 @@ if __name__ == "__main__":
     # share=True: cố tạo link công khai tạm thời (~72h) để chia sẻ qua internet.
     # Nếu mạng chặn (không tạo được share link), Gradio tự chạy link nội bộ
     # http://127.0.0.1:7860 — vẫn dùng được trên máy này, chỉ không share ra ngoài.
-    tao_giao_dien().launch(share=True)
+    build_ui().launch(share=True)

@@ -11,7 +11,7 @@ File .env đặt ở thư mục gốc dự án (mooc/.env), KHÔNG commit lên g
 """
 
 from langchain_openai import ChatOpenAI
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -61,53 +61,53 @@ class Settings(BaseSettings):
     elis_api_key: str = Field(default="", description="API key ELIS (header apikey)")
 
     # ===== Chế độ khớp khóa học =====
-    # "long"  : người nhập chỉ cần là TẬP CON của tên khóa trên ảnh cũng khớp.
+    # "loose"  : người nhập chỉ cần là TẬP CON của tên khóa trên ảnh cũng khớp.
     #           Vd nhập "khóa học code online", ảnh "khóa học code online
     #           (code-bc-06)" -> khớp (ảnh có thừa mã lớp, người nhập thiếu).
-    # "chat"  : tên khóa phải trùng KHỚP HOÀN TOÀN (cùng tập từ).
-    # Mặc định "long". Đổi thành "chat" nếu muốn siết chặt.
-    che_do_khop_khoa_hoc: str = Field(default="long")
+    # "strict"  : tên khóa phải trùng KHỚP HOÀN TOÀN (cùng tập từ).
+    # Mặc định "loose". Đổi thành "strict" nếu muốn siết chặt.
+    course_match_mode: str = Field(default="loose")
 
     # ===== Luật thời gian hoàn thành =====
     # Chứng chỉ hợp lệ nếu ngày hoàn thành nằm TRONG khoảng [đầu, cuối].
     # Ngoài khoảng -> REJECTED (lý do: thời gian hoàn thành không hợp lệ).
     # Đổi hai giá trị này khi sang năm mới. Định dạng: YYYY-MM-DD.
-    thoi_gian_hop_le_tu: str = Field(default="2026-01-01")
-    thoi_gian_hop_le_den: str = Field(default="2026-09-30")
-
-    # ===== Gửi báo cáo =====
-    # "teams" hoặc "email". Mặc định teams vì không cần mật khẩu và không
-    # phụ thuộc việc công ty có bật SMTP AUTH hay không.
-    kenh_bao_cao: str = Field(default="teams")
-
-    # --- Teams (Workflows webhook) ---
-    # Tạo: mở kênh Teams -> ... -> Workflows -> mẫu "Post to a channel when
-    # a webhook request is received" -> chọn kênh -> Create -> copy URL.
-    # Cách cũ qua Connectors đã bị Microsoft TẮT VĨNH VIỄN trong 5/2026.
-    #
-    # URL này CHÍNH LÀ thứ xác thực — ai có nó cũng đăng bài vào kênh được.
-    # Coi như mật khẩu, đừng commit lên git.
-    teams_webhook_url: str = Field(default="")
+    valid_from: str = Field(default="2026-01-01")
+    valid_to: str = Field(default="2026-09-30")
 
     # ===== Gửi báo cáo qua email =====
     # Báo cáo NỘI BỘ gửi cho mentor, không phải cho khách hàng eLIS.
     #
-    # SMTP_PASSWORD phải là App Password, KHÔNG phải mật khẩu đăng nhập —
-    # Office 365 không nhận mật khẩu thường khi tài khoản có bật MFA.
+    # SMTP_PASSWORD luôn phải là App Password, KHÔNG phải mật khẩu đăng nhập:
+    #   - Gmail: bật Xác minh 2 bước trước, rồi tạo App Password 16 ký tự.
+    #     Google đã bỏ hẳn "Quyền truy cập của ứng dụng kém an toàn" từ 2022,
+    #     nên mật khẩu Gmail thường CHẮC CHẮN bị từ chối.
+    #   - Office 365: không nhận mật khẩu thường khi tài khoản bật MFA, và
+    #     admin còn phải bật SMTP AUTH riêng cho từng hộp thư.
     #
-    # HẠN SỬ DỤNG: Microsoft đang khai tử Basic Auth cho SMTP AUTH trên
-    # Exchange Online, mốc hiện tại là 31/12/2026. Sau đó phải chuyển sang
-    # Microsoft Graph API hoặc SMTP relay nội bộ của công ty.
+    # HẠN SỬ DỤNG (chỉ với Office 365): Microsoft đang khai tử Basic Auth cho
+    # SMTP AUTH trên Exchange Online, mốc hiện tại là 31/12/2026. Gmail không
+    # bị mốc này.
+    #
+    # NHẬN NHIỀU TÊN BIẾN: SMTP_USER và SMTP_USERNAME là một; MAIL_TO,
+    # MANAGER_EMAIL cũng vậy. Lý do: tên biến trong tài liệu/mẫu mỗi nơi một
+    # khác, mà đặt sai tên thì pydantic không báo lỗi — nó chỉ lặng lẽ dùng
+    # giá trị mặc định rỗng, và bạn nhận được thông báo "thiếu cấu hình" dù
+    # đã điền đủ. Chấp nhận cả hai tên rẻ hơn nhiều so với việc đi tìm lỗi đó.
     smtp_host: str = Field(default="smtp.office365.com")
     smtp_port: int = Field(default=587)
-    smtp_user: str = Field(default="", description="Email công ty dùng để gửi")
+    smtp_user: str = Field(
+        default="", description="Email dùng để gửi",
+        validation_alias=AliasChoices("SMTP_USER", "SMTP_USERNAME"))
     smtp_password: str = Field(default="", description="App Password")
-    mail_tu: str = Field(default="", description="Địa chỉ From; rỗng = dùng smtp_user")
-    mail_den: str = Field(default="", description="Email nhận, nhiều người cách nhau dấu phẩy")
+    mail_from: str = Field(default="", description="Địa chỉ From; rỗng = dùng smtp_user")
+    mail_to: str = Field(
+        default="", description="Email nhận, nhiều người cách nhau dấu phẩy",
+        validation_alias=AliasChoices("MAIL_TO", "MANAGER_EMAIL", "MAIL_DEN"))
 
     # ===== Tham số vận hành =====
     # Số giây nghỉ giữa mỗi vòng lặp hỏi ELIS.
-    poll_interval_giay: int = Field(default=5)
+    poll_interval_seconds: int = Field(default=5)
 
     # Số chứng chỉ xử lý trong MỘT lô: tải file -> scan -> nộp kết quả.
     #
@@ -120,13 +120,50 @@ class Settings(BaseSettings):
     #
     # eLIS giới hạn 20 cặp mỗi request tải file, nên giá trị lớn hơn 20 sẽ
     # bị ép về 20 (xem run.py).
-    kich_thuoc_lo: int = Field(default=1)
+    batch_size: int = Field(default=1)
     # Số lần thử lại khi gọi API gặp lỗi tạm thời (vd 502, timeout).
-    so_lan_retry: int = Field(default=3)
+    retry_count: int = Field(default=3)
     # Số giây nghỉ giữa các lần thử lại.
-    retry_delay_giay: int = Field(default=5)
+    retry_delay_seconds: int = Field(default=5)
     # Timeout (giây) cho lời gọi API.
-    timeout_giay: int = Field(default=60)
+    timeout_seconds: int = Field(default=60)
+
+    # ===== Kho lưu chứng chỉ (phục vụ đánh giá lại) =====
+    # Sau khi nộp kết quả, bản ghi trên eLIS rời trạng thái WAITING nên vòng
+    # getCert sau KHÔNG trả về nó nữa — data thật chỉ đi qua MỘT lần. Bật cờ
+    # này để giữ lại ảnh + thông tin getCert, nhờ đó chạy lại bộ đánh giá
+    # (thư mục evaluation/) bao nhiêu lần cũng được mà không cần eLIS.
+    #
+    # MẶC ĐỊNH TẮT có chủ đích: chứng chỉ thật chứa tên, mã và email nhân
+    # viên. Một container production âm thầm tích trữ dữ liệu cá nhân là thứ
+    # không ai muốn phát hiện ra về sau. Bật khi cần thu thập, tắt khi chạy thật.
+    save_certificates: bool = Field(default=False)
+
+    # Thư mục chứa kho, tương đối so với gốc dự án.
+    archive_dir: str = Field(default="cert_archive")
+
+    # ===== Lịch gửi báo cáo tự động =====
+    # "off"     : không tự gửi (chỉ gửi tay bằng send_report.py --send)
+    # "daily"   : cuối mỗi ngày
+    # "weekly"  : cuối tuần
+    # "monthly" : cuối tháng
+    report_schedule: str = Field(default="off")
+
+    # Giờ gửi, dạng "HH:MM" giờ Việt Nam. Mặc định 18:00 — sau giờ làm, số
+    # liệu trong ngày đã đủ.
+    report_time: str = Field(default="18:00")
+
+    # Với weekly: gửi vào thứ mấy (0=Thứ Hai ... 6=Chủ nhật). Mặc định 4 =
+    # Thứ Sáu, để mentor đọc trước khi nghỉ cuối tuần chứ không phải sáng
+    # Thứ Hai lẫn với việc mới.
+    report_weekday: int = Field(default=4)
+
+    # Với monthly: gửi vào ngày mấy. 1 = ngày đầu tháng, báo cáo tháng TRƯỚC.
+    report_monthday: int = Field(default=1)
+
+    # Mốc gom số liệu trong biểu đồ: "day" | "week" | "month".
+    # Rỗng = tự chọn theo report_schedule (xem scheduler.py).
+    report_bucket: str = Field(default="")
 
 
 # Instance dùng chung. Thiếu key bắt buộc sẽ báo lỗi ngay lúc khởi động.

@@ -23,3 +23,9 @@ database/*.db
 response_tho.bin
 bao_cao.html
 test_cert_*.bin
+
+# Du lieu that: anh chung chi + file nhan chua ten/ma nhan vien
+cert_archive/
+evaluation/dataset.csv
+evaluation/*.csv
+.report_state.json

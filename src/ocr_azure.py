@@ -6,9 +6,9 @@ Khác với bản cũ ở phần chứng chỉ: module này KHÔNG kiểm tra đ
 hay render PDF — file_utils đã làm việc đó và đưa vào đây ảnh bytes sạch sẽ.
 
 Dùng trong pipeline:
-    from ocr_azure import tao_client, ocr_bytes
-    client = tao_client()
-    text = ocr_bytes(client, anh_bytes)
+    from ocr_azure import create_client, ocr_bytes
+    client = create_client()
+    text = ocr_bytes(client, image_bytes)
 """
 
 from azure.ai.documentintelligence import DocumentIntelligenceClient
@@ -24,7 +24,7 @@ class OcrError(Exception):
     """Lỗi khi gọi Azure OCR, đã diễn giải sang tiếng Việt."""
 
 
-def tao_client() -> DocumentIntelligenceClient:
+def create_client() -> DocumentIntelligenceClient:
     """Tạo client Azure Document Intelligence từ cấu hình .env."""
     return DocumentIntelligenceClient(
         endpoint=settings.azure_endpoint,
@@ -32,7 +32,7 @@ def tao_client() -> DocumentIntelligenceClient:
     )
 
 
-def ocr_bytes(client: DocumentIntelligenceClient, anh_bytes: bytes) -> str:
+def ocr_bytes(client: DocumentIntelligenceClient, image_bytes: bytes) -> str:
     """OCR một ảnh (bytes), trả về text thô.
 
     Ném OcrError nếu gọi Azure thất bại hoặc không đọc được chữ nào.
@@ -40,44 +40,44 @@ def ocr_bytes(client: DocumentIntelligenceClient, anh_bytes: bytes) -> str:
     try:
         poller = client.begin_analyze_document(
             MODEL_READ,
-            body=anh_bytes,
+            body=image_bytes,
             content_type="application/octet-stream",
         )
-        ket_qua = poller.result()
+        verdict = poller.result()
     except HttpResponseError as e:
-        raise OcrError(_dien_giai_loi(e)) from e
+        raise OcrError(_explain_error(e)) from e
 
-    text = ket_qua.content or ""
+    text = verdict.content or ""
     if not text.strip():
         raise OcrError("Azure không đọc được chữ nào (ảnh có thể mờ hoặc trống).")
     return text
 
 
-def ocr_nhieu_anh(client: DocumentIntelligenceClient, anh_list: list[bytes]) -> str:
+def ocr_images(client: DocumentIntelligenceClient, images: list[bytes]) -> str:
     """OCR nhiều ảnh (ví dụ PDF nhiều trang), nối text lại.
 
     Nếu một trang lỗi thì bỏ qua trang đó, vẫn trả text các trang còn lại.
     Chỉ ném lỗi khi KHÔNG trang nào đọc được.
     """
-    cac_phan = []
-    for i, anh in enumerate(anh_list, 1):
+    parts = []
+    for i, image in enumerate(images, 1):
         try:
-            cac_phan.append(ocr_bytes(client, anh))
+            parts.append(ocr_bytes(client, image))
         except OcrError:
             # Một trang lỗi không nên làm hỏng cả tài liệu.
             continue
 
-    if not cac_phan:
+    if not parts:
         raise OcrError("Không trang nào đọc được chữ.")
-    return "\n\n".join(cac_phan)
+    return "\n\n".join(parts)
 
 
-def _dien_giai_loi(e: HttpResponseError) -> str:
-    giai_thich = {
+def _explain_error(e: HttpResponseError) -> str:
+    explanation = {
         400: "Yêu cầu không hợp lệ (ảnh hỏng hoặc định dạng lỗi).",
         401: "Sai key Azure.",
         403: "Hết quota Free tier (500 trang/tháng) hoặc ảnh quá 4 MB.",
         429: "Bị giới hạn tốc độ, thử lại sau.",
     }
-    them = giai_thich.get(e.status_code or 0, "")
-    return f"[Azure {e.status_code}] {e.message}. {them}".strip()
+    added = explanation.get(e.status_code or 0, "")
+    return f"[Azure {e.status_code}] {e.message}. {added}".strip()

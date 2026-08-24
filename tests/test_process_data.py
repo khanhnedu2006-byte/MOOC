@@ -8,112 +8,112 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from process_data import chuan_hoa, parse_ngay, ngay_hop_le
+from process_data import normalize, parse_date, date_in_range
 
 
-# ===== chuan_hoa =====
+# ===== normalize =====
 
-class TestChuanHoa:
-    def test_bo_dau_tieng_viet(self):
-        assert chuan_hoa("Nguyễn Văn A") == "nguyen van a"
+class TestNormalize:
+    def test_strips_vietnamese_diacritics(self):
+        assert normalize("Nguyễn Văn A") == "nguyen van a"
 
-    def test_hoa_thuong(self):
-        assert chuan_hoa("NGUYEN VAN A") == "nguyen van a"
+    def test_case_insensitive(self):
+        assert normalize("NGUYEN VAN A") == "nguyen van a"
 
-    def test_khong_dau_va_co_dau_ra_cung_ket_qua(self):
-        assert chuan_hoa("NGUYEN VAN A") == chuan_hoa("Nguyễn Văn A")
+    def test_with_and_without_diacritics_equal(self):
+        assert normalize("NGUYEN VAN A") == normalize("Nguyễn Văn A")
 
-    def test_gop_khoang_trang_thua(self):
-        assert chuan_hoa("  Nguyễn   Văn  A  ") == "nguyen van a"
+    def test_collapses_extra_whitespace(self):
+        assert normalize("  Nguyễn   Văn  A  ") == "nguyen van a"
 
-    def test_none_tra_rong(self):
-        assert chuan_hoa(None) == ""
+    def test_none_returns_empty(self):
+        assert normalize(None) == ""
 
-    def test_chuoi_rong(self):
-        assert chuan_hoa("") == ""
+    def test_empty_string(self):
+        assert normalize("") == ""
 
-    def test_chi_khoang_trang(self):
-        assert chuan_hoa("   ") == ""
+    def test_whitespace_only(self):
+        assert normalize("   ") == ""
 
-    def test_nfc_nfd_giong_nhau(self):
+    def test_nfc_nfd_equal(self):
         import unicodedata
         nfc = "Nguyễn"
         nfd = unicodedata.normalize("NFD", "Nguyễn")
         # Khác byte nhưng sau chuẩn hóa phải giống nhau
         assert nfc.encode() != nfd.encode()
-        assert chuan_hoa(nfc) == chuan_hoa(nfd)
+        assert normalize(nfc) == normalize(nfd)
 
     # Bỏ dấu câu (ca thật gặp khi test dữ liệu)
-    def test_bo_dau_gach_thua_khoang_trang(self):
-        assert chuan_hoa("HIỆU QUẢ - TĂNG") == chuan_hoa("HIỆU QUẢ -TĂNG")
+    def test_strips_dash_to_space(self):
+        assert normalize("HIỆU QUẢ - TĂNG") == normalize("HIỆU QUẢ -TĂNG")
 
-    def test_bo_dau_ngoac_kep(self):
-        assert chuan_hoa('ky nang "nhan feedback"') == chuan_hoa("ky nang nhan feedback")
+    def test_strips_double_quotes(self):
+        assert normalize('ky nang "nhan feedback"') == normalize("ky nang nhan feedback")
 
-    def test_bo_ngoac_don(self):
-        assert chuan_hoa("Data Analysis (Phân tích)") == "data analysis phan tich"
+    def test_strips_parentheses(self):
+        assert normalize("Data Analysis (Phân tích)") == "data analysis phan tich"
 
-    def test_van_phan_biet_noi_dung_khac(self):
+    def test_still_distinguishes_content(self):
         # Bỏ dấu câu KHÔNG được làm hai nội dung khác nhau thành giống
-        assert chuan_hoa("Python cơ bản") != chuan_hoa("Python nâng cao")
+        assert normalize("Python cơ bản") != normalize("Python nâng cao")
 
 
-# ===== parse_ngay =====
+# ===== parse_date =====
 
-class TestParseNgay:
-    def test_ngay_kieu_viet_nam(self):
+class TestParseDate:
+    def test_vietnamese_date_format(self):
         # 05/03 = 5 tháng 3, KHÔNG phải 3 tháng 5
-        d = parse_ngay("05/03/2026")
+        d = parse_date("05/03/2026")
         assert d.day == 5 and d.month == 3
 
-    def test_ngay_tieng_anh(self):
-        d = parse_ngay("March 15, 2026")
+    def test_english_date(self):
+        d = parse_date("March 15, 2026")
         assert d.year == 2026 and d.month == 3 and d.day == 15
 
-    def test_ngay_tieng_viet(self):
-        d = parse_ngay("ngày 15 tháng 3 năm 2026")
+    def test_vietnamese_date(self):
+        d = parse_date("ngày 15 tháng 3 năm 2026")
         assert d.month == 3 and d.day == 15
 
-    def test_chi_co_nam_tra_none(self):
+    def test_year_only_returns_none(self):
         # Thiếu ngày/tháng -> không đủ thông tin -> None
-        assert parse_ngay("2026") is None
+        assert parse_date("2026") is None
 
-    def test_chu_la_tra_none(self):
-        assert parse_ngay("abcxyz") is None
+    def test_garbage_text_returns_none(self):
+        assert parse_date("abcxyz") is None
 
-    def test_none_tra_none(self):
-        assert parse_ngay(None) is None
+    def test_none_returns_none(self):
+        assert parse_date(None) is None
 
-    def test_rong_tra_none(self):
-        assert parse_ngay("") is None
+    def test_empty_returns_none(self):
+        assert parse_date("") is None
 
 
-# ===== ngay_hop_le =====
+# ===== date_in_range =====
 
-class TestNgayHopLe:
-    TU = "2026-01-01"
-    DEN = "2026-09-30"
+class TestDateInRange:
+    VALID_FROM = "2026-01-01"
+    VALID_TO = "2026-09-30"
 
-    def test_trong_khoang(self):
-        assert ngay_hop_le("15/03/2026", self.TU, self.DEN) is True
+    def test_inside_range(self):
+        assert date_in_range("15/03/2026", self.VALID_FROM, self.VALID_TO) is True
 
-    def test_ngay_dau_khoang(self):
-        assert ngay_hop_le("01/01/2026", self.TU, self.DEN) is True
+    def test_first_day_of_range(self):
+        assert date_in_range("01/01/2026", self.VALID_FROM, self.VALID_TO) is True
 
-    def test_ngay_cuoi_khoang(self):
-        assert ngay_hop_le("30/09/2026", self.TU, self.DEN) is True
+    def test_last_day_of_range(self):
+        assert date_in_range("30/09/2026", self.VALID_FROM, self.VALID_TO) is True
 
-    def test_ngoai_khoang_sau(self):
-        assert ngay_hop_le("01/10/2026", self.TU, self.DEN) is False
+    def test_outside_range_after(self):
+        assert date_in_range("01/10/2026", self.VALID_FROM, self.VALID_TO) is False
 
-    def test_ngoai_khoang_nam_truoc(self):
-        assert ngay_hop_le("31/12/2025", self.TU, self.DEN) is False
+    def test_outside_range_previous_year(self):
+        assert date_in_range("31/12/2025", self.VALID_FROM, self.VALID_TO) is False
 
-    def test_khong_doc_duoc_ngay(self):
-        assert ngay_hop_le("abcxyz", self.TU, self.DEN) is False
+    def test_unparseable_date(self):
+        assert date_in_range("abcxyz", self.VALID_FROM, self.VALID_TO) is False
 
-    def test_chi_co_nam(self):
-        assert ngay_hop_le("2026", self.TU, self.DEN) is False
+    def test_year_only(self):
+        assert date_in_range("2026", self.VALID_FROM, self.VALID_TO) is False
 
     def test_none(self):
-        assert ngay_hop_le(None, self.TU, self.DEN) is False
+        assert date_in_range(None, self.VALID_FROM, self.VALID_TO) is False

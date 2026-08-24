@@ -24,13 +24,13 @@ def test_api_1():
     """Test API ① — lấy danh sách chờ duyệt."""
     print("=== Test API ① getCert (status=WAITING) ===\n")
     try:
-        ds = client.lay_danh_sach_cho_duyet(page=1, size=10)
+        items = client.get_pending_list(page=1, size=10)
     except client.ElisError as e:
         print(f"LỖI: {e}")
         return
 
-    print(f"Lấy được {len(ds)} chứng chỉ chờ duyệt.\n")
-    for i, item in enumerate(ds[:5], 1):
+    print(f"Lấy được {len(items)} chứng chỉ chờ duyệt.\n")
+    for i, item in enumerate(items[:5], 1):
         print(f"[{i}] id={item.get('id')}")
         print(f"    Nhân viên: {item.get('employeeName')} (mã {item.get('employeeId')})")
         print(f"    Khóa học:  {item.get('courseName')}")
@@ -38,7 +38,7 @@ def test_api_1():
         print(f"    courseId:       {item.get('courseId')}")
         print()
 
-    if ds:
+    if items:
         print("=> Copy id + certificate_id của 1 item để test API ②.")
 
 
@@ -54,20 +54,20 @@ def test_api_2():
         return
 
     try:
-        ket = client.tai_zip_chung_chi([
+        results = client.download_certificates([
             {"UserCourseId": uc_id, "certificate_id": cert_id}
         ])
     except client.ElisError as e:
         print(f"LỖI: {e}")
         return
 
-    print(f"\nTải được {len(ket)} file chứng chỉ.")
-    for item in ket:
+    print(f"\nTải được {len(results)} file chứng chỉ.")
+    for item in results:
         print(f"  File: {item['ten_file']} ({len(item['anh_bytes'])} bytes)")
         # Lưu file ra đĩa để kiểm tra
-        ten = f"test_cert_{item['userCourseId'][:8]}.bin"
-        Path(ten).write_bytes(item["anh_bytes"])
-        print(f"  Đã lưu: {ten}")
+        name = f"test_cert_{item['userCourseId'][:8]}.bin"
+        Path(name).write_bytes(item["anh_bytes"])
+        print(f"  Đã lưu: {name}")
 
 
 if __name__ == "__main__":

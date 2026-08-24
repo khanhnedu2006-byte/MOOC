@@ -28,6 +28,17 @@ services:
       # lịch sử xử lý.
       - ./mooc_log.db:/app/mooc_log.db
 
+      # Kho chung chi that (chi dung khi LUU_CHUNG_CHI=1 trong .env).
+      # Phai gan ra ngoai, neu khong thi `docker compose up --build` lan sau
+      # la mat sach kho — ma kho la thu KHONG lay lai duoc: ban ghi da roi
+      # trang thai WAITING nen eLIS khong tra ve nua.
+      # Day la THU MUC (khong phai file) nen Docker tu tao neu chua co.
+      - ./cert_archive:/app/cert_archive
+
+      # Moc bao cao da gui. Phai gan ra ngoai: mat file nay khi container
+      # dung lai = quen da gui = gui trung bao cao cho mentor.
+      - ./.report_state.json:/app/.report_state.json
+
     # Tự bật lại khi container chết hoặc khi máy khởi động lại.
     # "unless-stopped": tôn trọng khi bạn chủ động `docker compose down`.
     restart: unless-stopped

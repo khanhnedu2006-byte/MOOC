@@ -29,15 +29,15 @@ import llm_text
 import llm_vision
 import ocr_azure
 import pipeline
-from schemas import ThongTinNhap
+from schemas import InputInfo
 
 
 def main():
     parser = argparse.ArgumentParser(description="Chạy thử core với một ảnh chứng chỉ")
-    parser.add_argument("anh", help="Đường dẫn ảnh hoặc PDF chứng chỉ")
-    parser.add_argument("--ten", required=True, help="Tên nhân viên (như nhập trên ELIS)")
-    parser.add_argument("--khoa-hoc", required=True, help="Tên khóa học (như nhập trên ELIS)")
-    parser.add_argument("--ma", default=None, help="Mã nhân viên (tùy chọn)")
+    parser.add_argument("image", help="Đường dẫn ảnh hoặc PDF chứng chỉ")
+    parser.add_argument("--name", required=True, help="Tên nhân viên (như nhập trên ELIS)")
+    parser.add_argument("--course", required=True, help="Tên khóa học (như nhập trên ELIS)")
+    parser.add_argument("--code", default=None, help="Mã nhân viên (tùy chọn)")
     parser.add_argument("--verbose", action="store_true", help="In thêm log chi tiết")
     args = parser.parse_args()
 
@@ -48,51 +48,51 @@ def main():
 
     # 1. Chuẩn bị ảnh (kiểm tra định dạng + render PDF nếu cần)
     try:
-        anh_list = file_utils.doc_thanh_anh(args.anh)
-    except file_utils.FileKhongHopLe as e:
+        images = file_utils.read_as_images(args.image)
+    except file_utils.InvalidFileError as e:
         print(f"Lỗi file: {e}")
         return 1
 
-    print(f"Đã đọc {len(anh_list)} ảnh từ {args.anh}")
+    print(f"Đã đọc {len(images)} ảnh từ {args.image}")
 
     # 2. Thông tin người nhập
-    nhap = ThongTinNhap(
-        ten_nhan_vien=args.ten,
-        ten_khoa_hoc=args.khoa_hoc,
-        ma_nhan_vien=args.ma,
+    given = InputInfo(
+        employee_name=args.name,
+        course_name=args.course,
+        employee_code=args.code,
     )
 
     # 3. Tạo client Azure (chỉ tạo 1 lần)
-    azure_client = ocr_azure.tao_client()
+    azure_client = ocr_azure.create_client()
 
     # 4. Chạy pipeline — ghép các hàm THẬT vào
     print("Đang xử lý (Gemma đọc ảnh, nếu cần thì Azure + LLM2)...\n")
-    ket_qua = pipeline.xu_ly(
-        anh_list=anh_list,
-        nhap=nhap,
-        trich_tu_anh=llm_vision.trich_tu_anh,
-        ocr_nhieu_anh=ocr_azure.ocr_nhieu_anh,
-        trich_tu_text=llm_text.trich_tu_text,
+    verdict = pipeline.process(
+        images=images,
+        given=given,
+        extract_from_image=llm_vision.extract_from_image,
+        ocr_images=ocr_azure.ocr_images,
+        extract_from_text=llm_text.extract_from_text,
         azure_client=azure_client,
     )
 
     # 5. In kết quả
     print("=" * 55)
-    print(f"KẾT QUẢ:     {ket_qua.ket_qua.value}")
-    print(f"Lý do:       {ket_qua.ly_do}")
-    print(f"Tầng xử lý:  {ket_qua.tang_xu_ly}")
-    if ket_qua.trich_xuat:
-        t = ket_qua.trich_xuat
+    print(f"KẾT QUẢ:     {verdict.verdict.value}")
+    print(f"Lý do:       {verdict.reason}")
+    print(f"Tầng xử lý:  {verdict.stage}")
+    if verdict.extracted:
+        t = verdict.extracted
         print("-" * 55)
         print("Thông tin trích được từ ảnh:")
-        print(f"  Tên người nhận: {t.ten_nguoi_nhan}")
-        print(f"  Tên chứng chỉ:  {t.ten_chung_chi}")
-        print(f"  Ngày nhận:      {t.ngay_nhan}")
-        print(f"  Ngày hết hạn:   {t.ngay_het_han}")
+        print(f"  Tên người nhận: {t.recipient_name}")
+        print(f"  Tên chứng chỉ:  {t.certificate_name}")
+        print(f"  Ngày nhận:      {t.issue_date}")
+        print(f"  Ngày hết hạn:   {t.expiry_date}")
     print("-" * 55)
     print("So với thông tin nhập:")
-    print(f"  Tên nhập:      {nhap.ten_nhan_vien}")
-    print(f"  Khóa học nhập: {nhap.ten_khoa_hoc}")
+    print(f"  Tên nhập:      {given.employee_name}")
+    print(f"  Khóa học nhập: {given.course_name}")
     print("=" * 55)
 
     return 0

@@ -27,16 +27,16 @@ import unicodedata
 from unidecode import unidecode
 
 
-def chuan_hoa(text: str | None) -> str:
+def normalize(text: str | None) -> str:
     """Chuẩn hóa một chuỗi để chuẩn bị so sánh.
 
     Nhận None hoặc chuỗi rỗng đều trả về chuỗi rỗng, để nơi gọi không phải
     tự kiểm tra None trước.
 
     Ví dụ:
-        chuan_hoa("  Nguyễn  Văn   A ")  -> "nguyen van a"
-        chuan_hoa("NGUYEN VAN A")        -> "nguyen van a"
-        chuan_hoa(None)                  -> ""
+        normalize("  Nguyễn  Văn   A ")  -> "nguyen van a"
+        normalize("NGUYEN VAN A")        -> "nguyen van a"
+        normalize(None)                  -> ""
     """
     if not text:
         return ""
@@ -69,12 +69,12 @@ from datetime import date
 import dateparser
 
 
-def _parse_theo_thu_tu(chuoi_ngay: str, thu_tu: str):
+def _parse_with_order(date_string: str, order: str):
     """Parse ngày theo một thứ tự cụ thể (DMY hoặc MDY). Trả date hoặc None."""
     kq = dateparser.parse(
-        chuoi_ngay,
+        date_string,
         settings={
-            "DATE_ORDER": thu_tu,
+            "DATE_ORDER": order,
             # Bắt buộc đủ ngày+tháng+năm; thiếu phần nào -> None (vd chỉ có năm).
             "REQUIRE_PARTS": ["day", "month", "year"],
         },
@@ -82,18 +82,18 @@ def _parse_theo_thu_tu(chuoi_ngay: str, thu_tu: str):
     return kq.date() if kq else None
 
 
-def parse_ngay(chuoi_ngay: str | None):
+def parse_date(date_string: str | None):
     """Chuyển chuỗi ngày thành date theo kiểu Việt Nam (ngày trước tháng).
 
-    Dùng để hiển thị / tham khảo. Việc kiểm tra hợp lệ dùng ngay_hop_le (xét
+    Dùng để hiển thị / tham khảo. Việc kiểm tra hợp lệ dùng date_in_range (xét
     cả hai cách hiểu). Trả None nếu rỗng, chữ lạ, hoặc chỉ có năm.
     """
-    if not chuoi_ngay or not chuoi_ngay.strip():
+    if not date_string or not date_string.strip():
         return None
-    return _parse_theo_thu_tu(chuoi_ngay, "DMY")
+    return _parse_with_order(date_string, "DMY")
 
 
-def ngay_hop_le(chuoi_ngay: str | None, tu: str, den: str) -> bool:
+def date_in_range(date_string: str | None, start: str, end: str) -> bool:
     """Kiểm tra ngày hoàn thành có nằm trong khoảng [tu, den] không.
 
     Ngày dạng số như "06-12-2026" MƠ HỒ: có thể là 6 tháng 12 (kiểu Việt Nam)
@@ -108,14 +108,14 @@ def ngay_hop_le(chuoi_ngay: str | None, tu: str, den: str) -> bool:
     tu, den: chuỗi "YYYY-MM-DD" (lấy từ config).
     Trả False nếu không parse được cả hai cách, hoặc cả hai đều ngoài khoảng.
     """
-    if not chuoi_ngay or not chuoi_ngay.strip():
+    if not date_string or not date_string.strip():
         return False
 
-    ngay_tu = date.fromisoformat(tu)
-    ngay_den = date.fromisoformat(den)
+    day_from = date.fromisoformat(start)
+    day_to = date.fromisoformat(end)
 
-    for thu_tu in ("DMY", "MDY"):
-        ngay = _parse_theo_thu_tu(chuoi_ngay, thu_tu)
-        if ngay is not None and ngay_tu <= ngay <= ngay_den:
+    for order in ("DMY", "MDY"):
+        day = _parse_with_order(date_string, order)
+        if day is not None and day_from <= day <= day_to:
             return True
     return False
