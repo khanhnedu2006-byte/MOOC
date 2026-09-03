@@ -104,7 +104,29 @@ class TestDateInRange:
         assert date_in_range("30/09/2026", self.VALID_FROM, self.VALID_TO) is True
 
     def test_outside_range_after(self):
-        assert date_in_range("01/10/2026", self.VALID_FROM, self.VALID_TO) is False
+        # 25/10 chứ không phải 01/10: "01/10/2026" là ngày MƠ HỒ — hiểu kiểu
+        # Mỹ thành 10/01/2026, tức NẰM TRONG khoảng. Test cũ kỳ vọng False
+        # nên đỏ vĩnh viễn, và nó đỏ vì mâu thuẫn với luật đã chốt chứ không
+        # phải vì code sai. Ngày 25 thì không tháng nào có, nên chỉ một cách
+        # hiểu duy nhất.
+        assert date_in_range("25/10/2026", self.VALID_FROM, self.VALID_TO) is False
+
+    def test_ngay_mo_ho_chi_can_MOT_cach_hieu_hop_le(self):
+        """Chốt luật đã chọn cho ngày mơ hồ, thay vì để nó là hành vi tình cờ.
+
+        "01/10/2026" hiểu kiểu Việt là 1 tháng 10 (ngoài khoảng), hiểu kiểu
+        Mỹ là 10 tháng 1 (trong khoảng). Chứng chỉ nước ngoài (MongoDB,
+        Coursera) in kiểu Mỹ, chứng chỉ trong nước in kiểu Việt, và nhìn
+        chuỗi thì không có cách nào biết chắc.
+
+        Luật: thử CẢ HAI, một cách hợp lệ là đủ. Nghiêng về phía học viên —
+        thà duyệt một chứng chỉ mơ hồ còn hơn từ chối oan người học thật.
+        """
+        assert date_in_range("01/10/2026", self.VALID_FROM, self.VALID_TO) is True
+        # Mơ hồ mà CẢ HAI cách hiểu đều ngoài khoảng thì vẫn là False.
+        # "10/12/2026": kiểu Việt = 10 tháng 12, kiểu Mỹ = 12 tháng 10.
+        # Cả hai đều sau 30/09 nên không có đường nào lọt.
+        assert date_in_range("10/12/2026", self.VALID_FROM, self.VALID_TO) is False
 
     def test_outside_range_previous_year(self):
         assert date_in_range("31/12/2025", self.VALID_FROM, self.VALID_TO) is False

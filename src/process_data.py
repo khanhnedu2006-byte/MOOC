@@ -119,3 +119,38 @@ def date_in_range(date_string: str | None, start: str, end: str) -> bool:
         if day is not None and day_from <= day <= day_to:
             return True
     return False
+
+
+def code_from_email(email: str | None) -> str:
+    """Lấy mã nhân viên (username) từ email — phần đứng trước dấu @.
+
+    ĐẶT Ở ĐÂY chứ không ở run.py vì có BA nơi cần nó: job thật (run.py), bộ
+    đánh giá (evaluation/) và công cụ ghép ảnh. Trước đây mỗi nơi giữ một bản
+    sao và chúng đã lệch nhau thật: bản trong evaluation/ KHÔNG hạ chữ thường
+    và trả nguyên chuỗi khi thiếu dấu @. Hậu quả kín đáo: bộ đánh giá chấm
+    điểm trên một employee_code khác với employee_code mà hệ thống thật dùng,
+    nên mọi con số đo được đều không nói về hệ thống đang chạy.
+
+    KHÔNG giới hạn tên miền. Lý do: FPT có nhiều đuôi khác nhau (fpt.com,
+    fpt.com.vn, fsoft.com.vn, fe.edu.vn, fptsoftware.com...). Thứ được in
+    trên chứng chỉ là USERNAME, không phụ thuộc tên miền — nên chặn theo
+    đuôi chỉ làm mất mã đối chiếu và từ chối oan đúng những chứng chỉ in
+    username, tức là đúng ca mà việc lấy mã từ email sinh ra để xử lý.
+
+    Trả RỖNG nếu không có email hoặc chuỗi không chứa dấu @. Rỗng nghĩa là
+    không đối chiếu được qua mã, chỉ còn đối chiếu bằng tên. Cố ý KHÔNG trả
+    nguyên chuỗi trong ca thiếu @: làm vậy là lặng lẽ coi một chuỗi rác nào
+    đó là mã nhân viên.
+
+    Ví dụ:
+        "hungnt97@fpt.com"      -> "hungnt97"
+        "hoabd3@fpt.com.vn"     -> "hoabd3"
+        "  HoaBD3@FSOFT.COM.VN" -> "hoabd3"
+        "hoabd3"                -> ""      (thiếu @ -> không tin được)
+    """
+    if not email or not email.strip():
+        return ""
+    email = email.strip().lower()
+    if "@" not in email:
+        return ""
+    return email.split("@", 1)[0].strip()

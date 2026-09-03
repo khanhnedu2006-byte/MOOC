@@ -20,7 +20,6 @@ GOC = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(GOC))
 sys.path.insert(0, str(GOC / "src"))
 
-import compare                              # noqa: E402
 import pipeline                             # noqa: E402
 from database import database, report       # noqa: E402
 from schemas import ExtractedInfo, InputInfo  # noqa: E402
@@ -38,7 +37,7 @@ def test_chuoi_ly_do_khop_giua_pipeline_va_report():
                      course_name="ISO 27001", employee_code="hoabd3")
     ly_do = pipeline._mismatch_reason(trich, nhap, "test")
 
-    for chuoi, nhan in report.REJECTION_CAUSES:
+    for chuoi, _nhan in report.REJECTION_CAUSES:
         assert chuoi in ly_do, (
             f"report.REJECTION_CAUSES tìm chuỗi {chuoi!r} nhưng "
             f"pipeline._mismatch_reason() sinh ra {ly_do!r}. "
@@ -335,3 +334,29 @@ def test_khong_ve_bieu_do_khi_ky_qua_ngan(db):
     assert "cid:" not in html_body, "HTML còn trỏ tới ảnh không tồn tại"
     # Nhưng số liệu thì vẫn phải đủ.
     assert "Lý do từ chối" in html_body
+
+
+# =====================================================================
+# Đọc tham số ngày từ dòng lệnh
+# =====================================================================
+
+def test_doc_ngay_chuan_hoa_ve_yyyy_mm_dd():
+    """Thiếu số 0 PHẢI được chuẩn hóa, không chỉ được chấp nhận.
+
+    Truy vấn so ngày bằng CHUỖI (substr(created_at,1,10) BETWEEN ...), nên
+    '2026-8-25' không khớp '2026-08-25' trong DB — báo cáo ra rỗng mà không
+    có lỗi nào để lần ra.
+    """
+    import send_report
+    assert send_report._doc_ngay("2026-8-25", "--day") == "2026-08-25"
+    assert send_report._doc_ngay("2026-08-25", "--day") == "2026-08-25"
+    assert send_report._doc_ngay("2026/8/5", "--day") == "2026-08-05"
+    assert send_report._doc_ngay(" 2026-08-05 ", "--day") == "2026-08-05"
+
+
+def test_doc_ngay_sai_bao_loi_ro_khong_traceback():
+    import send_report
+    for xau in ("hôm nay", "25-08-2026", "2026-13-45", "", "2026-08"):
+        with pytest.raises(SystemExit) as e:
+            send_report._doc_ngay(xau, "--day")
+        assert "YYYY-MM-DD" in str(e.value), f"thông báo lỗi không nói định dạng: {xau!r}"

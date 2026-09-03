@@ -205,7 +205,7 @@ def line_chart(diem: list[dict], rong: int = 640, cao: int = 260) -> bytes:
     # đẩy ra hai phía. Hai đường hội tụ ở mốc cuối là chuyện thường, để mặc
     # thì hai con số chồng lên nhau thành một mớ không đọc được.
     nhan_cuoi = []
-    for khoa, mau in (("total", TOTAL_LINE), ("approved", APPROVED)):
+    for khoa in ("total", "approved"):
         gt = diem[-1].get(khoa, 0)
         x, y = toa_do(n - 1, gt)
         nhan_cuoi.append([y, f"{gt:,}".replace(",", "."), x])

@@ -22,6 +22,7 @@ kịp gán nhãn sẽ bị tính là "model bịa ra dữ liệu".
 from __future__ import annotations
 
 import csv
+import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
@@ -98,7 +99,7 @@ def read_dataset(path: str | Path) -> list[EvalCase]:
     if not path.is_file():
         raise FileNotFoundError(
             f"Không tìm thấy file nhãn: {path}\n"
-            f"Tạo file mẫu bằng: python -m evaluation.run_eval mau"
+            f"Tạo file mẫu bằng: python -m evaluation.run_eval template"
         )
 
     cases: list[EvalCase] = []
@@ -128,14 +129,45 @@ def read_dataset(path: str | Path) -> list[EvalCase]:
 
 
 def write_dataset(cases: list[EvalCase], path: str | Path) -> None:
-    """Ghi danh sách ca ra CSV (utf-8-sig để Excel đọc đúng tiếng Việt)."""
+    """Ghi danh sách ca ra CSV (utf-8-sig để Excel đọc đúng tiếng Việt).
+
+    GHI RA FILE TẠM RỒI MỚI THAY THẾ, không mở thẳng file đích bằng chế độ "w".
+
+    Lý do là một rủi ro mất dữ liệu thật: file này chứa nhãn gán tay — hàng
+    giờ công người. Mở bằng "w" là TRUNCATE NGAY LẬP TỨC, nên chỉ cần lỗi
+    giữa chừng (hết đĩa, Excel khóa file, Ctrl+C) là còn lại một file rỗng
+    hoặc mất một nửa, và không có bản nào để quay lại.
+
+    Ghi ra file tạm rồi os.replace() thì file đích chỉ đổi khi bản mới đã
+    hoàn chỉnh. Hỏng ở bước nào thì file cũ vẫn nguyên vẹn.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8-sig", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=COLUMNS)
-        w.writeheader()
-        for case in cases:
-            w.writerow({k: ("" if v is None else v) for k, v in asdict(case).items()})
+    tam = path.with_name(path.name + ".tmp")
+
+    try:
+        with tam.open("w", encoding="utf-8-sig", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=COLUMNS)
+            w.writeheader()
+            for case in cases:
+                w.writerow({k: ("" if v is None else v)
+                            for k, v in asdict(case).items()})
+        os.replace(tam, path)
+    except PermissionError as e:
+        tam.unlink(missing_ok=True)
+        # Trên Windows, Excel KHÓA file đang mở. Traceback trần chỉ nói
+        # "Permission denied" và người đọc sẽ đi tìm quyền thư mục, quyền
+        # admin, antivirus — trong khi việc phải làm chỉ là đóng Excel.
+        raise PermissionError(
+            f"Không ghi được {path.name}: file đang bị khóa.\n"
+            f"Nguyên nhân hay gặp nhất: file đang MỞ TRONG EXCEL. "
+            f"Đóng Excel rồi chạy lại.\n"
+            f"(File cũ vẫn còn nguyên, không mất nhãn nào.)\n"
+            f"Chi tiết: {e}"
+        ) from e
+    except Exception:
+        tam.unlink(missing_ok=True)
+        raise
 
 
 def create_template(image_folder: str | Path, output_path: str | Path) -> int:

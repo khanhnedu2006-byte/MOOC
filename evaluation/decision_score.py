@@ -77,8 +77,10 @@ class DecisionScore:
     matrix: dict[tuple[str, str], int]      # (actual, predicted) -> số ca
     correct_count: int = 0
     total: int = 0
-    wrong_cases: list[tuple] = field(default_factory=list)   # (case_id, actual, predicted, reason, tang)
-    technical_error_cases: list[tuple] = field(default_factory=list)  # (case_id, tang, reason)
+    # (case_id, actual, predicted, reason, stage)
+    wrong_cases: list[tuple] = field(default_factory=list)
+    # (case_id, stage, reason)
+    technical_error_cases: list[tuple] = field(default_factory=list)
     unlabeled_cases: list[str] = field(default_factory=list)
     by_stage: dict[str, list[int]] = field(default_factory=dict)  # tang -> [dung, tong]
 

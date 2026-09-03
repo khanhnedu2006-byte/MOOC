@@ -45,6 +45,21 @@ class ExtractedInfo(BaseModel):
     expiry_date: str | None = Field(
         default=None, description="Ngày hết hạn, None nếu vô thời hạn/không ghi"
     )
+    # Tên NGƯỜI KÝ (giám đốc, hiệu trưởng...) — KHÔNG dùng để đối chiếu.
+    #
+    # Trường này tồn tại để làm CHỖ CHỨA cho một thứ gây nhầm lẫn có thật:
+    # nhiều chứng chỉ in tên người nhận bằng chữ mảnh, nhỏ, ở giữa trang
+    # (thậm chí chỉ là username như "tienpham89"), trong khi tên giám đốc ký ở
+    # cuối trang lại IN ĐẬM VIẾT HOA. Model nhìn thấy chữ đậm nhất và tưởng đó
+    # là người nhận — đã xảy ra thật: chứng chỉ của "tienpham89" bị đọc thành
+    # "ĐỖ VĂN KHẮC" (Giám đốc sản xuất), và bị từ chối oan vì sai tên.
+    #
+    # Bắt model điền riêng tên người ký buộc nó phải PHÂN BIỆT hai vai trò,
+    # thay vì chọn bừa một cái tên. Giá trị ở đây không được dùng để so khớp.
+    signatory_name: str | None = Field(
+        default=None,
+        description="Tên người KÝ chứng chỉ (không phải người nhận) — chỉ để tách bạch",
+    )
 
 
 class InputInfo(BaseModel):
@@ -58,10 +73,21 @@ class InputInfo(BaseModel):
 
 
 class Verdict(str, Enum):
-    """Hai trạng thái kết quả cuối của một chứng chỉ."""
+    """Trạng thái của một chứng chỉ.
+
+    APPROVED/REJECTED là hai kết luận CUỐI: đã nộp về eLIS, chứng chỉ đóng.
+
+    WAITING KHÔNG BAO GIỜ được nộp về eLIS — nó chỉ dùng để ghi log và in ra
+    màn hình cho ca hỏng kỹ thuật (Azure sập, lỗi tải file...). Những ca đó
+    được cố ý để nguyên WAITING bên eLIS cho vòng sau xử lý lại, nên ghi
+    REJECTED vào log là NÓI SAI: người vận hành đọc log tưởng chứng chỉ đã bị
+    từ chối và đi giải thích với học viên, trong khi hệ thống đang hẹn thử
+    lại. Báo cáo không đụng tới giá trị này (nó lọc theo stage nghiệp vụ).
+    """
 
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+    WAITING = "WAITING"
 
 
 class ProcessResult(BaseModel):

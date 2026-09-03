@@ -129,19 +129,35 @@ def match_course(image_value, input_value, mode="strict"):
 
 
 def match_course_bilingual(primary, secondary, input_value, mode="strict"):
-    """So tên khóa học với input, chấp nhận cả hai ngôn ngữ.
+    """So tên khóa học với input, chấp nhận cả hai ngôn ngữ VÀ bản ghép hai nửa.
 
-    Dùng khi ảnh in tên khóa song ngữ: LLM tách thành 'chinh' và 'phu'
-    (hai ngôn ngữ). Người nhập chỉ một ngôn ngữ, nên khớp với BẤT KỲ phần nào
-    cũng tính là khớp.
+    Ảnh in tên khóa song ngữ -> LLM tách làm hai phần (primary/secondary).
+    Nhưng eLIS lưu tên khóa ở CẢ BA dạng khác nhau, tùy khóa:
 
-    Ví dụ: ảnh "An toàn thông tin / Information Security"
-      chinh = "An toàn thông tin", phu = "Information Security"
-      - Người nhập "An toàn thông tin" -> khớp phần chính -> True
-      - Người nhập "Information Security" -> khớp phần phụ -> True
+        chỉ tiếng Việt : "Bộ Quy định chính sách cần biết FPT"
+        chỉ tiếng Anh  : "FPT Key Regulations and Policies"
+        CẢ HAI nối lại : "Bộ Quy định chính sách cần biết FPT - FPT Key
+                          Regulations and Policies (English version)"
+
+    Nên phải thử ĐỦ BA cách, khớp một cách là đủ:
+      1. nửa thứ nhất  -> bắt ca eLIS lưu một ngôn ngữ
+      2. nửa thứ hai   -> bắt ca eLIS lưu ngôn ngữ kia
+      3. GHÉP hai nửa  -> bắt ca eLIS lưu cả hai
+
+    Thiếu bước 3 là lỗi đã xảy ra thật: chứng chỉ TIENLX6 in đúng nguyên chuỗi
+    song ngữ mà eLIS lưu, model tách làm hai theo đúng yêu cầu, rồi KHÔNG nửa
+    nào bằng chuỗi eLIS nữa -> từ chối oan một chứng chỉ hợp lệ, đọc đúng.
+
+    Chỉ NỚI THÊM đường khớp, không bỏ đường nào: một ca đang APPROVED không
+    thể vì thay đổi này mà thành REJECTED.
     """
     if match_course(primary, input_value, mode):
         return True
     if match_course(secondary, input_value, mode):
         return True
+    # Ghép hai nửa. Thứ tự không quan trọng vì cả hai chế độ so đều làm việc
+    # trên TẬP HỢP TỪ, không theo vị trí.
+    if primary and secondary:
+        if match_course(f"{primary} {secondary}", input_value, mode):
+            return True
     return False

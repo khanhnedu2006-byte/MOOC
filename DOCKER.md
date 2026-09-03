@@ -35,15 +35,19 @@ docker stats mooc-elis-job          # xem CPU/RAM đang dùng
 # Chạy lệnh một lần trong container (không đụng job đang chạy nền):
 docker compose run --rm job python test_api.py 1
 docker compose run --rm job python run.py once
+docker compose run --rm job python run.py status   # chỉ XEM hàng đợi, không xử lý
 ```
+
+`status` an toàn để chạy lúc job đang chạy nền: nó chỉ gọi API ① rồi in ra,
+không tải file, không gọi LLM, không nộp gì về eLIS.
 
 ## Những điểm đã xử lý sẵn
 
-**CMD truyền `loop`.** `run.py` nhận chế độ qua tham số vị trí và mặc định là
-`once`. Nếu Dockerfile để `CMD ["python","run.py"]` thì container xử lý một mẻ
-rồi thoát, và `restart: unless-stopped` sẽ dựng lại liên tục — thành vòng lặp
-khởi động container, không phải vòng lặp poll. Mỗi lần dựng lại còn phải nạp
-lại toàn bộ thư viện, tốn hơn nhiều so với `time.sleep`.
+**CMD truyền `loop`.** `run.py` nhận chế độ qua tham số vị trí. Vẫn nên ghi rõ
+`loop` trong CMD thay vì dựa vào giá trị mặc định: nếu mặc định đổi thành
+`once`, container sẽ xử lý một mẻ rồi thoát, và `restart: unless-stopped` dựng
+lại liên tục — thành vòng lặp KHỞI ĐỘNG CONTAINER chứ không phải vòng lặp poll.
+Mỗi lần dựng lại còn phải nạp lại toàn bộ thư viện, tốn hơn nhiều `time.sleep`.
 
 **Volume trỏ đúng `mooc_log.db` ở gốc dự án.** `database/database.py` đặt
 `DB_PATH = Path(__file__).parent.parent / "mooc_log.db"`, tức GỐC dự án chứ

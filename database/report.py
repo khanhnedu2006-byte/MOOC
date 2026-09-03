@@ -11,10 +11,9 @@ Dùng:
     so_lieu = report.period_report("2026-08-17", "2026-08-17")   # một ngày
 """
 
-import sqlite3
 from datetime import date, timedelta
 
-from database.database import DB_PATH, _connect, init_db
+from database.database import _connect, init_db
 
 def _default_day() -> str:
     """Hôm qua, dạng YYYY-MM-DD.

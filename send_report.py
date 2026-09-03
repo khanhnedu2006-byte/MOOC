@@ -161,6 +161,38 @@ def gui_bao_cao_ky(from_day: str, to_day: str, bucket: str = "day") -> None:
                report_layout.build_text(stats), images)
 
 
+def _doc_ngay(chuoi: str, ten_co: str) -> str:
+    """Đọc ngày từ dòng lệnh, chuẩn hóa về YYYY-MM-DD.
+
+    CHẤP NHẬN thiếu số 0 ("2026-8-5") và dấu gạch chéo ("2026/08/05"), rồi tự
+    chuẩn hóa. Người gõ tay rất hay bỏ số 0, và bắt họ gõ lại chỉ vì thiếu một
+    ký tự là phiền vô ích.
+
+    NHƯNG PHẢI CHUẨN HÓA chứ không chỉ chấp nhận: truy vấn so ngày bằng CHUỖI
+    (substr(created_at,1,10) BETWEEN ...), nên '2026-8-25' sẽ không khớp với
+    '2026-08-25' trong DB — báo cáo ra rỗng mà không có lỗi nào.
+
+    Sai thật thì báo một dòng rõ ràng, không đổ traceback vào mặt người dùng.
+    """
+    raw = (chuoi or "").strip().replace("/", "-").replace(".", "-")
+    phan = raw.split("-")
+    if len(phan) == 3 and all(x.isdigit() for x in phan):
+        nam, thang, ngay = phan
+        raw = f"{int(nam):04d}-{int(thang):02d}-{int(ngay):02d}"
+    try:
+        return date.fromisoformat(raw).isoformat()
+    except ValueError:
+        # from None: cố ý KHÔNG kèm traceback của ValueError. Đây là lỗi gõ
+        # sai tham số dòng lệnh, người dùng cần một câu hướng dẫn chứ không
+        # cần thấy ruột của date.fromisoformat.
+        raise SystemExit(
+            f"{ten_co} không hợp lệ: {chuoi!r}\n"
+            f"  Định dạng: YYYY-MM-DD, ví dụ 2026-08-25\n"
+            f"  (Thiếu số 0 như 2026-8-25 cũng được, nhưng {chuoi!r} thì không "
+            f"đọc được.)"
+        ) from None
+
+
 def _khoang_mac_dinh() -> tuple[str, str]:
     """7 ngày gần nhất, kết thúc HÔM QUA.
 
@@ -191,12 +223,13 @@ def main():
     args = p.parse_args()
 
     if args.day:
-        from_day = to_day = args.day
+        from_day = to_day = _doc_ngay(args.day, "--day")
     elif args.from_day or args.to_day:
         if not (args.from_day and args.to_day):
             print("Dùng --from và --to cùng nhau, hoặc --day cho một ngày.")
             return 1
-        from_day, to_day = args.from_day, args.to_day
+        from_day = _doc_ngay(args.from_day, "--from")
+        to_day = _doc_ngay(args.to_day, "--to")
     else:
         from_day, to_day = _khoang_mac_dinh()
 
@@ -238,6 +271,9 @@ def main():
                 "data:image/png;base64," + base64.b64encode(png).decode())
         Path(args.output).write_text(html_body, encoding="utf-8")
         print(f"Đã ghi bản xem trước: {args.output}")
+        if not images:
+            print("  (Kỳ chỉ có một mốc nên không có biểu đồ. Muốn xem biểu đồ")
+            print("   thì dùng --from/--to cho khoảng nhiều ngày.)")
         print("Mở file đó bằng trình duyệt để xem email sẽ trông thế nào.")
         print("Thêm --send để gửi thật qua email.")
     return 0

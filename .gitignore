@@ -28,4 +28,11 @@ test_cert_*.bin
 cert_archive/
 evaluation/dataset.csv
 evaluation/*.csv
+# Bo du lieu that gui qua Excel + thu muc anh chung chi: deu chua ten,
+# email va ma nhan vien that. Chan ca hai duoi, ke ca file tam cua Excel.
+evaluation/match_report.csv
+evaluation/*.xlsx
+evaluation/*.xls
+~$*.xlsx
+eval_images/
 .report_state.json

@@ -29,5 +29,8 @@ tenacity
 # ===== Giao diện demo =====
 gradio
 
+# ===== Đọc Excel (chỉ dùng lúc dựng bộ đánh giá, không dùng khi chạy job) =====
+openpyxl
+
 # ===== Test =====
 pytest

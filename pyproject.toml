@@ -1,0 +1,80 @@
+# Cấu hình dự án MOOC — xác minh chứng chỉ khóa học bằng AI.
+#
+# File này KHÔNG dùng để đóng gói/phát hành thư viện. Dự án là một job chạy
+# nền, cài bằng `pip install -r requirements-job.txt`, nên ở đây chỉ có
+# metadata để người đọc biết dự án là gì, và cấu hình cho các công cụ.
+
+[project]
+name = "mooc-certificate-verifier"
+version = "1.0.0"
+description = "Xác minh chứng chỉ khóa học của nhân viên bằng AI, tích hợp eLIS"
+requires-python = ">=3.11"
+
+# Cố ý ĐỂ TRỐNG dependencies. Danh sách thật nằm ở hai file riêng, vì chúng
+# khác nhau và cả hai đều cần tồn tại:
+#   requirements.txt      — lúc lập trình (có gradio cho web_demo, có pytest)
+#   requirements-job.txt  — lúc chạy job trong Docker (bỏ gradio và pytest,
+#                           nhẹ hơn image vài trăm MB)
+# Khai thêm ở đây là có ba nguồn sự thật cho cùng một thứ, và chúng sẽ lệch
+# nhau ngay lần thêm thư viện tiếp theo.
+dependencies = []
+
+
+# ===================== pytest =====================
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# Cho phép `import client`, `import run` mà không cần đặt PYTHONPATH.
+# Các file test hiện tự chèn sys.path, nhưng khai ở đây thì file test mới
+# không phải nhớ làm lại, và chạy `pytest` từ thư mục khác cũng được.
+pythonpath = [".", "src"]
+
+# -ra: in tóm tắt LÝ DO của mọi test không pass (kể cả skip/xfail) ở cuối.
+# Mặc định pytest chỉ nêu tên, phải cuộn ngược lên mới biết vì sao.
+# --strict-markers: gõ sai tên marker thì báo lỗi thay vì lặng lẽ bỏ qua.
+addopts = "-ra --strict-markers"
+
+# Cảnh báo deprecation của thư viện ngoài làm log test rối mà không phải lỗi
+# mình. Vẫn giữ nguyên cảnh báo phát ra từ code của dự án.
+filterwarnings = [
+    "ignore::DeprecationWarning:azure.*",
+    "ignore::DeprecationWarning:pydantic.*",
+]
+
+
+# ===================== ruff (nếu dùng linter) =====================
+[tool.ruff]
+# 100 chứ không phải 88 mặc định: đo trên chính mã nguồn này thì 99% số dòng
+# đã dưới 88, phần vượt là vài chuỗi prompt và thông báo lỗi tiếng Việt —
+# cắt chúng xuống chỉ làm khó đọc hơn. Đặt ngưỡng cao hơn thực tế một chút
+# để linter chỉ kêu khi có dòng thật sự dài bất thường.
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# Chọn bộ luật bắt lỗi THẬT chứ không bắt lỗi thẩm mỹ:
+#   F = lỗi logic (biến chưa gán, import thừa) — đây là nhóm đáng giá nhất
+#   E/W = pep8
+#   B = bẫy thường gặp (flake8-bugbear)
+select = ["E", "W", "F", "B"]
+
+# E402 (import không ở đầu file): cả dự án dùng mẫu
+#     sys.path.insert(0, .../"src")
+#     import client
+# nên import BẮT BUỘC phải nằm sau. Đây là hệ quả của cách bố trí thư mục,
+# không phải cẩu thả — bật lên chỉ tạo 13 cảnh báo không sửa được.
+ignore = ["E402"]
+
+[tool.ruff.lint.per-file-ignores]
+# config_additions.py là đoạn mẫu để chép vào config.py, không phải module
+# chạy được — nó tham chiếu Field mà không import.
+"src/config_additions.py" = ["F821"]
+
+# PROMPT gửi cho LLM: xuống dòng là ĐỔI NỘI DUNG model nhận được. Một prompt
+# đang chạy tốt không đáng bị sửa vì lý do thẩm mỹ.
+"src/llm_text.py" = ["E501"]
+"src/llm_vision.py" = ["E501"]
+
+# Template HTML cho email: thuộc tính style dài là bản chất của HTML viết cho
+# Outlook (không dùng được CSS ngoài). Cắt giữa thuộc tính chỉ khó đọc hơn.
+"report_layout.py" = ["E501"]

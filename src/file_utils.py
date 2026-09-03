@@ -30,16 +30,50 @@ class InvalidFileError(Exception):
     """File không phải ảnh/PDF hợp lệ, hoặc không đọc được."""
 
 
+# Số byte đầu file đưa cho libmagic đoán loại. libmagic chỉ cần vài trăm byte
+# đầu (magic number); 8 KB là dư cho mọi định dạng ở đây. Đọc cả file 2 MB
+# chỉ để đoán loại là phí, nhất là khi hàm này chạy cho từng chứng chỉ.
+_MAGIC_BYTES = 8192
+
+
 def check_mime(path: str | Path) -> str:
     """Trả về MIME thật của file. Ném InvalidFileError nếu không hỗ trợ.
 
     Đọc nội dung thật, không tin đuôi file.
+
+    DÙNG from_buffer CHỨ KHÔNG from_file. Đây là một lỗi đã xảy ra thật:
+    trên Windows, libmagic nhận đường dẫn dưới dạng byte theo bảng mã hệ
+    thống (CP1258/CP1252), nên MỌI file có dấu tiếng Việt trong tên đều hỏng,
+    với một trong hai thông báo chẳng nói lên điều gì:
+
+        'utf-8' codec can't decode bytes in position 74-75: invalid continuation byte
+        Loại file không hỗ trợ: cannot open `...\\Mở Khoá AI_cẩm nang...`
+
+    Đo trên bộ dữ liệu thật 133 chứng chỉ: 84 file có dấu -> hỏng 84/84;
+    49 file tên thuần ASCII -> chạy 49/49. Tách sạch, không một ngoại lệ.
+
+    Job chạy thật KHÔNG lộ ra lỗi này vì nó ghi byte tải từ eLIS ra file tạm
+    có tên ASCII do tempfile sinh. Chỉ khi đọc thẳng file do người dùng đặt
+    tên — như bộ đánh giá làm — mới lòi ra. Đó là lý do một lỗi chặn 63% dữ
+    liệu vẫn nằm im được lâu như vậy.
+
+    Đọc byte bằng Python rồi mới đưa cho libmagic thì đường dẫn Unicode do
+    Python xử lý (nó làm đúng), còn libmagic không bao giờ nhìn thấy tên file.
     """
     path = Path(path)
     if not path.is_file():
         raise InvalidFileError(f"Không tìm thấy file: {path}")
 
-    mime = magic.from_file(str(path), mime=True)
+    try:
+        with path.open("rb") as f:
+            dau_file = f.read(_MAGIC_BYTES)
+    except OSError as e:
+        raise InvalidFileError(f"Không đọc được file: {path.name} ({e})") from e
+
+    if not dau_file:
+        raise InvalidFileError(f"File rỗng: {path.name}")
+
+    mime = magic.from_buffer(dau_file, mime=True)
 
     if mime in MIME_IMAGE or mime == MIME_PDF:
         return mime
@@ -78,11 +112,18 @@ def read_as_images(path: str | Path) -> list[bytes]:
 
 
 def _render_pdf(path: Path) -> list[bytes]:
-    """Render mỗi trang PDF thành ảnh bytes, đã ép vừa ngưỡng."""
+    """Render mỗi trang PDF thành ảnh bytes, đã ép vừa ngưỡng.
+
+    Truyền BYTE chứ không truyền đường dẫn, cùng lý do với check_mime: thư
+    viện C phía dưới nhận tên file theo bảng mã hệ thống, nên tên có dấu
+    tiếng Việt là một nguồn hỏng lặng lẽ. Python đọc file rồi đưa byte sang
+    thì cả tầng đó biến mất. Chứng chỉ ở đây tối đa vài MB nên nạp vào RAM
+    không thành vấn đề.
+    """
     import io
 
     images: list[bytes] = []
-    pdf = pdfium.PdfDocument(str(path))
+    pdf = pdfium.PdfDocument(path.read_bytes())
     try:
         for i in range(len(pdf)):
             page = pdf[i]

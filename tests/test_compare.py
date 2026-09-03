@@ -15,7 +15,6 @@ from compare import (
     match_name_or_code,
     match_course_bilingual,
     identical_after_normalize,
-    same_word_set,
 )
 
 
@@ -150,3 +149,59 @@ class TestIdenticalAfterNormalize:
 
     def test_one_side_empty(self):
         assert identical_after_normalize("", "Nguyễn Văn A") is False
+
+
+# ===== Tên khóa song ngữ: phải thử CẢ BA dạng =====
+#
+# eLIS lưu tên khóa ở ba dạng khác nhau tùy khóa: chỉ tiếng Việt, chỉ tiếng
+# Anh, hoặc CẢ HAI nối lại. Chứng chỉ thì in song ngữ và LLM tách làm hai nửa.
+# Thiếu phép so bản GHÉP là từ chối oan đúng những chứng chỉ đọc đúng nhất.
+
+def test_song_ngu_khop_khi_eLIS_luu_TIENG_VIET():
+    assert match_course_bilingual(
+        "Python cơ bản", "Python fundamentals", "Python cơ bản", "loose")
+
+
+def test_song_ngu_khop_khi_eLIS_luu_TIENG_ANH():
+    assert match_course_bilingual(
+        "Python cơ bản", "Python fundamentals", "Python fundamentals", "loose")
+
+
+def test_song_ngu_khop_khi_eLIS_luu_CA_HAI():
+    """Ca 096_tienlx6 — đã từ chối oan trên dữ liệu thật vì thiếu phép so này.
+
+    Chứng chỉ in đúng nguyên chuỗi eLIS lưu, model tách làm hai theo đúng yêu
+    cầu của prompt, rồi không nửa nào bằng chuỗi eLIS nữa.
+    """
+    assert match_course_bilingual(
+        "BỘ QUY ĐỊNH CHÍNH SÁCH CẦN BIẾT FPT",
+        "FPT KEY REGULATIONS AND POLICIES (ENGLISH VERSION)",
+        "Bộ Quy định chính sách cần biết FPT - FPT Key Regulations and "
+        "Policies (English version)", "loose")
+
+
+def test_song_ngu_khop_ca_hai_o_che_do_strict():
+    assert match_course_bilingual(
+        "Python cơ bản", "Python fundamentals",
+        "Python cơ bản - Python fundamentals", "strict")
+
+
+def test_ghep_hai_nua_KHONG_lam_khop_khoa_khac_han():
+    """Đối chứng: nới thêm đường khớp không được biến khóa khác thành khớp."""
+    assert not match_course_bilingual(
+        "Python cơ bản", "Python fundamentals", "Java nâng cao", "loose")
+
+
+def test_ghep_hai_nua_KHONG_lam_khop_khi_eLIS_dai_hon():
+    """eLIS có từ mà ảnh không có -> vẫn phải trượt, kể cả sau khi ghép."""
+    assert not match_course_bilingual(
+        "An toàn thông tin", "Information Security",
+        "An toàn thông tin nâng cao", "loose")
+
+
+def test_chi_mot_ngon_ngu_thi_khong_ghep_bua():
+    """Nửa thứ hai rỗng -> không được ghép, tránh so với chuỗi cụt."""
+    assert match_course_bilingual("Python cơ bản", None,
+                                          "Python cơ bản", "loose")
+    assert not match_course_bilingual("Python cơ bản", None,
+                                              "Python fundamentals", "loose")

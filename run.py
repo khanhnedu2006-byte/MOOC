@@ -1,19 +1,3 @@
-"""Điều phối toàn bộ luồng ELIS (run).
-
-Nối 3 API + pipeline theo tài liệu:
-  ① getCert          -> lấy danh sách chờ duyệt
-  ② download         -> tải file chứng chỉ (JSON + base64)
-     -> chạy pipeline (Gemma/Azure) đối chiếu ảnh với thông tin từ ①
-  ③ ProcessStatus    -> gửi APPROVED/REJECTED
-
-Chạy liên tục (mặc định):
-    python run.py           # còn chứng chỉ thì làm ngay, hết thì nghỉ
-                            # poll_interval rồi hỏi lại. Ctrl+C để dừng.
-Chạy một lần rồi thoát:
-    python run.py once      # xử lý hết batch hiện có rồi dừng
-
-Cần .env đầy đủ: FPT_API_KEY, AZURE_*, ELIS_*.
-"""
 
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -21,6 +5,7 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import logging
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import NamedTuple
 
@@ -37,9 +22,15 @@ import ocr_azure
 import pipeline
 import scheduler
 from config import settings
+from process_data import code_from_email
 from schemas import Verdict, InputInfo
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+
+for _ten in ("azure", "azure.core.pipeline.policies.http_logging_policy",
+             "httpx", "httpcore", "urllib3", "openai", "PIL"):
+    logging.getLogger(_ten).setLevel(logging.WARNING)
+
 logger = logging.getLogger("run")
 
 
@@ -75,10 +66,157 @@ class RoundResult(NamedTuple):
     accepted_count: int
 
 
-def process_one_batch(azure_client) -> RoundResult:
-    """Xử lý một batch chứng chỉ chờ duyệt."""
+# Stage nghĩa là "hỏng kỹ thuật" — hệ thống chưa xử lý được, KHÔNG phải
+# nhân viên khai sai. Lấy thẳng từ database để hai nơi không lệch nhau.
+TECHNICAL_STAGES = frozenset(database.TECHNICAL_STAGES)
+
+
+def _la_hong_ky_thuat(kq) -> bool:
+    return kq.stage in TECHNICAL_STAGES
+
+
+def _sap_xep_va_loc(items: list[dict],
+                    bo_qua_cooldown: bool = False) -> tuple[list, list, list]:
+    """Sắp xếp hàng đợi và loại những ca chưa tới lượt thử lại.
+
+    Trả về (danh_sach_xu_ly, danh_sach_hoan, danh_sach_bo_cuoc).
+    Mỗi phần tử danh_sach_hoan là (item, so_lan_hong, gioi_han, thoi_gian_con_lai).
+
+    BA NHÓM, ba cách đối xử khác nhau:
+      - Chưa hỏng lần nào  -> làm TRƯỚC. Việc mới không được xếp sau việc
+        đang mắc kẹt, nếu không một chứng chỉ hỏng vĩnh viễn sẽ chặn cả
+        hàng đợi.
+      - Đã hỏng, chưa hết cooldown -> BỎ QUA vòng này. Không tải, không gọi
+        LLM. Đây là chỗ tiết kiệm thật: không có nó thì mỗi 5 giây lại tốn
+        một lượt LLM cho cùng một chứng chỉ.
+      - Đã hỏng quá số lần cho phép -> BỎ CUỘC, nộp REJECTED thật. Không có
+        nhánh này thì bản ghi nằm WAITING vĩnh viễn và không ai biết.
+    """
+    trang_thai = database.technical_retry_state([i["id"] for i in items])
+    if not trang_thai:
+        return items, [], []
+
+    gioi_han = max(1, settings.technical_retry_max)
+    nghi = timedelta(minutes=max(0, settings.technical_retry_cooldown_minutes))
+    bay_gio = datetime.now()
+
+    moi, thu_lai, bo_cuoc, hoan = [], [], [], []
+    for it in items:
+        tt = trang_thai.get(str(it["id"]))
+        if not tt:
+            moi.append(it)
+            continue
+        so_lan, lan_cuoi = tt
+        if so_lan >= gioi_han:
+            bo_cuoc.append((it, so_lan))
+            continue
+        try:
+            da_qua = bay_gio - datetime.fromisoformat(lan_cuoi)
+        except (TypeError, ValueError):
+            da_qua = nghi                      # không đọc được thì cho thử
+        if da_qua < nghi and not bo_qua_cooldown:
+            hoan.append((it, so_lan, gioi_han, nghi - da_qua))
+            continue
+        thu_lai.append(it)
+
+    # Ca thử lại xếp SAU toàn bộ ca mới — đúng yêu cầu "đẩy về dưới cùng".
+    return moi + thu_lai, hoan, bo_cuoc
+
+
+# Danh sách id đã báo hoãn ở lần gần nhất. Chỉ để tránh lặp log, không mang
+# nghĩa nghiệp vụ nào — mất khi restart cũng không sao.
+_da_bao_hoan: frozenset = frozenset()
+
+
+def _bao_ca_hoan(hoan: list[tuple]) -> None:
+    """In các ca đang chờ tới lượt thử lại — CHỈ khi danh sách thay đổi.
+
+    IN ĐỦ BỐN THÔNG TIN cho mỗi ca: là ai, hỏng mấy lần rồi, và còn bao lâu
+    nữa mới thử lại. Bản trước chỉ in "Hoãn 1 chứng chỉ" — người đọc không
+    biết ca nào bị hoãn, nên khi thấy nó nằm cạnh một ca vừa bị từ chối vì
+    sai tên thì tưởng hệ thống đang hoãn nhầm cả ca nghiệp vụ.
+
+    Chỉ in khi TẬP id thay đổi. Vòng lặp chạy mỗi vài giây còn cooldown là
+    hàng tiếng: in mỗi vòng thì 6 tiếng chờ sinh ra hàng nghìn dòng giống hệt.
+    """
+    global _da_bao_hoan
+    tap_id = frozenset(str(it["id"]) for it, *_ in hoan)
+    if tap_id == _da_bao_hoan:
+        return
+    _da_bao_hoan = tap_id
+
+    if not hoan:
+        logger.info("Không còn chứng chỉ nào bị hoãn.")
+        return
+
+    logger.info("Hoãn %d chứng chỉ HỎNG KỸ THUẬT, chưa tới lượt thử lại "
+                "(ca từ chối vì sai tên/khóa học KHÔNG bị hoãn):", len(hoan))
+    for it, so_lan, gioi_han, con_lai in hoan:
+        # In cả TÊN KHÓA HỌC: người vận hành nhìn màn hình eLIS thấy tên khóa
+        # chứ không thấy user_course_id. Chỉ in id thì không đối chiếu được
+        # dòng log với dòng trên eLIS, và dễ tưởng hệ thống đang bỏ sót.
+        logger.info("    %s | %s | %s — hỏng %d/%d lần, thử lại sau ~%.1f tiếng",
+                    str(it["id"])[:8], it.get("employeeName") or "?",
+                    (it.get("courseName") or "?")[:45],
+                    so_lan, gioi_han, con_lai.total_seconds() / 3600)
+
+
+def _bo_cuoc(bo_cuoc: list[tuple]) -> int:
+    """Nộp REJECTED cho những ca đã thử quá số lần cho phép.
+
+    Phải có nhánh này, nếu không bản ghi nằm WAITING vĩnh viễn: eLIS thấy nó
+    "đang chờ duyệt" mãi mãi, còn job thì bỏ qua vì hết lượt. Học viên không
+    nhận được kết luận nào và cũng không ai biết để xử lý tay.
+
+    Lý do gửi kèm nói rõ đây là lỗi hệ thống, không đổ cho học viên.
+    """
+    if not bo_cuoc:
+        return 0
+
+    dto = []
+    for it, so_lan in bo_cuoc:
+        logger.error("BỎ CUỘC sau %d lần: %s (%s) — nộp REJECTED.",
+                     so_lan, it.get("employeeName") or "?", it["id"])
+        ly_do = (f"Hệ thống đã thử {so_lan} lần nhưng không xử lý được "
+                 f"chứng chỉ này. Vui lòng liên hệ bộ phận đào tạo.")
+        try:
+            database.write_failure_log(
+                user_course_id=it["id"], employee_id=it.get("employeeId"),
+                verdict=Verdict.REJECTED.value, reason=ly_do,
+                stage="system_error", provider=it.get("providerName"),
+                course_name=it.get("courseName"))
+        except Exception as e:
+            logger.warning("Ghi log bỏ cuộc lỗi: %s", e)
+        dto.append({
+            "id": it["id"],
+            "certificate_id": it["certificate_id"],
+            "status": Verdict.REJECTED.value,
+            "courseId": it["courseId"],
+            "employeeId": it["employeeId"],
+            "comment": "Chưa xử lý được chứng chỉ, vui lòng liên hệ bộ phận đào tạo",
+            "comment_cer": ly_do[:1000],
+        })
+    return _submit_results(dto, 0)
+
+
+def process_one_batch(azure_client, items: list[dict] | None = None,
+                      dang_thu_lai: bool = False,
+                      bo_qua_cooldown: bool = False) -> RoundResult:
+    """Xử lý một batch chứng chỉ chờ duyệt.
+
+    items=None  -> tự lấy danh sách từ eLIS (lượt chạy bình thường).
+    items=[...] -> xử lý đúng danh sách đó; dùng cho lượt thử lại cuối vòng.
+
+    dang_thu_lai=True chặn đệ quy VÀ bỏ qua cooldown: lượt thử lại là lượt
+    được phép chạy ngay. Hỏng lần nữa thì để nguyên WAITING cho vòng poll
+    sau, không gọi thử lại lần ba trong cùng một vòng.
+
+    bo_qua_cooldown=True là lệnh tay `python run.py retry`: người vận hành
+    biết sự cố đã khỏi và muốn thử ngay, không đợi hết giãn cách.
+    """
     # ===== ① Lấy danh sách chờ duyệt =====
-    items = call_with_retry(client.get_pending_list, page=1, size=100)
+    if items is None:
+        items = call_with_retry(client.get_pending_list, page=1, size=100)
     if not items:
         # debug chứ không info: ở chế độ chạy liên tục dòng này sẽ lặp mỗi
         # poll_interval giây và nhấn chìm log thật. main() đã báo trạng thái
@@ -86,26 +224,34 @@ def process_one_batch(azure_client) -> RoundResult:
         logger.debug("Không có chứng chỉ chờ duyệt.")
         return RoundResult(0, 0)
 
-    logger.info("Có %d chứng chỉ chờ duyệt.", len(items))
+    # Lượt thử lại KHÔNG lọc lại: các ca này vừa hỏng xong nên chắc chắn
+    # đang trong cooldown, lọc lại là loại sạch chính thứ vừa gom để thử.
+    if dang_thu_lai:
+        hoan, bo_cuoc, accepted_bo_cuoc = [], [], 0
+    else:
+        tong_cho = len(items)
+        items, hoan, bo_cuoc = _sap_xep_va_loc(items, bo_qua_cooldown)
+        # Báo SAU KHI LỌC, và chỉ khi thật sự có việc.
+        #
+        # Báo trước khi lọc thì khi mọi ca đều đang trong cooldown, dòng "Có N
+        # chứng chỉ chờ duyệt" vẫn in mỗi vòng — với chu kỳ 5 giây và cooldown
+        # 6 tiếng, đó là hơn 4.000 dòng nói về việc mà job KHÔNG làm.
+        if items:
+            logger.info("Có %d chứng chỉ chờ duyệt%s.", len(items),
+                        f" (bỏ qua {tong_cho - len(items)} ca chưa tới lượt)"
+                        if tong_cho > len(items) else "")
+        _bao_ca_hoan(hoan)
+        accepted_bo_cuoc = _bo_cuoc(bo_cuoc)
+
+    if not items:
+        return RoundResult(len(bo_cuoc), accepted_bo_cuoc)
 
     # Cache map id -> thông tin, để dùng ở bước ③ (theo tài liệu mục 6).
     info_by_id = {item["id"]: item for item in items}
 
-    # ===== ② Tải file + scan + ③ nộp — TỪNG LÔ MỘT =====
-    #
-    # Vì sao nộp NGAY sau mỗi lô thay vì gom hết rồi nộp một lần ở cuối:
-    # kết quả chưa nộp thì trên eLIS bản ghi vẫn ở trạng thái WAITING, nên
-    # vòng poll sau getCert vẫn trả về đúng những item đó và job sẽ tải lại,
-    # scan lại — tốn thêm một lượt gọi LLM cho mỗi cái. Gom cả mẻ rồi mới
-    # nộp khiến toàn bộ công đã làm phụ thuộc vào một request duy nhất ở
-    # cuối; chỉ cần nó hỏng (rớt mạng, container restart, eLIS lỗi) là mất
-    # sạch. Nộp theo lô thì hỏng ở lô sau không xóa công của lô trước.
-    #
-    # Kích thước lô lấy từ cấu hình (BATCH_SIZE). Ép về khoảng [1, 20]:
-    # eLIS giới hạn 20 cặp mỗi request tải file, còn API ③ cho tới 500 bản
-    # ghi mỗi request nên 20 vẫn nằm xa dưới ngưỡng đó.
     processed_count = 0
     accepted_count = 0
+    hong_ky_thuat: list[dict] = []
     batch_size = max(1, min(settings.batch_size, 20))
     for i in range(0, len(items), batch_size):
         batch = items[i:i + batch_size]
@@ -156,6 +302,13 @@ def process_one_batch(azure_client) -> RoundResult:
             kq = _scan_certificate(f["anh_bytes"], info, azure_client)
             archive.write_verdict(archive_path, kq)
 
+            # Ca hỏng kỹ thuật KHÔNG bị nộp eLIS nên nó vẫn đang WAITING.
+            # Hiện REJECTED cho nó là nói sai với chính người vận hành: họ
+            # đọc log rồi đi báo học viên "chứng chỉ bị từ chối", trong khi
+            # hệ thống chỉ đang hẹn thử lại sau vài tiếng.
+            hong = _la_hong_ky_thuat(kq)
+            hien_thi = Verdict.WAITING if hong else kq.verdict
+
             # In kết luận NGAY khi có, trước cả khi ghi DB hay nộp eLIS.
             # Không có dòng này thì màn hình chỉ hiện "Có 5 chứng chỉ chờ
             # duyệt" rồi "Nộp lô 1: 5 thành công" — người vận hành không
@@ -163,7 +316,7 @@ def process_one_batch(azure_client) -> RoundResult:
             # mở mooc_log.db lên xem. Đặt trước ghi DB để nếu DB có hỏng
             # thì kết luận vẫn còn trên màn hình.
             logger.info("[%s] %s (%s) | %s | tầng: %s",
-                        kq.verdict.value,
+                        hien_thi.value,
                         info.get("employeeName") or "?",
                         info.get("employeeId") or uc_id,
                         kq.reason or "-",
@@ -175,9 +328,17 @@ def process_one_batch(azure_client) -> RoundResult:
                 database.write_log(kq,
                                  employee_id=info.get("employeeId"),
                                  user_course_id=uc_id,
-                                 provider=info.get("providerName"))
+                                 provider=info.get("providerName"),
+                                 course_name=info.get("courseName"),
+                                 verdict_override=hien_thi.value if hong else None)
             except Exception as e:
                 logger.warning("Ghi log lỗi (không chặn xử lý): %s", e)
+            if hong:
+                # KHÔNG nộp. Bản ghi ở lại WAITING trên eLIS để còn được xử
+                # lý lại — nộp REJECTED là đóng vĩnh viễn một chứng chỉ mà hệ
+                # thống chưa hề đánh giá được nội dung.
+                hong_ky_thuat.append(info)
+                continue
             batch_results.append(_build_result_dto(kq, info))
 
         # ===== ③ Nộp kết quả của RIÊNG lô này =====
@@ -185,7 +346,22 @@ def process_one_batch(azure_client) -> RoundResult:
             accepted_count += _submit_results(batch_results, batch_index)
             processed_count += len(batch_results)
 
-    return RoundResult(processed_count, accepted_count)
+    # ===== Thử lại các ca hỏng kỹ thuật, SAU KHI đã xong hết việc khác =====
+    #
+    # Đặt ở cuối chứ không thử ngay tại chỗ: sự cố thường theo cụm (Azure quá
+    # tải, eLIS chập). Thử ngay lại chỉ gặp đúng sự cố đó. Chạy xong hết việc
+    # khác rồi quay lại thì đã trôi qua vài chục giây tới vài phút — đủ để
+    # nhiều sự cố tạm thời tự khỏi.
+    if hong_ky_thuat and not dang_thu_lai:
+        logger.info("Thử lại %d chứng chỉ hỏng kỹ thuật (cuối hàng đợi).",
+                    len(hong_ky_thuat))
+        kq_thu_lai = process_one_batch(azure_client, items=hong_ky_thuat,
+                                       dang_thu_lai=True)
+        processed_count += kq_thu_lai.scanned_count
+        accepted_count += kq_thu_lai.accepted_count
+
+    return RoundResult(processed_count + len(bo_cuoc),
+                       accepted_count + accepted_bo_cuoc)
 
 
 def _submit_results(batch_results: list[dict], batch_index: int) -> int:
@@ -224,13 +400,18 @@ def _submit_results(batch_results: list[dict], batch_index: int) -> int:
 
 
 def _log_failed_batch(batch, reason, stage="download_error"):
-    """Ghi log REJECTED cho từng item trong lô không xử lý được."""
+    """Ghi log cho từng item trong lô không xử lý được.
+
+    Ghi WAITING chứ KHÔNG phải REJECTED: những ca này không hề được nộp về
+    eLIS (hàm gọi chỉ `continue`), nên bên eLIS chúng vẫn đang chờ duyệt và
+    sẽ được thử lại. REJECTED ở đây là một lời nói dối trong log.
+    """
     for it in batch:
         # Ca hỏng kỹ thuật cũng phải hiện kết luận trên màn hình như ca chạy
         # được, nếu không chúng chỉ nằm im trong DB và người vận hành tưởng
         # là chưa xử lý tới.
         logger.info("[%s] %s (%s) | %s | tầng: %s",
-                    Verdict.REJECTED.value,
+                    Verdict.WAITING.value,
                     it.get("employeeName") or "?",
                     it.get("employeeId") or it.get("id"),
                     reason, stage)
@@ -238,10 +419,11 @@ def _log_failed_batch(batch, reason, stage="download_error"):
             database.write_failure_log(
                 user_course_id=it["id"],
                 employee_id=it.get("employeeId"),
-                verdict=Verdict.REJECTED.value,
+                verdict=Verdict.WAITING.value,
                 reason=reason,
                 stage=stage,
                 provider=it.get("providerName"),
+                course_name=it.get("courseName"),
             )
         except Exception as e:
             logger.warning("Ghi log thất bại lỗi: %s", e)
@@ -256,35 +438,6 @@ def _record_send_status(user_course_id, succeeded, message=None):
     except Exception as e:
         logger.warning("Cập nhật trạng thái gửi lỗi: %s", e)
 
-
-def _code_from_email(email: str | None) -> str:
-    """Lấy mã nhân viên (username) từ email — phần đứng trước dấu @.
-
-    KHÔNG giới hạn tên miền. Lý do: FPT có nhiều đuôi khác nhau (fpt.com,
-    fpt.com.vn, fsoft.com.vn, fe.edu.vn, fptsoftware.com...). Thứ được in
-    trên chứng chỉ là USERNAME, không phụ thuộc tên miền — nên chặn theo
-    đuôi chỉ làm mất mã đối chiếu và từ chối oan đúng những chứng chỉ in
-    username, tức là đúng ca mà việc lấy mã từ email sinh ra để xử lý.
-
-    Trả rỗng nếu không có email hoặc chuỗi không chứa dấu @. Rỗng nghĩa là
-    không đối chiếu được qua mã, chỉ còn đối chiếu bằng tên.
-
-    Ví dụ:
-        "hungnt97@fpt.com"      -> "hungnt97"
-        "hoabd3@fpt.com.vn"     -> "hoabd3"
-        "  HoaBD3@FSOFT.COM.VN" -> "hoabd3"
-    """
-    if not email or not email.strip():
-        return ""
-    email = email.strip().lower()
-    if "@" not in email:
-        # Dữ liệu bất thường: trường employeeEmail mà không có dấu @.
-        # Cảnh báo để không hỏng âm thầm — nếu im lặng, chứng chỉ in
-        # username sẽ bị REJECTED với lý do "tên không khớp", trông y hệt
-        # trường hợp nhân viên khai sai, rất khó lần ra nguyên nhân.
-        logger.warning("employeeEmail không hợp lệ (thiếu @): %r", email)
-        return ""
-    return email.split("@", 1)[0].strip()
 
 
 def _scan_certificate(image_bytes, info, azure_client):
@@ -316,7 +469,14 @@ def _scan_certificate(image_bytes, info, azure_client):
     # employeeId. Lý do: một số chứng chỉ in username (= phần email) làm tên.
     # Lưu ý: employeeId gốc vẫn được dùng khi GỬI kết quả về ELIS (xem
     # _build_result_dto), không đụng ở đây.
-    match_code = _code_from_email(info.get("employeeEmail"))
+    match_code = code_from_email(info.get("employeeEmail"))
+    if not match_code:
+        # Cảnh báo để không hỏng âm thầm: thiếu mã đối chiếu thì chứng chỉ in
+        # username sẽ bị REJECTED với lý do "tên không khớp", trông y hệt
+        # trường hợp nhân viên nộp nhầm — rất khó lần ra nguyên nhân thật.
+        logger.warning("Không lấy được mã đối chiếu từ employeeEmail=%r "
+                       "(thiếu @ hoặc bỏ trống) — chỉ còn đối chiếu bằng tên.",
+                       info.get("employeeEmail"))
     given = InputInfo(
         employee_name=info.get("employeeName") or "",
         course_name=info.get("courseName") or "",
@@ -459,14 +619,87 @@ def run_forever(azure_client) -> None:
         time.sleep(sleep_seconds)
 
 
+def print_status() -> int:
+    """In hàng đợi hiện tại của eLIS kèm trạng thái thử lại của từng ca.
+
+    Vì sao cần lệnh này: khi một chứng chỉ nằm im trên eLIS, câu hỏi đầu tiên
+    luôn là "cái nào?" — mà màn hình eLIS chỉ hiện TÊN KHÓA còn log chỉ hiện
+    user_course_id. Không có bảng nối hai thứ đó thì cách duy nhất là so mốc
+    thời gian giữa log console và DB, tức là ĐOÁN. Lệnh này hỏi thẳng API ①
+    nên nó là dữ liệu, không phải suy luận.
+
+    Chỉ ĐỌC: không tải file, không gọi LLM, không nộp gì về eLIS. Chạy lúc job
+    đang chạy nền cũng được.
+    """
+    items = call_with_retry(client.get_pending_list, page=1, size=100)
+    if not items:
+        print("Không có chứng chỉ nào đang chờ duyệt.")
+        return 0
+
+    trang_thai = database.technical_retry_state([i["id"] for i in items])
+    gioi_han = max(1, settings.technical_retry_max)
+    nghi = timedelta(minutes=max(0, settings.technical_retry_cooldown_minutes))
+    bay_gio = datetime.now()
+
+    print(f"\n{len(items)} chứng chỉ đang chờ duyệt "
+          f"(giãn cách thử lại: {nghi.total_seconds() / 3600:.1f} tiếng, "
+          f"tối đa {gioi_han} lần)\n")
+    header = f"{'user_course_id':<38} {'Nhân viên':<22} {'Khóa học':<42} {'Trạng thái'}"
+    print(header)
+    print("-" * len(header))
+
+    for it in items:
+        tt = trang_thai.get(str(it["id"]))
+        if not tt:
+            mo_ta = "mới, sẽ xử lý ở vòng tới"
+        else:
+            so_lan, lan_cuoi = tt
+            try:
+                da_qua = bay_gio - datetime.fromisoformat(lan_cuoi)
+            except (TypeError, ValueError):
+                da_qua = nghi
+            if so_lan >= gioi_han:
+                mo_ta = f"hết lượt ({so_lan}/{gioi_han}) — sẽ nộp REJECTED"
+            elif da_qua < nghi:
+                con = (nghi - da_qua).total_seconds() / 3600
+                mo_ta = f"hỏng {so_lan}/{gioi_han} — chờ thêm ~{con:.1f} tiếng"
+            else:
+                mo_ta = f"hỏng {so_lan}/{gioi_han} — đã tới lượt thử lại"
+        print(f"{str(it['id']):<38} {(it.get('employeeName') or '?')[:21]:<22} "
+              f"{(it.get('courseName') or '?')[:41]:<42} {mo_ta}")
+
+    print("\nMuốn thử lại NGAY (bỏ qua giãn cách): python run.py retry")
+    return 0
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "loop"
-    if mode not in ("once", "loop"):
-        print("Dùng: python run.py [loop|once]     (không ghi gì = loop)")
+    if mode not in ("once", "loop", "retry", "status"):
+        print("Dùng: python run.py [loop|once|retry|status]\n"
+              "  loop  : chạy liên tục (mặc định)\n"
+              "  once  : xử lý một lượt rồi thoát\n"
+              "  retry : xử lý một lượt, BỎ QUA giãn cách của ca hỏng kỹ thuật\n"
+              "          (dùng khi biết sự cố Azure/eLIS đã khỏi, muốn thử ngay)\n"
+              "  status: CHỈ XEM — in hàng đợi eLIS kèm tên khóa học và\n"
+              "          trạng thái thử lại. Không xử lý, không tốn lượt LLM.")
         return 1
 
     database.init_db()  # tạo bảng log nếu chưa có
+
+    # status không đụng tới ảnh nên không cần client Azure. Tạo client trước
+    # sẽ bắt lệnh chỉ-xem phụ thuộc vào key Azure còn hạn hay không.
+    if mode == "status":
+        return print_status()
+
     azure_client = ocr_azure.create_client()
+
+    if mode == "retry":
+        logger.info("Chế độ retry: bỏ qua giãn cách, thử lại NGAY mọi ca "
+                    "hỏng kỹ thuật còn trong hạn.")
+        kq = process_one_batch(azure_client, bo_qua_cooldown=True)
+        logger.info("Xong. Đã xử lý %d chứng chỉ, eLIS nhận %d.",
+                    kq.scanned_count, kq.accepted_count)
+        return 0
 
     if mode == "once":
         kq = process_one_batch(azure_client)

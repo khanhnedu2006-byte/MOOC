@@ -1,27 +1,9 @@
-"""Cấu hình hệ thống (config).
-
-Đọc mọi key và cấu hình từ file .env, và cung cấp hàm get_llm() để tạo client
-gọi model qua FPT.
-
-Cách dùng ở module khác:
-    from config import settings, get_llm
-    llm = get_llm()
-
-File .env đặt ở thư mục gốc dự án (mooc/.env), KHÔNG commit lên git.
-"""
-
 from langchain_openai import ChatOpenAI
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Toàn bộ cấu hình, đọc từ .env.
-
-    Tên biến khớp với tên trong .env (không phân biệt hoa/thường).
-    Ví dụ AZURE_KEY trong .env -> settings.azure_key.
-    """
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -61,39 +43,12 @@ class Settings(BaseSettings):
     elis_api_key: str = Field(default="", description="API key ELIS (header apikey)")
 
     # ===== Chế độ khớp khóa học =====
-    # "loose"  : người nhập chỉ cần là TẬP CON của tên khóa trên ảnh cũng khớp.
-    #           Vd nhập "khóa học code online", ảnh "khóa học code online
-    #           (code-bc-06)" -> khớp (ảnh có thừa mã lớp, người nhập thiếu).
-    # "strict"  : tên khóa phải trùng KHỚP HOÀN TOÀN (cùng tập từ).
-    # Mặc định "loose". Đổi thành "strict" nếu muốn siết chặt.
     course_match_mode: str = Field(default="loose")
 
-    # ===== Luật thời gian hoàn thành =====
-    # Chứng chỉ hợp lệ nếu ngày hoàn thành nằm TRONG khoảng [đầu, cuối].
-    # Ngoài khoảng -> REJECTED (lý do: thời gian hoàn thành không hợp lệ).
-    # Đổi hai giá trị này khi sang năm mới. Định dạng: YYYY-MM-DD.
     valid_from: str = Field(default="2026-01-01")
     valid_to: str = Field(default="2026-09-30")
 
     # ===== Gửi báo cáo qua email =====
-    # Báo cáo NỘI BỘ gửi cho mentor, không phải cho khách hàng eLIS.
-    #
-    # SMTP_PASSWORD luôn phải là App Password, KHÔNG phải mật khẩu đăng nhập:
-    #   - Gmail: bật Xác minh 2 bước trước, rồi tạo App Password 16 ký tự.
-    #     Google đã bỏ hẳn "Quyền truy cập của ứng dụng kém an toàn" từ 2022,
-    #     nên mật khẩu Gmail thường CHẮC CHẮN bị từ chối.
-    #   - Office 365: không nhận mật khẩu thường khi tài khoản bật MFA, và
-    #     admin còn phải bật SMTP AUTH riêng cho từng hộp thư.
-    #
-    # HẠN SỬ DỤNG (chỉ với Office 365): Microsoft đang khai tử Basic Auth cho
-    # SMTP AUTH trên Exchange Online, mốc hiện tại là 31/12/2026. Gmail không
-    # bị mốc này.
-    #
-    # NHẬN NHIỀU TÊN BIẾN: SMTP_USER và SMTP_USERNAME là một; MAIL_TO,
-    # MANAGER_EMAIL cũng vậy. Lý do: tên biến trong tài liệu/mẫu mỗi nơi một
-    # khác, mà đặt sai tên thì pydantic không báo lỗi — nó chỉ lặng lẽ dùng
-    # giá trị mặc định rỗng, và bạn nhận được thông báo "thiếu cấu hình" dù
-    # đã điền đủ. Chấp nhận cả hai tên rẻ hơn nhiều so với việc đi tìm lỗi đó.
     smtp_host: str = Field(default="smtp.office365.com")
     smtp_port: int = Field(default=587)
     smtp_user: str = Field(
@@ -109,17 +64,6 @@ class Settings(BaseSettings):
     # Số giây nghỉ giữa mỗi vòng lặp hỏi ELIS.
     poll_interval_seconds: int = Field(default=5)
 
-    # Số chứng chỉ xử lý trong MỘT lô: tải file -> scan -> nộp kết quả.
-    #
-    # Lô càng nhỏ thì mất mát càng ít khi có sự cố giữa chừng (rớt mạng,
-    # container restart): những lô đã nộp xong vẫn được giữ, chỉ lô đang dở
-    # phải làm lại. Đổi lại là gọi API nhiều lần hơn.
-    #
-    # Đặt 1 nghĩa là nộp ngay sau mỗi chứng chỉ — an toàn nhất, và với lượng
-    # chứng chỉ hiện tại thì chi phí gọi API thêm không đáng kể.
-    #
-    # eLIS giới hạn 20 cặp mỗi request tải file, nên giá trị lớn hơn 20 sẽ
-    # bị ép về 20 (xem run.py).
     batch_size: int = Field(default=1)
     # Số lần thử lại khi gọi API gặp lỗi tạm thời (vd 502, timeout).
     retry_count: int = Field(default=3)
@@ -129,18 +73,15 @@ class Settings(BaseSettings):
     timeout_seconds: int = Field(default=60)
 
     # ===== Kho lưu chứng chỉ (phục vụ đánh giá lại) =====
-    # Sau khi nộp kết quả, bản ghi trên eLIS rời trạng thái WAITING nên vòng
-    # getCert sau KHÔNG trả về nó nữa — data thật chỉ đi qua MỘT lần. Bật cờ
-    # này để giữ lại ảnh + thông tin getCert, nhờ đó chạy lại bộ đánh giá
-    # (thư mục evaluation/) bao nhiêu lần cũng được mà không cần eLIS.
-    #
-    # MẶC ĐỊNH TẮT có chủ đích: chứng chỉ thật chứa tên, mã và email nhân
-    # viên. Một container production âm thầm tích trữ dữ liệu cá nhân là thứ
-    # không ai muốn phát hiện ra về sau. Bật khi cần thu thập, tắt khi chạy thật.
     save_certificates: bool = Field(default=False)
 
     # Thư mục chứa kho, tương đối so với gốc dự án.
     archive_dir: str = Field(default="cert_archive")
+
+    # ===== Thử lại ca hỏng kỹ thuật =====
+    technical_retry_max: int = Field(default=5)
+
+    technical_retry_cooldown_minutes: int = Field(default=360)
 
     # ===== Lịch gửi báo cáo tự động =====
     # "off"     : không tự gửi (chỉ gửi tay bằng send_report.py --send)

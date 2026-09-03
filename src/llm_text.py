@@ -28,29 +28,53 @@ Trả về ĐÚNG một object JSON với 4 trường sau, không kèm giải th
 markdown:
 
 {
-  "recipient_name": "tên đầy đủ người được cấp, hoặc null",
-  "certificate_name": "tên CỤ THỂ của chứng chỉ/khóa học/danh hiệu, hoặc null",
-  "certificate_name_alt": "nếu tên khóa học in SONG NGỮ thì đây là phần ngôn ngữ còn lại, ngược lại null",
+  "recipient_name": "tên NGƯỜI ĐƯỢC CẤP, hoặc null",
+  "signatory_name": "tên người KÝ chứng chỉ (giám đốc/hiệu trưởng...), hoặc null",
+  "certificate_name": "tên khóa học, bản TIẾNG VIỆT nếu có (xem quy tắc), hoặc null",
+  "certificate_name_alt": "tên khóa học bản TIẾNG ANH, null nếu chỉ có một ngôn ngữ",
   "issue_date": "ngày cấp giữ nguyên như in trong text, hoặc null",
   "expiry_date": "ngày hết hạn, hoặc null nếu vô thời hạn/không ghi"
 }
 
-QUY TẮC certificate_name:
-- Lấy tên CỤ THỂ (vd "Certified Management Accountant", "Data Analyst Nanodegree").
-- KHÔNG lấy cụm chung chung như "Certificate of Completion", "Chứng nhận hoàn thành".
-- Nếu có cả hai, ưu tiên tên cụ thể.
+QUY TẮC recipient_name — ĐỌC KỸ, đây là chỗ hay sai nhất:
+- Người được cấp thường xuất hiện ở PHẦN ĐẦU text, ngay sau các cụm như
+  "Ghi nhận", "Chứng nhận rằng", "This is to certify that", "Awarded to",
+  "Presented to", "has successfully completed".
+- TUYỆT ĐỐI KHÔNG lấy tên nằm cạnh CHỮ KÝ, CON DẤU, hay chức danh
+  ("Giám đốc", "Chief Delivery Officer", "Director", "CEO", "Hiệu trưởng")
+  — thường ở CUỐI text. Tên đó điền vào signatory_name.
+- Nếu chỗ người nhận chỉ có username hoặc email, hãy trả về ĐÚNG chuỗi đó,
+  không suy ra tên thật, không lấy tên nào khác thay thế.
+- Nếu không chắc đâu là người nhận, để null. Null tốt hơn lấy nhầm.
 
-QUY TẮC SONG NGỮ:
-- Nếu tên khóa học được in bằng CẢ tiếng Việt VÀ tiếng Anh (ví dụ "An toàn
-  thông tin / Information Security", hoặc "Data Analysis (Phân tích dữ liệu)"),
-  hãy TÁCH thành hai phần:
-  - certificate_name: một ngôn ngữ (ưu tiên tiếng Việt nếu có)
-  - certificate_name_alt: ngôn ngữ còn lại
-- Nếu tên khóa học chỉ có MỘT ngôn ngữ thì certificate_name_alt = null.
-- KHÔNG tự dịch. Chỉ tách khi ảnh THẬT SỰ in cả hai ngôn ngữ.
+QUY TẮC certificate_name / certificate_name_alt — TÁCH THEO NGÔN NGỮ:
+- CHỈ lấy TÊN KHÓA HỌC, KHÔNG lấy câu bao quanh nó. Ví dụ dòng có trong text:
+      Đã hoàn thành khoá học "Python cơ bản"
+      Has successfully completed the course "Python fundamentals"
+  thì tên khóa là "Python cơ bản" và "Python fundamentals" — KHÔNG phải cả
+  câu "Đã hoàn thành khoá học...". Tên khóa thường nằm trong dấu ngoặc kép,
+  in đậm, hoặc trên một dòng riêng cỡ chữ lớn hơn.
+- Nếu tên khóa xuất hiện bằng HAI ngôn ngữ (dù nằm trên hai dòng riêng, hay
+  cùng một dòng nối bằng "-", "–", "/", hay trong ngoặc):
+      certificate_name     = bản TIẾNG VIỆT
+      certificate_name_alt = bản TIẾNG ANH
+  Ví dụ "BỘ QUY ĐỊNH CHÍNH SÁCH CẦN BIẾT FPT - FPT KEY REGULATIONS AND
+  POLICIES (ENGLISH VERSION)" -> certificate_name = "BỘ QUY ĐỊNH CHÍNH SÁCH
+  CẦN BIẾT FPT", certificate_name_alt = "FPT KEY REGULATIONS AND POLICIES
+  (ENGLISH VERSION)".
+- Nếu chỉ có MỘT ngôn ngữ: đặt vào certificate_name, còn
+  certificate_name_alt = null. Không phân biệt đó là tiếng gì.
+- KHÔNG TỰ DỊCH. Chỉ tách khi text THẬT SỰ có cả hai ngôn ngữ.
+
+QUY TẮC CHỮ KHÔNG PHẢI LATIN (Nhật, Trung, Hàn...):
+- CHÉP NGUYÊN KÝ TỰ GỐC. Không phiên âm, không romaji, không dịch.
+- Nếu KHÔNG đọc được một cụm ký tự, hãy BỎ TRỐNG cụm đó và giữ nguyên phần
+  còn lại — TUYỆT ĐỐI không đoán bừa một chuỗi chữ Latin thay vào. Đoán bừa
+  làm hỏng phép đối chiếu tệ hơn hẳn so với thiếu vài chữ.
 
 QUY TẮC ngày: giữ nguyên như trong text, không đổi định dạng, không suy diễn.
-Số hiệu chứng chỉ KHÔNG phải ngày.
+Số hiệu chứng chỉ KHÔNG phải ngày. KHÔNG lấy ngày từ đồng hồ hệ thống hay
+thanh taskbar nếu text lấy từ ảnh chụp màn hình.
 
 Trường nào không thấy thì để null, không bịa. Chỉ trả JSON.
 
@@ -58,6 +82,17 @@ Trường nào không thấy thì để null, không bịa. Chỉ trả JSON.
 ---
 {ocr_text}
 ---"""
+
+
+# Chỗ trong PROMPT sẽ được thay bằng text OCR thật.
+#
+# Đặt thành HẰNG SỐ chứ không viết chuỗi thẳng trong .replace(): trước đây
+# PROMPT ghi "{ocr_text}" còn code lại replace("{text_ocr}") — lệch tên nên
+# không thay gì cả, và LLM nhận nguyên chuỗi "{ocr_text}" rồi trả lời "vui
+# lòng cung cấp nội dung {ocr_text}". Không có lỗi nào được ném ra ở chỗ
+# thay thế; hỏng chỉ lộ ra ở tận bước parse JSON. Một hằng số dùng chung cho
+# cả hai nơi khiến kiểu lệch đó không xảy ra được nữa, và có test canh.
+PLACEHOLDER = "{ocr_text}"
 
 
 class LlmTextError(Exception):
@@ -85,7 +120,7 @@ def extract_from_text(ocr_text: str, llm=None) -> ExtractedInfo:
     if llm is None:
         llm = get_llm()
 
-    prompt_content = PROMPT.replace("{text_ocr}", ocr_text)
+    prompt_content = PROMPT.replace(PLACEHOLDER, ocr_text)
     message = HumanMessage(content=prompt_content)
 
     try:
