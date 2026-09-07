@@ -17,9 +17,11 @@ import json
 from langchain_core.messages import HumanMessage
 
 from config import get_llm
+import llm_error
 from schemas import ExtractedInfo
 
 PROMPT = """Bạn là công cụ trích xuất dữ liệu từ ảnh chứng chỉ/bằng cấp.
+Ảnh có thể là tiếng Việt, tiếng Anh hoặc lẫn cả hai.
 
 Trả về ĐÚNG một object JSON với 4 trường sau, không kèm giải thích, không kèm
 markdown:
@@ -54,6 +56,9 @@ QUY TẮC certificate_name / certificate_name_alt — TÁCH THEO NGÔN NGỮ:
   thì tên khóa là "Python cơ bản" và "Python fundamentals" — KHÔNG phải cả
   câu "Đã hoàn thành khoá học...". Tên khóa thường nằm trong dấu ngoặc kép,
   in đậm, hoặc trên một dòng riêng cỡ chữ lớn hơn.
+- BỎ các cụm chung chung: "Certificate of Completion", "Chứng nhận hoàn
+  thành", "Đã hoàn thành khóa học", "Has successfully completed the course",
+  "Giấy chứng nhận".
 - Nếu tên khóa xuất hiện bằng HAI ngôn ngữ (dù nằm trên hai dòng riêng, hay
   cùng một dòng nối bằng "-", "–", "/", hay trong ngoặc):
       certificate_name     = bản TIẾNG VIỆT
@@ -133,10 +138,15 @@ def extract_from_image(image_bytes: bytes, llm=None) -> ExtractedInfo:
         {"type": "image_url", "image_url": {"url": _image_to_data_url(image_bytes)}},
     ])
 
+    # Thử lại lỗi TẠM THỜI (rate-limit, 5xx, rớt mạng), KHÔNG thử lại lỗi
+    # vĩnh viễn (hết tiền, sai key). Bảng phân loại nằm ở llm_error để hai
+    # file llm_vision/llm_text dùng chung một bản — chép hai bản là cách chắc
+    # chắn để chúng lệch nhau, đúng chuyện đã xảy ra với prompt.
     try:
-        phan_hoi = llm.invoke([message])
+        phan_hoi = llm_error.call_with_retry(
+            lambda: llm.invoke([message]), "LLM1 (Gemma đọc ảnh)")
     except Exception as e:
-        raise LlmVisionError(f"Lỗi gọi Gemma: {e}") from e
+        raise LlmVisionError(llm_error.describe(e, llm_error.MAX_ATTEMPTS)) from e
 
     content = _strip_json_fence(phan_hoi.content)
 

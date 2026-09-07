@@ -5,10 +5,15 @@ Ca hỏng kỹ thuật KHÔNG bị nộp REJECTED — để nguyên WAITING trê
 thì vòng getCert sau lại trả về nó, job lại tải và gọi LLM lại. Với chu kỳ 5
 giây, một file hỏng vĩnh viễn sẽ quay vòng mãi mãi, mỗi vòng tốn một lượt LLM.
 
-Ba lớp chặn, mỗi lớp một test ở đây:
+Ba lớp, mỗi lớp một test ở đây:
   1. Cooldown  — chưa tới lượt thì BỎ QUA hẳn, không tải, không gọi LLM.
-  2. Giới hạn  — quá số lần thì BỎ CUỘC, nộp REJECTED thật.
+  2. Cảnh báo  — hỏng tới ngưỡng thì gửi EMAIL, và VẪN thử tiếp.
   3. Thứ tự    — ca thử lại xếp sau ca mới, không chặn hàng đợi.
+
+LỚP 2 TRƯỚC ĐÂY LÀ "BỎ CUỘC, NỘP REJECTED". HR đã bỏ luật đó: lỗi hệ thống
+làm cả dãy cùng hỏng, nên nộp REJECTED là từ chối oan hàng loạt chứng chỉ hợp
+lệ. Test dưới đây canh đúng chiều ngược lại — quá ngưỡng mà vẫn nộp REJECTED
+là LỖI.
 """
 
 import logging
@@ -54,9 +59,15 @@ def moi_truong(tmp_path, monkeypatch):
     db = str(tmp_path / "t.db")
     database.init_db(db)
     monkeypatch.setattr(database, "DB_PATH", db)
-    monkeypatch.setattr(run.settings, "technical_retry_max", 3)
+    monkeypatch.setattr(run.settings, "technical_alert_after", 3)
     monkeypatch.setattr(run.settings, "technical_retry_cooldown_minutes", 30)
-    monkeypatch.setattr(run.settings, "batch_size", 5)
+    # Không test nào ở đây được phép chạm SMTP thật. Test nào muốn quan sát
+    # cảnh báo thì tự bắt run.alert.send_alert lấy.
+    monkeypatch.setattr(run.alert, "send_alert", lambda *a, **k: False)
+    # File trạng thái cảnh báo RIÊNG cho từng test. Thiếu dòng này, bộ đếm lỗi
+    # API của test ghi thẳng vào .alert_state.json thật ở gốc dự án — test làm
+    # bẩn máy đang chạy, và test sau đọc phải bộ đếm của test trước.
+    monkeypatch.setattr(run.alert, "STATE_FILE", tmp_path / ".alert_state.json")
     return db
 
 
@@ -75,11 +86,24 @@ def _chay(items, ket_qua_scan):
                           {"userCourseId": c["UserCourseId"], "anh_bytes": b"x"}
                           for c in cc]), \
          patch.object(client, "update_status", side_effect=nop), \
-         patch.object(run, "_scan_certificate", side_effect=lambda *a: next(it_kq)), \
+         patch.object(run, "scan_certificate", side_effect=lambda *a: next(it_kq)), \
          patch.object(run.archive, "save", return_value=None), \
          patch.object(run.archive, "write_verdict", return_value=None):
-        kq = run.process_one_batch(None)
-    return kq, da_nop
+        result = run.process_one_round(None)
+    return result, da_nop
+
+
+def _lich_su_hong(db, uc_id, attempts, gio_truoc=5, stage="stage2_error"):
+    """Dựng sẵn N lần hỏng kỹ thuật trong DB cho một chứng chỉ."""
+    conn = sqlite3.connect(db)
+    for _ in range(attempts):
+        conn.execute(
+            "INSERT INTO process_log (created_at,user_course_id,verdict,stage,reason)"
+            " VALUES (?,?,?,?,?)",
+            ((datetime.now() - timedelta(hours=gio_truoc)).isoformat(timespec="seconds"),
+             uc_id, "WAITING", stage, "Azure timeout"))
+    conn.commit()
+    conn.close()
 
 
 def _lui_thoi_gian(db, uc_id, gio):
@@ -117,21 +141,24 @@ def test_ca_nghiep_vu_van_nop_binh_thuong(moi_truong):
     assert da_nop[0]["status"] == "REJECTED"
 
 
-# ===== Thử lại ở cuối vòng =====
+# ===== KHÔNG thử lại trong cùng một vòng =====
 
-def test_thu_lai_cuoi_vong_thanh_cong_thi_nop(moi_truong):
-    """Hỏng lượt đầu, thử lại cuối vòng thành công -> nộp như bình thường."""
-    _, da_nop = _chay([_item("uc-1")], [_hong(), _duyet()])
-    assert len(da_nop) == 1
-    assert da_nop[0]["status"] == "APPROVED"
+def test_moi_vong_chi_quet_MOI_CHUNG_CHI_DUNG_MOT_LAN(moi_truong):
+    """Bỏ hẳn lượt thử lại cuối vòng.
 
+    Bản trước gom ca hỏng rồi gọi đệ quy để thử thêm lần nữa ở cuối vòng.
+    Hỏng kỹ thuật là hỏng CẢ LÔ, nên lượt thứ hai (vài giây sau lượt đầu) gặp
+    lại đúng sự cố đó và gần như chắc chắn hỏng tiếp — tốn thêm một lượt LLM
+    cho mỗi chứng chỉ mà không cứu được gì.
 
-def test_thu_lai_chi_MOT_lan_trong_mot_vong(moi_truong):
-    """Không được đệ quy vô hạn trong cùng một vòng."""
-    so_lan = {"n": 0}
+    Hệ quả quan trọng hơn: mỗi vòng đếm HAI lần hỏng thì
+    TECHNICAL_ALERT_AFTER=5 thật ra chỉ là 3 vòng, và không ai đọc cấu hình
+    mà đoán ra được điều đó.
+    """
+    attempts = {"n": 0}
 
     def scan(*a):
-        so_lan["n"] += 1
+        attempts["n"] += 1
         return _hong()
 
     with patch.object(client, "get_pending_list", return_value=[_item("uc-1")]), \
@@ -140,12 +167,95 @@ def test_thu_lai_chi_MOT_lan_trong_mot_vong(moi_truong):
                           {"userCourseId": c["UserCourseId"], "anh_bytes": b"x"}
                           for c in cc]), \
          patch.object(client, "update_status", return_value={"successList": [], "failList": []}), \
-         patch.object(run, "_scan_certificate", side_effect=scan), \
+         patch.object(run, "scan_certificate", side_effect=scan), \
          patch.object(run.archive, "save", return_value=None), \
          patch.object(run.archive, "write_verdict", return_value=None):
-        run.process_one_batch(None)
+        run.process_one_round(None)
 
-    assert so_lan["n"] == 2, f"quét {so_lan['n']} lần, mong đúng 2 (đầu + thử lại)"
+    assert attempts["n"] == 1, (
+        f"quét {attempts['n']} lần trong một vòng, mong đúng 1 — "
+        "lượt thử lại cuối vòng đã quay lại")
+
+
+def test_mot_lan_hong_ghi_dung_MOT_dong_log(moi_truong):
+    """Ngưỡng cảnh báo phải đếm đúng số VÒNG, không phải số lượt quét.
+
+    Đây là nửa còn lại của test trên, nhìn từ phía dữ liệu: một vòng hỏng ghi
+    đúng một dòng log, nên "hỏng 5 lần" = 5 vòng = ~10 phút với giãn cách 2
+    phút. Đúng bằng thứ cấu hình nói.
+    """
+    _chay([_item("uc-1")], [_hong()])
+
+    conn = sqlite3.connect(moi_truong)
+    n = conn.execute(
+        "SELECT COUNT(*) FROM process_log WHERE user_course_id='uc-1'"
+    ).fetchone()[0]
+    conn.close()
+    assert n == 1, f"một vòng hỏng ghi {n} dòng log, mong đúng 1"
+
+
+def test_ca_hong_CHAN_cac_ca_sau(moi_truong):
+    """CHẶN ĐẦU HÀNG: chứng chỉ 1 hỏng thì 2, 3 chưa tới lượt.
+
+    Đây là yêu cầu nghiệp vụ. Hỏng kỹ thuật là hỏng CẢ LÔ, nên chạy tiếp 2, 3
+    khi 1 vừa hỏng chỉ khiến chúng hỏng theo và đội số lần hỏng của chính
+    chúng lên — rồi cả ba cùng chạm ngưỡng cảnh báo vì đúng một sự cố.
+    """
+    _, da_nop = _chay([_item("uc-1"), _item("uc-2"), _item("uc-3")],
+                      [_hong(), _duyet(), _duyet()])
+    assert da_nop == [], "ca sau vẫn được xử lý dù ca đầu hàng đang hỏng"
+
+
+def test_ca_hong_CHAN_ca_o_bat_ky_vi_tri_nao(moi_truong):
+    """Ca 1 xong thì tới 2; 2 hỏng thì 3 dừng lại chờ."""
+    _, da_nop = _chay([_item("uc-1"), _item("uc-2"), _item("uc-3")],
+                      [_duyet(), _hong(), _duyet()])
+    assert [d["id"] for d in da_nop] == ["uc-1"], (
+        "ca 3 vẫn chạy dù ca 2 đứng trước nó đang hỏng")
+
+
+def test_ca_hong_CHAN_ca_sau_KHONG_ton_luot_LLM(moi_truong):
+    """Ca sau không chỉ bị bỏ kết quả — nó không được QUÉT lần nào.
+
+    Quét rồi vứt kết quả thì vẫn tốn tiền LLM và vẫn ghi log hỏng cho ca đó,
+    tức là vẫn đội số lần hỏng của nó lên. Phải dừng TRƯỚC khi quét.
+    """
+    attempts = {"n": 0}
+    ket_qua = iter([_hong(), _duyet(), _duyet()])
+
+    def scan(*a):
+        attempts["n"] += 1
+        return next(ket_qua)
+
+    with patch.object(client, "get_pending_list",
+                      return_value=[_item("uc-1"), _item("uc-2"), _item("uc-3")]), \
+         patch.object(client, "download_certificates",
+                      side_effect=lambda cc: [
+                          {"userCourseId": c["UserCourseId"], "anh_bytes": b"x"}
+                          for c in cc]), \
+         patch.object(client, "update_status",
+                      return_value={"successList": [], "failList": []}), \
+         patch.object(run, "scan_certificate", side_effect=scan), \
+         patch.object(run.archive, "save", return_value=None), \
+         patch.object(run.archive, "write_verdict", return_value=None):
+        run.process_one_round(None)
+
+    assert attempts["n"] == 1, (
+        f"quét {attempts['n']} chứng chỉ, mong đúng 1 — ca sau ca hỏng vẫn tốn LLM")
+
+
+def test_ca_dau_hang_dang_gian_cach_thi_ca_sau_CHO_THEO(moi_truong):
+    """Ca đầu hàng chưa tới lượt thử lại -> cả hàng đợi đứng yên.
+
+    Không có luật này thì trong 2 phút giãn cách của chứng chỉ 1, hệ thống sẽ
+    chạy 2, 3, 4 trước — tức là 1 mất chỗ đứng đầu, đúng thứ vừa bỏ đi.
+    """
+    _lich_su_hong(moi_truong, "uc-1", attempts=1, gio_truoc=0)   # còn giãn cách
+
+    sap, hoan, _ = run.filter_queue(
+        [_item("uc-1"), _item("uc-2"), _item("uc-3")])
+    assert sap == [], "ca sau vẫn chạy dù ca đầu hàng chưa tới lượt"
+    assert [it["id"] for it, *_ in hoan] == ["uc-1"]
 
 
 # ===== Cooldown: chặn vòng lặp đốt tiền =====
@@ -158,18 +268,18 @@ def test_chua_het_cooldown_thi_KHONG_goi_llm(moi_truong):
     """
     _chay([_item("uc-1")], [_hong(), _hong()])       # tạo lịch sử hỏng
 
-    so_lan = {"n": 0}
+    attempts = {"n": 0}
 
     def scan(*a):
-        so_lan["n"] += 1
+        attempts["n"] += 1
         return _duyet()
 
     with patch.object(client, "get_pending_list", return_value=[_item("uc-1")]), \
          patch.object(client, "download_certificates", side_effect=lambda cc: []), \
-         patch.object(run, "_scan_certificate", side_effect=scan):
-        run.process_one_batch(None)
+         patch.object(run, "scan_certificate", side_effect=scan):
+        run.process_one_round(None)
 
-    assert so_lan["n"] == 0, "vẫn gọi LLM dù chưa hết cooldown"
+    assert attempts["n"] == 0, "vẫn gọi LLM dù chưa hết cooldown"
 
 
 def test_het_cooldown_thi_duoc_thu_lai(moi_truong):
@@ -180,19 +290,17 @@ def test_het_cooldown_thi_duoc_thu_lai(moi_truong):
     assert len(da_nop) == 1, "hết cooldown rồi mà vẫn bị hoãn"
 
 
-# ===== Bỏ cuộc: không để WAITING vĩnh viễn =====
+# ===== Quá ngưỡng: CẢNH BÁO chứ không bỏ cuộc =====
 
-def test_qua_gioi_han_thi_bo_cuoc_va_nop_rejected(moi_truong):
-    """Không có nhánh này thì bản ghi nằm WAITING mãi mãi, không ai biết."""
-    conn = sqlite3.connect(moi_truong)
-    for _ in range(3):                                # = technical_retry_max
-        conn.execute(
-            "INSERT INTO process_log (created_at,user_course_id,verdict,stage,reason)"
-            " VALUES (?,?,?,?,?)",
-            ((datetime.now() - timedelta(hours=5)).isoformat(timespec="seconds"),
-             "uc-X", "REJECTED", "stage2_error", "Azure timeout"))
-    conn.commit()
-    conn.close()
+def test_qua_nguong_KHONG_BAO_GIO_nop_rejected(moi_truong):
+    """Luật HR: lỗi hệ thống không bao giờ thành REJECTED.
+
+    Đây là test quan trọng nhất trong file. Nhánh bỏ cuộc cũ nộp REJECTED sau
+    N lần hỏng; HR bỏ luật đó vì lỗi hệ thống làm cả dãy cùng hỏng, nên nó từ
+    chối oan hàng loạt chứng chỉ hợp lệ. Nếu ai đó khôi phục nhánh cũ, test
+    này phải đỏ.
+    """
+    _lich_su_hong(moi_truong, "uc-X", attempts=9)     # gấp ba lần ngưỡng
 
     da_nop = []
     with patch.object(client, "get_pending_list", return_value=[_item("uc-X")]), \
@@ -201,32 +309,124 @@ def test_qua_gioi_han_thi_bo_cuoc_va_nop_rejected(moi_truong):
                       side_effect=lambda d: (da_nop.extend(d),
                                              {"successList": [{"id": x["id"]} for x in d],
                                               "failList": []})[1]):
-        run.process_one_batch(None)
+        run.process_one_round(None)
 
-    assert len(da_nop) == 1, "quá giới hạn mà vẫn để WAITING vĩnh viễn"
-    assert da_nop[0]["status"] == "REJECTED"
-    # Lý do phải nói rõ đây là lỗi hệ thống, không đổ cho học viên.
-    assert "liên hệ" in da_nop[0]["comment"].lower()
-    assert "thử 3 lần" in da_nop[0]["comment_cer"]
+    assert da_nop == [], (
+        "hỏng 9 lần mà vẫn nộp kết quả về eLIS — nhánh bỏ cuộc đã quay lại")
+
+
+def test_qua_nguong_van_duoc_thu_lai(moi_truong):
+    """Vượt ngưỡng KHÔNG loại chứng chỉ khỏi hàng đợi.
+
+    Đây là nửa còn lại của luật HR: không từ chối thì phải tiếp tục thử, nếu
+    không chứng chỉ nằm WAITING vĩnh viễn — đúng cái tình trạng nhánh bỏ cuộc
+    từng chặn.
+    """
+    _lich_su_hong(moi_truong, "uc-X", attempts=9)
+
+    sap, hoan, canh_bao = run.filter_queue([_item("uc-X")])
+    assert [x["id"] for x in sap] == ["uc-X"], (
+        "ca vượt ngưỡng bị loại khỏi hàng đợi — sẽ không bao giờ được thử lại")
+    assert hoan == []
+    assert [(it["id"], n) for it, n in canh_bao] == [("uc-X", 9)]
+
+
+def test_qua_nguong_thi_gui_canh_bao_kem_du_thong_tin(moi_truong, monkeypatch):
+    """Email cảnh báo phải nói được CÁI GÌ hỏng, không chỉ 'có lỗi'.
+
+    Thiếu stage/reason thì người nhận vẫn phải mở log lên mới biết đi sửa ở
+    đâu — lúc đó thư chỉ là tiếng ồn.
+    """
+    _lich_su_hong(moi_truong, "uc-X", attempts=5, stage="stage2_error")
+
+    da_gui = []
+    monkeypatch.setattr(run.alert, "send_alert",
+                        lambda ds, *a, **k: (da_gui.append(ds), True)[1])
+
+    with patch.object(client, "get_pending_list", return_value=[_item("uc-X")]), \
+         patch.object(client, "download_certificates", side_effect=lambda cc: []):
+        run.process_one_round(None)
+
+    assert len(da_gui) == 1, "quá ngưỡng mà không gửi cảnh báo"
+    ca = da_gui[0][0]
+    assert ca["failure_count"] == 5
+    assert ca["stage"] == "stage2_error"
+    assert ca["reason"] == "Azure timeout"
+    assert ca["employee_name"] == "Bùi Đức Hòa"
+    assert ca["course_name"] == "ISO 27001"
+
+
+def test_chua_toi_nguong_thi_KHONG_gui_canh_bao(moi_truong, monkeypatch):
+    """Hỏng một hai lần là chuyện thường — báo ngay thì thư thành tiếng ồn.
+
+    alert_operator() được gọi MỖI vòng, kể cả khi không có ca nào vượt ngưỡng:
+    đó là cách alert.py báo được sự cố API (lúc đó không có chứng chỉ nào để
+    liệt kê). Nên thứ phải canh ở đây là DANH SÁCH GỬI ĐI RỖNG, chứ không phải
+    "không gọi hàm" — send_alert([]) tự trả về False mà không gửi thư nào.
+    """
+    _lich_su_hong(moi_truong, "uc-X", attempts=2)      # ngưỡng = 3
+
+    da_gui = []
+    monkeypatch.setattr(run.alert, "send_alert",
+                        lambda ds, *a, **k: (da_gui.append(ds), True)[1])
+
+    with patch.object(client, "get_pending_list", return_value=[_item("uc-X")]), \
+         patch.object(client, "download_certificates", side_effect=lambda cc: []):
+        run.process_one_round(None)
+
+    assert all(payload == [] for payload in da_gui), (
+        f"mới hỏng 2/3 lần đã đưa chứng chỉ vào thư cảnh báo: {da_gui}")
+
+
+def test_ca_lo_cung_hong_thi_gop_MOT_thu(moi_truong, monkeypatch):
+    """Azure hết hạn mức -> cả hàng đợi cùng vượt ngưỡng trong một vòng.
+
+    Phải là MỘT lời gọi send_alert mang cả danh sách, không phải mỗi chứng chỉ
+    một lời gọi: 50 thư giống hệt nhau thì người nhận lọc bỏ tất.
+    """
+    for i in range(4):
+        _lich_su_hong(moi_truong, f"uc-{i}", attempts=5)
+
+    da_gui = []
+    monkeypatch.setattr(run.alert, "send_alert",
+                        lambda ds, *a, **k: (da_gui.append(ds), True)[1])
+
+    with patch.object(client, "get_pending_list",
+                      return_value=[_item(f"uc-{i}") for i in range(4)]), \
+         patch.object(client, "download_certificates", side_effect=lambda cc: []):
+        run.process_one_round(None)
+
+    assert len(da_gui) == 1, "gửi nhiều thư cho cùng một sự cố"
+    assert len(da_gui[0]) == 4, "thư không liệt kê đủ các ca đang hỏng"
 
 
 # ===== Thứ tự hàng đợi =====
 
-def test_ca_moi_xu_ly_truoc_ca_thu_lai(moi_truong):
-    """Một chứng chỉ mắc kẹt không được chặn cả hàng đợi."""
-    conn = sqlite3.connect(moi_truong)
-    conn.execute(
-        "INSERT INTO process_log (created_at,user_course_id,verdict,stage,reason)"
-        " VALUES (?,?,?,?,?)",
-        ((datetime.now() - timedelta(hours=5)).isoformat(timespec="seconds"),
-         "uc-cu", "REJECTED", "stage2_error", "x"))
-    conn.commit()
-    conn.close()
+def test_GIU_NGUYEN_thu_tu_elis_tra_ve(moi_truong):
+    """KHÔNG đẩy ca đã hỏng xuống cuối hàng đợi.
 
-    sap, hoan, bo = run._sap_xep_va_loc(
+    Bản trước xếp ca đã từng hỏng sau toàn bộ ca chưa hỏng, với lý do "một
+    chứng chỉ mắc kẹt không được chặn hàng đợi". Lý do đó không đứng vững:
+    hỏng kỹ thuật là hỏng CẢ LÔ, nên đẩy chứng chỉ 1 xuống cuối chỉ để nó gặp
+    lại đúng sự cố đó ở cuối hàng — không cứu được gì, mà lại làm mất thứ tự
+    eLIS trả về nên log khó đối chiếu với màn hình eLIS.
+    """
+    _lich_su_hong(moi_truong, "uc-cu", attempts=1, gio_truoc=5)
+
+    sap, hoan, canh_bao = run.filter_queue(
         [_item("uc-cu"), _item("uc-moi-1"), _item("uc-moi-2")])
-    assert [x["id"] for x in sap] == ["uc-moi-1", "uc-moi-2", "uc-cu"]
-    assert hoan == [] and bo == []
+    assert [x["id"] for x in sap] == ["uc-cu", "uc-moi-1", "uc-moi-2"], (
+        "thứ tự bị đảo — cơ chế đẩy xuống cuối đã quay lại")
+    assert hoan == [] and canh_bao == []
+
+
+def test_ca_hong_o_GIUA_cung_giu_nguyen_cho(moi_truong):
+    """Không chỉ ca đầu: ca hỏng ở bất kỳ vị trí nào cũng nằm nguyên chỗ."""
+    _lich_su_hong(moi_truong, "uc-2", attempts=1, gio_truoc=5)
+
+    sap, _, _ = run.filter_queue(
+        [_item("uc-1"), _item("uc-2"), _item("uc-3")])
+    assert [x["id"] for x in sap] == ["uc-1", "uc-2", "uc-3"]
 
 
 def test_stage_ky_thuat_khong_lech_giua_run_va_database():
@@ -264,7 +464,7 @@ def test_log_khong_lap_moi_vong_khi_ca_dang_cooldown(moi_truong, monkeypatch):
     conn.commit()
     conn.close()
 
-    monkeypatch.setattr(run, "_da_bao_hoan", frozenset())
+    monkeypatch.setattr(run, "_last_deferred_ids", frozenset())
     buf = io.StringIO()
     h = logging.StreamHandler(buf)
     h.setFormatter(logging.Formatter("%(message)s"))
@@ -277,12 +477,12 @@ def test_log_khong_lap_moi_vong_khi_ca_dang_cooldown(moi_truong, monkeypatch):
         with patch.object(client, "get_pending_list", return_value=[_item("uc-1")]), \
              patch.object(client, "download_certificates", side_effect=lambda cc: []):
             for _ in range(100):
-                run.process_one_batch(None)
+                run.process_one_round(None)
     finally:
         logging.disable(logging.CRITICAL)
 
-    dong = [dg for dg in buf.getvalue().splitlines() if dg.strip()]
-    assert len(dong) <= 2, f"100 vòng sinh {len(dong)} dòng log:\n" + "\n".join(dong[:5])
+    rows = [dg for dg in buf.getvalue().splitlines() if dg.strip()]
+    assert len(rows) <= 2, f"100 vòng sinh {len(rows)} dòng log:\n" + "\n".join(rows[:5])
 
 
 def test_van_bao_khi_co_viec_that(moi_truong, monkeypatch):
@@ -298,7 +498,7 @@ def test_van_bao_khi_co_viec_that(moi_truong, monkeypatch):
     conn.commit()
     conn.close()
 
-    monkeypatch.setattr(run, "_da_bao_hoan", frozenset())
+    monkeypatch.setattr(run, "_last_deferred_ids", frozenset())
     buf = io.StringIO()
     h = logging.StreamHandler(buf)
     h.setFormatter(logging.Formatter("%(message)s"))
@@ -308,10 +508,12 @@ def test_van_bao_khi_co_viec_that(moi_truong, monkeypatch):
     lg.setLevel(logging.INFO)
     logging.disable(logging.NOTSET)
     try:
+        # uc-moi đứng TRƯỚC: nó tới lượt nên chạy được, còn uc-cu đứng sau
+        # đang trong giãn cách nên chặn từ chỗ đó trở đi.
         with patch.object(client, "get_pending_list",
-                          return_value=[_item("uc-cu"), _item("uc-moi")]), \
+                          return_value=[_item("uc-moi"), _item("uc-cu")]), \
              patch.object(client, "download_certificates", side_effect=lambda cc: []):
-            run.process_one_batch(None)
+            run.process_one_round(None)
     finally:
         logging.disable(logging.CRITICAL)
 
@@ -339,7 +541,7 @@ def test_log_hoan_noi_ro_ca_nao_va_bao_lau(moi_truong, monkeypatch):
     conn.commit()
     conn.close()
 
-    monkeypatch.setattr(run, "_da_bao_hoan", frozenset())
+    monkeypatch.setattr(run, "_last_deferred_ids", frozenset())
     buf = io.StringIO()
     h = logging.StreamHandler(buf)
     h.setFormatter(logging.Formatter("%(message)s"))
@@ -351,15 +553,19 @@ def test_log_hoan_noi_ro_ca_nao_va_bao_lau(moi_truong, monkeypatch):
     try:
         with patch.object(client, "get_pending_list", return_value=[_item("uc-treo")]), \
              patch.object(client, "download_certificates", side_effect=lambda cc: []):
-            run.process_one_batch(None)
+            run.process_one_round(None)
     finally:
         logging.disable(logging.CRITICAL)
 
     ra = buf.getvalue()
     assert "HỎNG KỸ THUẬT" in ra, "không nói rõ chỉ hoãn ca hỏng kỹ thuật"
     assert "uc-treo" in ra, "không cho biết ca nào bị hoãn"
-    assert "2/3 lần" in ra, "không cho biết đã hỏng mấy lần trên tổng bao nhiêu"
+    assert "hỏng 2 lần" in ra, "không cho biết đã hỏng mấy lần"
     assert "thử lại sau" in ra, "không cho biết bao giờ thử lại"
+    # KHÔNG được in dạng phân số "2/3": mẫu số gợi ý rằng tới đó là dừng, mà
+    # giờ không còn mốc dừng nào. Người vận hành đọc "2/3" sẽ đi báo học viên
+    # rằng chứng chỉ sắp bị từ chối — đúng thứ luật HR mới cấm.
+    assert "2/3" not in ra, "vẫn in dạng phân số như thể còn nhánh bỏ cuộc"
 
 
 def test_che_do_retry_bo_qua_cooldown(moi_truong):
@@ -371,20 +577,20 @@ def test_che_do_retry_bo_qua_cooldown(moi_truong):
     _chay([_item("uc-1")], [_hong(), _hong()])       # tạo lịch sử hỏng
 
     # Chạy thường: bị hoãn, không quét lần nào.
-    so_lan = {"n": 0}
+    attempts = {"n": 0}
 
     def scan(*a):
-        so_lan["n"] += 1
+        attempts["n"] += 1
         return _duyet()
 
     with patch.object(client, "get_pending_list", return_value=[_item("uc-1")]), \
          patch.object(client, "download_certificates", side_effect=lambda cc: []), \
-         patch.object(run, "_scan_certificate", side_effect=scan):
-        run.process_one_batch(None)
-    assert so_lan["n"] == 0, "chạy thường mà không hoãn"
+         patch.object(run, "scan_certificate", side_effect=scan):
+        run.process_one_round(None)
+    assert attempts["n"] == 0, "chạy thường mà không hoãn"
 
     # Chạy retry: bỏ qua giãn cách, xử lý ngay.
-    _, hoan, _ = run._sap_xep_va_loc([_item("uc-1")], bo_qua_cooldown=True)
+    _, hoan, _ = run.filter_queue([_item("uc-1")], ignore_cooldown=True)
     assert hoan == [], "chế độ retry vẫn hoãn"
 
 
@@ -408,7 +614,7 @@ def test_log_hoan_co_ten_khoa_hoc(moi_truong, monkeypatch):
     it = _item("uc-treo")
     it["courseName"] = "Learning Microsoft 365 Copilot for Work"
 
-    monkeypatch.setattr(run, "_da_bao_hoan", frozenset())
+    monkeypatch.setattr(run, "_last_deferred_ids", frozenset())
     buf = io.StringIO()
     h = logging.StreamHandler(buf)
     h.setFormatter(logging.Formatter("%(message)s"))
@@ -420,7 +626,7 @@ def test_log_hoan_co_ten_khoa_hoc(moi_truong, monkeypatch):
     try:
         with patch.object(client, "get_pending_list", return_value=[it]), \
              patch.object(client, "download_certificates", side_effect=lambda cc: []):
-            run.process_one_batch(None)
+            run.process_one_round(None)
     finally:
         logging.disable(logging.CRITICAL)
 
@@ -462,7 +668,7 @@ def test_lo_khong_tai_duoc_file_cung_ghi_waiting(moi_truong):
     with patch.object(client, "get_pending_list", return_value=[_item("uc-dl")]), \
          patch.object(client, "download_certificates",
                       side_effect=client.ElisError("mạng hỏng")):
-        run.process_one_batch(None)
+        run.process_one_round(None)
 
     row = database.read_recent_logs(1, db_path=moi_truong)[0]
     assert row["verdict"] == "WAITING"
@@ -485,7 +691,7 @@ def test_ten_khoa_hoc_duoc_ghi_vao_log(moi_truong):
     with patch.object(client, "get_pending_list", return_value=[_item("uc-n2")]), \
          patch.object(client, "download_certificates",
                       side_effect=client.ElisError("mạng hỏng")):
-        run.process_one_batch(None)
+        run.process_one_round(None)
 
     row = database.read_recent_logs(1, db_path=moi_truong)[0]
     assert row["certificate_name"] is None

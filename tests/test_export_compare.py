@@ -35,25 +35,25 @@ def _excel(path, rows):
     wb.save(path)
 
 
-def _anh(thu_muc, *ten):
+def _anh(thu_muc, *name):
     thu_muc.mkdir(parents=True, exist_ok=True)
-    for t in ten:
+    for t in name:
         (thu_muc / t).write_bytes(b"")
     return thu_muc
 
 
 def _bo(tmp_path, eval_rows=(), run_rows=()):
-    nhan = tmp_path / "eval_set.csv"
-    with nhan.open("w", encoding="utf-8-sig", newline="") as f:
+    label = tmp_path / "eval_set.csv"
+    with label.open("w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(["case_id", "input_employee_name", "input_course_name"])
         w.writerows(eval_rows)
-    kq = tmp_path / "last_run.csv"
-    with kq.open("w", encoding="utf-8-sig", newline="") as f:
+    result = tmp_path / "last_run.csv"
+    with result.open("w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(["case_id", "verdict"])
         w.writerows(run_rows)
-    return nhan, kq
+    return label, result
 
 
 def _doc(path):
@@ -68,13 +68,13 @@ def test_in_du_moi_dong_ke_ca_dong_chua_co_anh(tmp_path):
                 ("anv2@fpt.com", "Nguyễn Văn A", "AI Trends", "REJECTED"),
                 ("khac@fpt.com", "Trần Văn C", "Khóa chưa nộp", "APPROVED")])
     anh = _anh(tmp_path / "anh", "HOABD3_ISO 27001.jpg", "ANV2_AI Trends.jpg")
-    nhan, kq = _bo(tmp_path,
+    label, result = _bo(tmp_path,
                    [["001_hoabd3", "Bùi Đức Hòa", "ISO 27001"],
                     ["002_anv2", "Nguyễn Văn A", "AI Trends"]],
                    [["001_hoabd3", "APPROVED"], ["002_anv2", "APPROVED"]])
     ra = tmp_path / "compare.csv"
 
-    tk = export_compare.build(xl, anh, nhan, kq, ra)
+    tk = export_compare.build(xl, anh, label, result, ra)
 
     assert tk["tong"] == 3, "bỏ mất dòng — file không còn khớp 1-1 với Excel"
     assert (tk["co_anh"], tk["khong_anh"]) == (2, 1)
@@ -92,12 +92,12 @@ def test_dong_khong_anh_de_TRONG_cot_AI(tmp_path):
     xl = tmp_path / "d.xlsx"
     _excel(xl, [("khac@fpt.com", "Trần Văn C", "Khóa chưa nộp", "APPROVED")])
     anh = _anh(tmp_path / "anh", "AI_KHAC_Khóa nào đó.jpg")
-    nhan, kq = _bo(tmp_path,
+    label, result = _bo(tmp_path,
                    [["009_khac", "Trần Văn C", "Khóa chưa nộp"]],
                    [["009_khac", "REJECTED"]])
     ra = tmp_path / "compare.csv"
 
-    export_compare.build(xl, anh, nhan, kq, ra)
+    export_compare.build(xl, anh, label, result, ra)
 
     d = _doc(ra)[0]
     assert d["AI"] == ""
@@ -110,9 +110,9 @@ def test_dong_khong_anh_khong_tinh_vao_so_ca_lech(tmp_path):
     """AI trống thì không thể 'lệch' với HUMAN — đếm vào là thổi phồng lỗi."""
     xl = tmp_path / "d.xlsx"
     _excel(xl, [("khac@fpt.com", "Trần Văn C", "Khóa chưa nộp", "REJECTED")])
-    nhan, kq = _bo(tmp_path)
+    label, result = _bo(tmp_path)
     tk = export_compare.build(xl, _anh(tmp_path / "anh", "X_Y.jpg"),
-                              nhan, kq, tmp_path / "c.csv")
+                              label, result, tmp_path / "c.csv")
     assert tk["lech"] == 0
 
 
@@ -136,12 +136,12 @@ def test_chep_note_theo_TEN_chu_khong_theo_case_id(tmp_path):
     _excel(xl, [("anv2@fpt.com", "Nguyễn Văn A", "AI Trends", "APPROVED"),
                 ("hoabd3@fpt.com", "Bùi Đức Hòa", "ISO 27001", "APPROVED")])
     anh = _anh(tmp_path / "anh", "ANV2_AI Trends.jpg", "HOABD3_ISO 27001.jpg")
-    nhan, kq = _bo(tmp_path,
+    label, result = _bo(tmp_path,
                    [["001_anv2", "Nguyễn Văn A", "AI Trends"],
                     ["002_hoabd3", "Bùi Đức Hòa", "ISO 27001"]],
                    [["001_anv2", "APPROVED"], ["002_hoabd3", "APPROVED"]])
 
-    export_compare.build(xl, anh, nhan, kq, ra)
+    export_compare.build(xl, anh, label, result, ra)
 
     theo_ten = {r["input_employee_name"]: r["NOTE"] for r in _doc(ra)}
     assert theo_ten["Bùi Đức Hòa"] == "ghi chú CỦA HÒA"
@@ -158,9 +158,9 @@ def test_bao_so_note_mo_coi(tmp_path):
 
     xl = tmp_path / "d.xlsx"
     _excel(xl, [("hoabd3@fpt.com", "Bùi Đức Hòa", "ISO 27001", "APPROVED")])
-    nhan, kq = _bo(tmp_path)
+    label, result = _bo(tmp_path)
 
-    tk = export_compare.build(xl, _anh(tmp_path / "anh", "X_Y.jpg"), nhan, kq, ra)
+    tk = export_compare.build(xl, _anh(tmp_path / "anh", "X_Y.jpg"), label, result, ra)
 
     assert tk["note_mo_coi"] == 1
     assert tk["note_giu"] == 0
@@ -177,9 +177,9 @@ def test_ghi_chu_viet_tay_thang_ghi_chu_tu_sinh(tmp_path):
 
     xl = tmp_path / "d.xlsx"
     _excel(xl, [("khac@fpt.com", "Trần Văn C", "Khóa chưa nộp", "APPROVED")])
-    nhan, kq = _bo(tmp_path)
+    label, result = _bo(tmp_path)
 
-    export_compare.build(xl, _anh(tmp_path / "anh", "X_Y.jpg"), nhan, kq, ra)
+    export_compare.build(xl, _anh(tmp_path / "anh", "X_Y.jpg"), label, result, ra)
 
     assert _doc(ra)[0]["NOTE"] == "CB đã nộp qua email, HR xác nhận"
 
@@ -196,10 +196,10 @@ def test_khong_chep_lai_ghi_chu_tu_sinh(tmp_path):
     xl = tmp_path / "d.xlsx"
     _excel(xl, [("hoabd3@fpt.com", "Bùi Đức Hòa", "ISO 27001", "APPROVED")])
     anh = _anh(tmp_path / "anh", "HOABD3_ISO 27001.jpg")
-    nhan, kq = _bo(tmp_path, [["001_hoabd3", "Bùi Đức Hòa", "ISO 27001"]],
+    label, result = _bo(tmp_path, [["001_hoabd3", "Bùi Đức Hòa", "ISO 27001"]],
                    [["001_hoabd3", "APPROVED"]])
 
-    export_compare.build(xl, anh, nhan, kq, ra)
+    export_compare.build(xl, anh, label, result, ra)
 
     assert _doc(ra)[0]["NOTE"] == "", "ghi chú tự sinh còn dính lại"
 
@@ -210,9 +210,9 @@ def test_dung_6_cot_dung_thu_tu(tmp_path):
     """Người dùng đang làm việc trên đúng 6 cột này — đổi là bắt họ làm lại."""
     xl = tmp_path / "d.xlsx"
     _excel(xl, [("hoabd3@fpt.com", "Bùi Đức Hòa", "ISO 27001", "APPROVED")])
-    nhan, kq = _bo(tmp_path)
+    label, result = _bo(tmp_path)
     ra = tmp_path / "c.csv"
-    export_compare.build(xl, _anh(tmp_path / "anh", "X_Y.jpg"), nhan, kq, ra)
+    export_compare.build(xl, _anh(tmp_path / "anh", "X_Y.jpg"), label, result, ra)
 
     with ra.open(encoding="utf-8-sig", newline="") as f:
         assert next(csv.reader(f)) == [
@@ -231,13 +231,13 @@ def test_ghi_hong_thi_file_cu_van_nguyen(tmp_path, monkeypatch):
 
     xl = tmp_path / "d.xlsx"
     _excel(xl, [("hoabd3@fpt.com", "Bùi Đức Hòa", "ISO 27001", "APPROVED")])
-    nhan, kq = _bo(tmp_path)
+    label, result = _bo(tmp_path)
     monkeypatch.setattr(export_compare.os, "replace",
                         lambda a, b: (_ for _ in ()).throw(
                             PermissionError(13, "Permission denied")))
 
     with pytest.raises(PermissionError) as e:
-        export_compare.build(xl, _anh(tmp_path / "anh", "X_Y.jpg"), nhan, kq, ra)
+        export_compare.build(xl, _anh(tmp_path / "anh", "X_Y.jpg"), label, result, ra)
 
     assert ra.read_text(encoding="utf-8-sig") == truoc
     assert "EXCEL" in str(e.value).upper()

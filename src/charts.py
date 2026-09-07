@@ -113,9 +113,9 @@ def _khung(d, x0, y0, x1, y1, tran, buoc, font_nho):
         gt = buoc * i
         y = y1 - (y1 - y0) * gt / tran
         d.line([(x0, y), (x1, y)], fill=GRID, width=1 * SCALE)
-        nhan = f"{gt:,}".replace(",", ".")
-        d.text((x0 - 8 * SCALE - _do_rong(d, nhan, font_nho), y - 7 * SCALE),
-               nhan, font=font_nho, fill=INK_2)
+        label = f"{gt:,}".replace(",", ".")
+        d.text((x0 - 8 * SCALE - _do_rong(d, label, font_nho), y - 7 * SCALE),
+               label, font=font_nho, fill=INK_2)
 
 
 def _nhan_moc(bucket: str) -> str:
@@ -127,15 +127,15 @@ def _nhan_moc(bucket: str) -> str:
     b = str(bucket)
     if "-W" in b:                       # 2026-W29 -> W29
         return b.split("-", 1)[1]
-    phan = b.split("-")
-    if len(phan) == 3:                  # 2026-08-03 -> 03/08
-        return f"{phan[2]}/{phan[1]}"
-    if len(phan) == 2:                  # 2026-08 -> T08
-        return f"T{phan[1]}"
+    part = b.split("-")
+    if len(part) == 3:                  # 2026-08-03 -> 03/08
+        return f"{part[2]}/{part[1]}"
+    if len(part) == 2:                  # 2026-08 -> T08
+        return f"T{part[1]}"
     return b
 
 
-def _chu_giai(d, x, y, muc: list[tuple[str, tuple]], font):
+def _chu_giai(d, x, y, items: list[tuple[str, tuple]], font):
     """Chú giải: ô màu + CHỮ. Luôn có, kể cả khi chỉ hai chuỗi.
 
     Chữ ở đây mặc màu mực chứ không mặc màu chuỗi — ô màu bên cạnh đã mang
@@ -143,11 +143,11 @@ def _chu_giai(d, x, y, muc: list[tuple[str, tuple]], font):
     """
     cx = x
     o = 10 * SCALE
-    for nhan, mau in muc:
-        d.rounded_rectangle([cx, y, cx + o, y + o], radius=2 * SCALE, fill=mau)
+    for label, color in items:
+        d.rounded_rectangle([cx, y, cx + o, y + o], radius=2 * SCALE, fill=color)
         cx += o + 6 * SCALE
-        d.text((cx, y - 2 * SCALE), nhan, font=font, fill=INK_2)
-        cx += _do_rong(d, nhan, font) + 18 * SCALE
+        d.text((cx, y - 2 * SCALE), label, font=font, fill=INK_2)
+        cx += _do_rong(d, label, font) + 18 * SCALE
 
 
 # =====================================================================
@@ -187,16 +187,16 @@ def line_chart(diem: list[dict], rong: int = 640, cao: int = 260) -> bytes:
         x = x0 + (x1 - x0) * (i / (n - 1)) if n > 1 else (x0 + x1) / 2
         return x, y1 - (y1 - y0) * gt / tran
 
-    for khoa, mau in (("total", TOTAL_LINE), ("approved", APPROVED)):
-        pts = [toa_do(i, p.get(khoa, 0)) for i, p in enumerate(diem)]
+    for key, color in (("total", TOTAL_LINE), ("approved", APPROVED)):
+        pts = [toa_do(i, p.get(key, 0)) for i, p in enumerate(diem)]
         if len(pts) > 1:
-            d.line(pts, fill=mau, width=2 * SCALE, joint="curve")
+            d.line(pts, fill=color, width=2 * SCALE, joint="curve")
         for x, y in pts:
             # Vòng nền quanh điểm để hai đường chồng nhau vẫn tách được.
             r = 4 * SCALE
             d.ellipse([x - r - SCALE, y - r - SCALE, x + r + SCALE, y + r + SCALE],
                       fill=SURFACE)
-            d.ellipse([x - r, y - r, x + r, y + r], fill=mau)
+            d.ellipse([x - r, y - r, x + r, y + r], fill=color)
 
     # Nhãn trực tiếp: CHỈ mốc cuối. Ghi số lên mọi điểm thì biểu đồ thành
     # bảng số, và đường — thứ mang thông tin xu hướng — bị chữ che mất.
@@ -205,16 +205,16 @@ def line_chart(diem: list[dict], rong: int = 640, cao: int = 260) -> bytes:
     # đẩy ra hai phía. Hai đường hội tụ ở mốc cuối là chuyện thường, để mặc
     # thì hai con số chồng lên nhau thành một mớ không đọc được.
     nhan_cuoi = []
-    for khoa in ("total", "approved"):
-        gt = diem[-1].get(khoa, 0)
+    for key in ("total", "approved"):
+        gt = diem[-1].get(key, 0)
         x, y = toa_do(n - 1, gt)
         nhan_cuoi.append([y, f"{gt:,}".replace(",", "."), x])
     nhan_cuoi.sort()
     if len(nhan_cuoi) == 2 and nhan_cuoi[1][0] - nhan_cuoi[0][0] < 18 * SCALE:
         giua = (nhan_cuoi[0][0] + nhan_cuoi[1][0]) / 2
         nhan_cuoi[0][0], nhan_cuoi[1][0] = giua - 10 * SCALE, giua + 10 * SCALE
-    for y, nhan, x in nhan_cuoi:
-        d.text((x + 8 * SCALE, y - 7 * SCALE), nhan, font=f_th, fill=INK)
+    for y, label, x in nhan_cuoi:
+        d.text((x + 8 * SCALE, y - 7 * SCALE), label, font=f_th, fill=INK)
 
     # Nhãn trục X: thưa dần khi nhiều mốc, tránh chữ đè lên nhau.
     buoc_nhan = max(1, n // 8)
@@ -222,9 +222,9 @@ def line_chart(diem: list[dict], rong: int = 640, cao: int = 260) -> bytes:
         if i % buoc_nhan and i != n - 1:
             continue
         x, _ = toa_do(i, 0)
-        nhan = _nhan_moc(p["bucket"])
-        d.text((x - _do_rong(d, nhan, f_nho) / 2, y1 + 8 * SCALE),
-               nhan, font=f_nho, fill=INK_2)
+        label = _nhan_moc(p["bucket"])
+        d.text((x - _do_rong(d, label, f_nho) / 2, y1 + 8 * SCALE),
+               label, font=f_nho, fill=INK_2)
 
     _chu_giai(d, x0, H - 20 * SCALE,
               [("Tổng xử lý", TOTAL_LINE), ("Được duyệt", APPROVED)], f_nho)
@@ -270,30 +270,30 @@ def stacked_bar_chart(diem: list[dict], rong: int = 640, cao: int = 260) -> byte
         day = y1
         # Duyệt ở dưới cùng, neo vào trục: mắt so chiều cao từ một đường
         # nền chung thì chính xác hơn nhiều so với mảng lơ lửng giữa cột.
-        for khoa, mau in (("approved", APPROVED), ("rejected", REJECTED)):
-            gt = p.get(khoa, 0)
+        for key, color in (("approved", APPROVED), ("rejected", REJECTED)):
+            gt = p.get(key, 0)
             if gt <= 0:
                 continue
             chieu_cao = (y1 - y0) * gt / tran
             dinh = day - chieu_cao
             d.rounded_rectangle([trai, dinh, phai, day],
-                                radius=min(4 * SCALE, chieu_cao / 2), fill=mau)
+                                radius=min(4 * SCALE, chieu_cao / 2), fill=color)
             day = dinh - khe
 
         tong = p.get("total", 0)
         if tong:
-            nhan = f"{tong:,}".replace(",", ".")
-            d.text((cx - _do_rong(d, nhan, f_th) / 2, day - 20 * SCALE),
-                   nhan, font=f_th, fill=INK)
+            label = f"{tong:,}".replace(",", ".")
+            d.text((cx - _do_rong(d, label, f_th) / 2, day - 20 * SCALE),
+                   label, font=f_th, fill=INK)
 
     buoc_nhan = max(1, n // 8)
     for i, p in enumerate(diem):
         if i % buoc_nhan and i != n - 1:
             continue
         cx = x0 + o_rong * (i + 0.5)
-        nhan = _nhan_moc(p["bucket"])
-        d.text((cx - _do_rong(d, nhan, f_nho) / 2, y1 + 8 * SCALE),
-               nhan, font=f_nho, fill=INK_2)
+        label = _nhan_moc(p["bucket"])
+        d.text((cx - _do_rong(d, label, f_nho) / 2, y1 + 8 * SCALE),
+               label, font=f_nho, fill=INK_2)
 
     _chu_giai(d, x0, H - 20 * SCALE,
               [("Được duyệt", APPROVED), ("Từ chối", REJECTED)], f_nho)

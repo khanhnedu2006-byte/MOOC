@@ -12,7 +12,7 @@ Chạy `check` TRƯỚC `run`: nó trả lời miễn phí hai câu "ảnh có �
 "đã gán nhãn tới đâu". Không có nó thì cách duy nhất để biết là chạy hết cả
 bộ bằng LLM thật rồi đọc lỗi ở cuối — tốn tiền cho một câu hỏi không cần LLM.
 
-Chạy end-to-end: mỗi lần gọi "chay" là một lần gọi LLM thật cho toàn bộ ca
+Chạy end-to-end: mỗi lần gọi "run_all" là một lần gọi LLM thật cho toàn bộ ca
 trong file nhãn. Cần mạng công ty và tốn phí — con số in ra ở đầu để bạn biết
 trước quy mô.
 """
@@ -97,7 +97,7 @@ def create_from_archive(archive_root, output_path) -> int:
     return len(cases)
 
 
-def _ghi_ket_qua_tho(cases, results, errors, path=None) -> None:
+def _write_raw_results(cases, results, errors, path=None) -> None:
     """Ghi kết quả từng ca ra CSV để xem lại mà không phải chạy lại.
 
     Một lượt chạy gọi LLM thật cho từng ca, nên mất kết quả là mất tiền.
@@ -123,12 +123,12 @@ def _ghi_ket_qua_tho(cases, results, errors, path=None) -> None:
                     "error", "recipient_name", "certificate_name",
                     "certificate_name_alt", "issue_date"])
         for case in cases:
-            kq = results.get(case.case_id)
-            ex = kq.extracted if kq else None
+            result = results.get(case.case_id)
+            ex = result.extracted if result else None
             w.writerow([
                 case.case_id, case.image_path,
-                kq.verdict.value if kq else "", kq.stage if kq else "",
-                (kq.reason or "") if kq else "",
+                result.verdict.value if result else "", result.stage if result else "",
+                (result.reason or "") if result else "",
                 errors.get(case.case_id, ""),
                 (ex.recipient_name or "") if ex else "",
                 (ex.certificate_name or "") if ex else "",
@@ -143,19 +143,19 @@ def _ly_do_nguoi_duyet(note: str) -> str:
 
     Định dạng note: "excel_row=2 | elis=REJECTED | lý do người duyệt: ..."
     """
-    for phan in (note or "").split("|"):
-        phan = phan.strip()
-        if phan.startswith("lý do người duyệt:"):
-            return phan.split(":", 1)[1].strip()
+    for part in (note or "").split("|"):
+        part = part.strip()
+        if part.startswith("lý do người duyệt:"):
+            return part.split(":", 1)[1].strip()
     return "(không ghi lý do)"
 
 
 def _verdict_nguoi_duyet(note: str) -> str:
     """Rút kết luận của người duyệt (elis=APPROVED/REJECTED) khỏi note."""
-    for phan in (note or "").split("|"):
-        phan = phan.strip()
-        if phan.startswith("elis="):
-            return phan.split("=", 1)[1].strip().upper()
+    for part in (note or "").split("|"):
+        part = part.strip()
+        if part.startswith("elis="):
+            return part.split("=", 1)[1].strip().upper()
     return ""
 
 
@@ -247,7 +247,7 @@ def run_pipeline(cases, azure_client, dung_khi_loi: bool = False) -> tuple[dict,
 
         try:
             images = file_utils.read_as_images(path)
-            kq = pipeline.process(
+            result = pipeline.process(
                 images=images,
                 given=InputInfo(
                     employee_name=case.input_employee_name,
@@ -259,8 +259,8 @@ def run_pipeline(cases, azure_client, dung_khi_loi: bool = False) -> tuple[dict,
                 extract_from_text=llm_text.extract_from_text,
                 azure_client=azure_client,
             )
-            results[case.case_id] = kq
-            print(f"{kq.verdict.value} ({kq.stage})")
+            results[case.case_id] = result
+            print(f"{result.verdict.value} ({result.stage})")
         except Exception as e:
             # Một ca hỏng KHÔNG được làm chết cả lượt đánh giá — chạy lại từ
             # đầu nghĩa là trả tiền LLM lại cho những ca đã xong.
@@ -287,13 +287,13 @@ def _gom_theo_ly_do(errors: dict) -> list[tuple[str, list[str]]]:
     không tóm tắt được gì.
     """
     nhom: dict[str, list[str]] = {}
-    for case_id, ly_do in errors.items():
-        rut_gon = ly_do.split(":")[0].strip() if ":" in ly_do else ly_do
+    for case_id, reason in errors.items():
+        rut_gon = reason.split(":")[0].strip() if ":" in reason else reason
         # Giữ thêm một ít ngữ cảnh sau dấu hai chấm, nhưng cắt phần đuôi hay
         # thay đổi (đường dẫn, id) để các ca cùng nguyên nhân về một nhóm.
-        duoi = ly_do.split(":", 1)[1].strip() if ":" in ly_do else ""
-        khoa = f"{rut_gon}: {duoi[:60]}" if duoi else rut_gon
-        nhom.setdefault(khoa, []).append(case_id)
+        duoi = reason.split(":", 1)[1].strip() if ":" in reason else ""
+        key = f"{rut_gon}: {duoi[:60]}" if duoi else rut_gon
+        nhom.setdefault(key, []).append(case_id)
     return sorted(nhom.items(), key=lambda x: -len(x[1]))
 
 
@@ -357,18 +357,18 @@ _PHAN_LOAI = (
 )
 
 
-def _nhom_ly_do(ly_do: str) -> tuple[str, bool]:
+def _nhom_ly_do(reason: str) -> tuple[str, bool]:
     """Trả về (tên nhóm, hệ thống CÓ kiểm thứ này không)."""
-    thap = (ly_do or "").lower()
-    for tu_khoa, ten, trong_pham_vi in _PHAN_LOAI:
+    thap = (reason or "").lower()
+    for tu_khoa, name, trong_pham_vi in _PHAN_LOAI:
         if any(t in thap for t in tu_khoa):
-            return ten, trong_pham_vi
+            return name, trong_pham_vi
     # Không khớp mẫu nào -> coi là TRONG phạm vi. Cố ý chọn hướng này: đoán
     # nhầm thành "ngoài phạm vi" là lặng lẽ tha cho một lỗi thật của hệ thống.
     return "Khác / không rõ", True
 
 
-def _bang_bat_dong(cases, kq) -> None:
+def _print_disagreements(cases, result) -> None:
     """Gom ca bất đồng theo LÝ DO NGƯỜI DUYỆT đã ghi.
 
     Bảng này là thứ biến một con số đáng sợ thành một con số hành động được.
@@ -377,30 +377,30 @@ def _bang_bat_dong(cases, kq) -> None:
     tới hai việc hoàn toàn khác nhau, một bên sửa prompt, một bên thêm luật
     nghiệp vụ hoặc gọi thêm API eLIS.
     """
-    if not kq.wrong_cases:
+    if not result.wrong_cases:
         return
     note_by_id = {c.case_id: c.note for c in cases}
     gom: dict[str, list] = {}
-    for case_id, actual, du, _reason, _stage in kq.wrong_cases:
+    for case_id, actual, du, _reason, _stage in result.wrong_cases:
         gom.setdefault(_ly_do_nguoi_duyet(note_by_id.get(case_id, "")),
                        []).append((case_id, actual, du))
 
     # Gom tiếp thành nhóm thô — đây mới là bảng đem vào báo cáo được.
     theo_nhom: dict[tuple[str, bool], list] = {}
-    for ly_do, ds in gom.items():
-        theo_nhom.setdefault(_nhom_ly_do(ly_do), []).extend(ds)
+    for reason, ds in gom.items():
+        theo_nhom.setdefault(_nhom_ly_do(reason), []).extend(ds)
 
     trong = sum(len(v) for (_, tpv), v in theo_nhom.items() if tpv)
-    ngoai = len(kq.wrong_cases) - trong
+    ngoai = len(result.wrong_cases) - trong
 
-    print(f"\nBất đồng với người duyệt ({len(kq.wrong_cases)}/{kq.total} ca), "
+    print(f"\nBất đồng với người duyệt ({len(result.wrong_cases)}/{result.total} ca), "
           f"gom theo LÝ DO NGƯỜI DUYỆT:")
     print("-" * 78)
     print(f"{'Nhóm lý do':<40}{'Số ca':>7}   Hệ thống có kiểm?")
-    for (ten, trong_pham_vi), ds in sorted(theo_nhom.items(),
+    for (name, trong_pham_vi), ds in sorted(theo_nhom.items(),
                                           key=lambda x: -len(x[1])):
         co = "CÓ  <-- lỗi thật" if trong_pham_vi else "không"
-        print(f"{ten:<40}{len(ds):>7}   {co}")
+        print(f"{name:<40}{len(ds):>7}   {co}")
         print(f"    vd: {', '.join(c[0] for c in ds[:3])}")
     print("-" * 78)
     print(f"  {ngoai:>3} ca ngoài phạm vi — hệ thống KHÔNG được thiết kế để bắt")
@@ -412,62 +412,62 @@ def _bang_bat_dong(cases, kq) -> None:
     print("        liên quan tên / khóa học / ngày. Nhìn vào đây trước tiên.")
 
 
-def print_decision_report(kq) -> None:
+def print_decision_report(result) -> None:
     print("\n" + "=" * 78)
     print("PHẦN 2 — PHÊ DUYỆT (precision / recall / F1)")
     print("=" * 78)
 
-    if kq.total == 0:
+    if result.total == 0:
         print("Không có ca nào chấm được. Kiểm tra cột gt_verdict trong file nhãn.")
         return
 
-    print(f"Số ca chấm được: {kq.total}     Accuracy: {_pct(kq.accuracy)}"
-          f"     Macro-F1: {_pct(kq.macro_f1)}")
+    print(f"Số ca chấm được: {result.total}     Accuracy: {_pct(result.accuracy)}"
+          f"     Macro-F1: {_pct(result.macro_f1)}")
 
     print("\nMa trận nhầm lẫn (hàng = thực tế, cột = model đoán):")
     print(f"{'':>22}{'APPROVED':>12}{'REJECTED':>12}")
     for actual in decision_score.LABELS:
-        row = "".join(f"{kq.matrix[(actual, dd)]:>12}" for dd in decision_score.LABELS)
+        row = "".join(f"{result.matrix[(actual, dd)]:>12}" for dd in decision_score.LABELS)
         print(f"  thực tế {actual:<12}{row}")
 
     print("\nTheo từng nhãn (coi nhãn đó là positive):")
     print(f"{'Nhãn':<12}{'Số ca':>7}{'Precision':>11}{'Recall':>9}{'F1':>8}")
     print("-" * 47)
     for label in decision_score.LABELS:
-        d = kq.by_label[label]
+        d = result.by_label[label]
         print(f"{label:<12}{d.support:>7}{_pct(d.precision):>11}"
               f"{_pct(d.recall):>9}{_pct(d.f1):>8}")
     print("-" * 47)
     print("REJECTED recall thấp    = chứng chỉ sai LỌT QUA, bị duyệt oan.")
     print("REJECTED precision thấp = từ chối OAN người làm thật.")
 
-    if kq.by_stage:
+    if result.by_stage:
         print("\nTheo tầng xử lý (tầng nào quyết định, và quyết định có đúng không):")
         print(f"{'Tầng':<16}{'Số ca':>7}{'Đúng':>7}{'Tỷ lệ':>9}")
         print("-" * 39)
-        for stage, (correct, total) in sorted(kq.by_stage.items()):
+        for stage, (correct, total) in sorted(result.by_stage.items()):
             print(f"{stage:<16}{total:>7}{correct:>7}{_pct(correct / total):>9}")
         print("-" * 39)
         print("Tầng llm2 / llm1_vs_llm2 là những ca phải gọi Azure OCR (tốn tiền).")
         print("Nếu tỷ lệ đúng ở đó không cao hơn llm1 thì tầng 2 chưa đáng giá tiền.")
 
-    if kq.wrong_cases:
-        print(f"\nCa đoán sai ({len(kq.wrong_cases)}):")
-        for case_id, actual, dd, reason, stage in kq.wrong_cases:
+    if result.wrong_cases:
+        print(f"\nCa đoán sai ({len(result.wrong_cases)}):")
+        for case_id, actual, dd, reason, stage in result.wrong_cases:
             print(f"  {case_id:<24} đúng={actual:<9} model={dd:<9} [{stage}]")
             print(f"  {'':<24} lý do model: {reason}")
 
-    if kq.technical_error_cases:
-        print(f"\nLoại khỏi phép đo — hỏng kỹ thuật ({len(kq.technical_error_cases)} ca):")
-        for case_id, stage, reason in kq.technical_error_cases:
+    if result.technical_error_cases:
+        print(f"\nLoại khỏi phép đo — hỏng kỹ thuật ({len(result.technical_error_cases)} ca):")
+        for case_id, stage, reason in result.technical_error_cases:
             print(f"  {case_id:<24} [{stage}] {reason}")
         print("  (Đây là lỗi hạ tầng, không phải model đoán sai — nên không")
         print("   tính vào precision/recall. Nhưng nhiều quá thì số đo mất ý nghĩa")
         print("   vì phần lớn bộ dữ liệu đã bị loại.)")
 
-    if kq.unlabeled_cases:
-        print(f"\nChưa gán gt_verdict ({len(kq.unlabeled_cases)} ca): "
-              f"{', '.join(kq.unlabeled_cases[:10])}")
+    if result.unlabeled_cases:
+        print(f"\nChưa gán gt_verdict ({len(result.unlabeled_cases)} ca): "
+              f"{', '.join(result.unlabeled_cases[:10])}")
 
 
 # ================================= CLI =================================
@@ -598,7 +598,7 @@ def main() -> int:
 
     if args.command == "fill-verdict":
         n = fill_verdict_from_elis(args.file)
-        print(f"Đã điền gt_verdict cho {n}/{len(cases)} ca "
+        print(f"Đã điền gt_verdict wait {n}/{len(cases)} ca "
               f"bằng kết luận của NGƯỜI DUYỆT (cột Submit Status).")
         print("\nĐây là nhãn chuẩn hợp lệ: người chấm thật chính là thứ hệ")
         print("thống sinh ra để thay thế. Không cần gán tay dòng nào.")
@@ -615,15 +615,15 @@ def main() -> int:
         cases = cases[:args.limit]
 
     print(f"Bộ dữ liệu: {len(cases)} ca từ {args.file}")
-    print(f"Sắp gọi LLM thật cho {len(cases)} ca. Ctrl+C để hủy.\n")
+    print(f"Sắp gọi LLM thật wait {len(cases)} ca. Ctrl+C để hủy.\n")
 
     azure_client = ocr_azure.create_client()
     results, errors = run_pipeline(cases, azure_client, dung_khi_loi=args.traceback)
-    _ghi_ket_qua_tho(cases, results, errors)
+    _write_raw_results(cases, results, errors)
 
     predicted_extractions = {
-        code: (kq.extracted if kq is not None else None)
-        for code, kq in results.items()
+        code: (result.extracted if result is not None else None)
+        for code, result in results.items()
     }
     print_extraction_report(extraction_score.score(cases, predicted_extractions))
 
@@ -640,14 +640,14 @@ def main() -> int:
             print("Tỷ lệ này quá cao để tin vào các con số ở trên: phần lớn bộ")
             print("dữ liệu đã rơi ra ngoài phép đo. Sửa nguyên nhân dưới đây")
             print("rồi chạy lại, đừng đọc số trước.\n")
-        for ly_do, ds in _gom_theo_ly_do(errors):
-            print(f"  {len(ds):>4} ca — {ly_do}")
+        for reason, ds in _gom_theo_ly_do(errors):
+            print(f"  {len(ds):>4} ca — {reason}")
             print(f"         vd: {', '.join(ds[:4])}")
         print(f"\n  Chi tiết từng ca: {DEFAULT_RESULT_FILE.name}")
 
     kq_quyet_dinh = decision_score.score(cases, results)
     print_decision_report(kq_quyet_dinh)
-    _bang_bat_dong(cases, kq_quyet_dinh)
+    _print_disagreements(cases, kq_quyet_dinh)
     print()
     return 0
 

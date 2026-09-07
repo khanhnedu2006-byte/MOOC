@@ -49,10 +49,10 @@ TEN_CO_DAU = [
 ]
 
 
-@pytest.mark.parametrize("ten", TEN_CO_DAU)
-def test_ten_file_co_dau_tieng_viet_van_doc_duoc(tmp_path, ten):
+@pytest.mark.parametrize("name", TEN_CO_DAU)
+def test_ten_file_co_dau_tieng_viet_van_doc_duoc(tmp_path, name):
     """Tên file có dấu KHÔNG được ảnh hưởng tới việc nhận dạng nội dung."""
-    p = tmp_path / ten
+    p = tmp_path / name
     p.write_bytes(PNG_1X1)
     assert file_utils.check_mime(p) == "image/png"
 

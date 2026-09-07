@@ -37,14 +37,23 @@ class ElisError(Exception):
 
 # ===== API ① — Lấy danh sách chờ duyệt =====
 
-def get_pending_list(page: int = 1, size: int = 100) -> list[dict]:
-    """GET getCert?status=WAITING — trả về list item chờ duyệt.
+# Trần size của API, đo được bằng check_history.py: gửi size=5000 vẫn chỉ
+# nhận về 1000. Dùng để chia trang khi kéo toàn bộ lịch sử.
+MAX_PAGE_SIZE = 1000
 
-    Mỗi item chứa: id, certificate_id, courseId, employeeId, employeeName,
-    courseName... (xem tài liệu mục 3.5).
+
+def get_by_status(status: str, page: int = 1, size: int = 100) -> list[dict]:
+    """GET getCert?status=... — trả về list item ở trạng thái đó.
+
+    status nhận WAITING / APPROVED / REJECTED. Đã đo trên UAT: ba giá trị trả
+    về ba con số khác nhau (4 / 3134 / 13) nên API lọc thật, không phớt lờ.
+
+    KHÔNG lọc được theo nhân viên: employeeId, employee_id, employeeCode đều
+    bị API bỏ qua — cả ba đều trả về nguyên 3134 bản ghi. Muốn tra theo người
+    thì phải kéo hết về rồi tự lọc (xem src/history.py).
     """
     url = f"{settings.elis_base_url}/api/v1/UserCourse/elearning/getCert"
-    params = {"status": "WAITING", "page": page, "size": size}
+    params = {"status": status, "page": page, "size": size}
 
     try:
         resp = requests.get(url, headers=_headers(json_body=False),
@@ -60,6 +69,36 @@ def get_pending_list(page: int = 1, size: int = 100) -> list[dict]:
         raise ElisError(f"getCert lỗi: {data.get('message')}")
 
     return data.get("data", [])
+
+
+def get_pending_list(page: int = 1, size: int = 100) -> list[dict]:
+    """GET getCert?status=WAITING — hàng đợi chờ duyệt.
+
+    Mỗi item chứa: id, certificate_id, courseId, employeeId, employeeName,
+    employeeEmail, courseName... (xem tài liệu mục 3.5).
+    """
+    return get_by_status("WAITING", page, size)
+
+
+def get_all_by_status(status: str) -> list[dict]:
+    """Kéo HẾT mọi trang của một trạng thái.
+
+    Dừng khi gặp trang chưa đầy. Trang đầy nhưng hết dữ liệu thì vòng sau trả
+    rỗng và cũng dừng, nên không bỏ sót bản ghi nào.
+
+    Chặn số trang để một lỗi phía API (luôn trả về trang đầy) không biến thành
+    vòng lặp vô tận nuốt hết bộ nhớ.
+    """
+    out, page = [], 1
+    while page <= 1000:
+        items = get_by_status(status, page=page, size=MAX_PAGE_SIZE)
+        out.extend(items)
+        if len(items) < MAX_PAGE_SIZE:
+            return out
+        page += 1
+    logger.warning("get_all_by_status(%s) chạm trần 1000 trang, dừng ở %d bản ghi.",
+                   status, len(out))
+    return out
 
 
 # ===== API ② — Tải file chứng chỉ =====
@@ -317,8 +356,8 @@ def _describe_structure(value, after: int = 0) -> str:
     if after > 3:
         return "..."
     if isinstance(value, dict):
-        phan = [f"{k}: {_describe_structure(v, after + 1)}" for k, v in list(value.items())[:12]]
-        return "{" + ", ".join(phan) + "}"
+        part = [f"{k}: {_describe_structure(v, after + 1)}" for k, v in list(value.items())[:12]]
+        return "{" + ", ".join(part) + "}"
     if isinstance(value, list):
         if not value:
             return "[]"

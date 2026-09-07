@@ -62,7 +62,7 @@ def khoa_ghi_chu(employee_name: str, course_name: str) -> tuple[str, str]:
     return (normalize(employee_name), normalize(course_name))
 
 
-def doc_note_cu(path: str | Path) -> dict[tuple[str, str], str]:
+def read_existing_notes(path: str | Path) -> dict[tuple[str, str], str]:
     """Đọc cột NOTE của bản cũ, khóa theo (tên NV, tên khóa) — xem khoa_ghi_chu.
 
     File chưa có, hỏng, hay thiếu cột NOTE thì trả về dict rỗng — không được
@@ -80,20 +80,20 @@ def doc_note_cu(path: str | Path) -> dict[tuple[str, str], str]:
         with path.open(encoding="utf-8-sig", newline="") as f:
             ra = {}
             for row in csv.DictReader(f):
-                ten = (row.get("input_employee_name") or "").strip()
-                khoa = (row.get("input_course_name") or "").strip()
+                name = (row.get("input_employee_name") or "").strip()
+                key = (row.get("input_course_name") or "").strip()
                 note = (row.get("NOTE") or "").strip()
-                if not note or not (ten or khoa):
+                if not note or not (name or key):
                     continue
                 if note == GHI_CHU_KHONG_ANH:
                     continue
-                ra[khoa_ghi_chu(ten, khoa)] = note
+                ra[khoa_ghi_chu(name, key)] = note
             return ra
     except (OSError, csv.Error):
         return {}
 
 
-def _doc_csv(path: Path) -> list[dict]:
+def _read_csv(path: Path) -> list[dict]:
     with path.open(encoding="utf-8-sig", newline="") as f:
         return list(csv.DictReader(f))
 
@@ -118,8 +118,8 @@ def build(excel, images_dir, file_nhan, file_ket_qua, file_ra,
     ai_theo_khoa, case_id_theo_khoa = {}, {}
     if file_nhan.is_file() and file_ket_qua.is_file():
         verdict_theo_case = {r["case_id"]: (r.get("verdict") or "").strip()
-                             for r in _doc_csv(file_ket_qua) if r.get("case_id")}
-        for e in _doc_csv(file_nhan):
+                             for r in _read_csv(file_ket_qua) if r.get("case_id")}
+        for e in _read_csv(file_nhan):
             cid = (e.get("case_id") or "").strip()
             if not cid:
                 continue
@@ -128,9 +128,9 @@ def build(excel, images_dir, file_nhan, file_ket_qua, file_ra,
             case_id_theo_khoa[k] = cid
             ai_theo_khoa[k] = verdict_theo_case.get(cid, "")
 
-    note_cu = doc_note_cu(file_ra)
+    note_cu = read_existing_notes(file_ra)
 
-    dong, lech, da_dung, so_khong_anh = [], 0, set(), 0
+    out_rows, lech, da_dung, so_khong_anh = [], 0, set(), 0
     for r in rows:
         k = khoa_ghi_chu(r["employee_name"], r["course_name"])
         human = (r.get("elis_status") or "").strip().upper()
@@ -154,23 +154,23 @@ def build(excel, images_dir, file_nhan, file_ket_qua, file_ra,
         if human and ai and human != ai:
             lech += 1
 
-        dong.append([case_id, r["employee_name"], r["course_name"],
-                     human, ai, note])
+        out_rows.append([case_id, r["employee_name"], r["course_name"],
+                         human, ai, note])
 
     # Giữ nguyên THỨ TỰ DÒNG CỦA EXCEL để đặt cạnh file gốc mà soi từng dòng.
-    # (rows đã theo thứ tự đọc từ sheet, nên không sắp lại.)
+    # (out_rows đã theo thứ tự đọc từ sheet, nên không sắp lại.)
 
-    tam = file_ra.with_name(file_ra.name + ".tmp")
+    tmp_path = file_ra.with_name(file_ra.name + ".tmp")
     file_ra.parent.mkdir(parents=True, exist_ok=True)
     try:
         # utf-8-sig: Excel trên Windows cần BOM mới hiện đúng tiếng Việt.
-        with tam.open("w", encoding="utf-8-sig", newline="") as f:
+        with tmp_path.open("w", encoding="utf-8-sig", newline="") as f:
             w = csv.writer(f)
             w.writerow(COLUMNS)
-            w.writerows(dong)
-        os.replace(tam, file_ra)
+            w.writerows(out_rows)
+        os.replace(tmp_path, file_ra)
     except PermissionError as e:
-        tam.unlink(missing_ok=True)
+        tmp_path.unlink(missing_ok=True)
         raise PermissionError(
             f"Không ghi được {file_ra.name}: file đang bị khóa.\n"
             f"Nguyên nhân hay gặp nhất: file đang MỞ TRONG EXCEL. "
@@ -178,9 +178,9 @@ def build(excel, images_dir, file_nhan, file_ket_qua, file_ra,
             f"(File cũ vẫn còn nguyên, không mất ghi chú nào.)"
         ) from e
     except Exception:
-        tam.unlink(missing_ok=True)
+        tmp_path.unlink(missing_ok=True)
         raise
 
-    return {"tong": len(dong), "co_anh": len(dong) - so_khong_anh,
+    return {"tong": len(out_rows), "co_anh": len(out_rows) - so_khong_anh,
             "khong_anh": so_khong_anh, "lech": lech,
             "note_giu": len(da_dung), "note_mo_coi": len(note_cu) - len(da_dung)}

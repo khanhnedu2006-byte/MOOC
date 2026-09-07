@@ -143,18 +143,18 @@ def write_dataset(cases: list[EvalCase], path: str | Path) -> None:
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tam = path.with_name(path.name + ".tmp")
+    tmp_path = path.with_name(path.name + ".tmp")
 
     try:
-        with tam.open("w", encoding="utf-8-sig", newline="") as f:
+        with tmp_path.open("w", encoding="utf-8-sig", newline="") as f:
             w = csv.DictWriter(f, fieldnames=COLUMNS)
             w.writeheader()
             for case in cases:
                 w.writerow({k: ("" if v is None else v)
                             for k, v in asdict(case).items()})
-        os.replace(tam, path)
+        os.replace(tmp_path, path)
     except PermissionError as e:
-        tam.unlink(missing_ok=True)
+        tmp_path.unlink(missing_ok=True)
         # Trên Windows, Excel KHÓA file đang mở. Traceback trần chỉ nói
         # "Permission denied" và người đọc sẽ đi tìm quyền thư mục, quyền
         # admin, antivirus — trong khi việc phải làm chỉ là đóng Excel.
@@ -166,7 +166,7 @@ def write_dataset(cases: list[EvalCase], path: str | Path) -> None:
             f"Chi tiết: {e}"
         ) from e
     except Exception:
-        tam.unlink(missing_ok=True)
+        tmp_path.unlink(missing_ok=True)
         raise
 
 

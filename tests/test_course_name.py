@@ -79,7 +79,7 @@ def test_write_log_ghi_ten_khoa(tmp_path):
     db = tmp_path / "log.db"
     database.init_db(db)
 
-    kq = ProcessResult(
+    result = ProcessResult(
         verdict=Verdict.REJECTED,
         reason="Tên khóa học không khớp",
         stage="llm1",
@@ -90,7 +90,7 @@ def test_write_log_ghi_ten_khoa(tmp_path):
             issue_date="01/08/2026",
         ),
     )
-    database.write_log(kq, employee_id="E1", user_course_id="uc-1",
+    database.write_log(result, employee_id="E1", user_course_id="uc-1",
                        provider="Coursera",
                        course_name="AI Trends", db_path=db)
 

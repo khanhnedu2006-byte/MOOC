@@ -46,9 +46,9 @@ def _diem_vao() -> list[pathlib.Path]:
 
 def test_tim_duoc_cac_diem_vao():
     """Chính test này phải có gì để kiểm — rỗng là nó đang không bảo vệ gì."""
-    ten = {p.name for p in _diem_vao()}
-    assert "run.py" in ten and "run_eval.py" in ten
-    assert len(ten) >= 6
+    name = {p.name for p in _diem_vao()}
+    assert "run.py" in name and "run_eval.py" in name
+    assert len(name) >= 6
 
 
 @pytest.mark.parametrize("path", _diem_vao(), ids=lambda p: p.name)

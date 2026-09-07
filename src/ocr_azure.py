@@ -18,6 +18,7 @@ from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import HttpResponseError
 
+import llm_error
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ def ocr_bytes(client: DocumentIntelligenceClient, image_bytes: bytes) -> str:
     Ném OcrError nếu hết lượt thử hoặc không đọc được chữ nào.
     """
     loi_cuoi = None
-    for lan in range(1, SO_LAN_THU + 1):
+    for attempt in range(1, SO_LAN_THU + 1):
         bat_dau = time.monotonic()
         try:
             poller = client.begin_analyze_document(
@@ -78,13 +79,13 @@ def ocr_bytes(client: DocumentIntelligenceClient, image_bytes: bytes) -> str:
             # không đối chiếu được gì.
             logger.warning("Azure lỗi sau %.1fs (ảnh %.0f KB, lần %d/%d): %s",
                            time.monotonic() - bat_dau, len(image_bytes) / 1024,
-                           lan, SO_LAN_THU, e.status_code)
-            if (e.status_code or 0) not in MA_LOI_TAM_THOI or lan == SO_LAN_THU:
-                raise OcrError(_explain_error(e, lan)) from e
-            cho = GIAN_CACH_GIAY[min(lan - 1, len(GIAN_CACH_GIAY) - 1)]
+                           attempt, SO_LAN_THU, e.status_code)
+            if (e.status_code or 0) not in MA_LOI_TAM_THOI or attempt == SO_LAN_THU:
+                raise OcrError(_explain_error(e, attempt)) from e
+            wait = GIAN_CACH_GIAY[min(attempt - 1, len(GIAN_CACH_GIAY) - 1)]
             logger.warning("Azure lỗi tạm thời (%s), thử lại lần %d/%d sau %ds.",
-                           e.status_code, lan + 1, SO_LAN_THU, cho)
-            time.sleep(cho)
+                           e.status_code, attempt + 1, SO_LAN_THU, wait)
+            time.sleep(wait)
             continue
 
         giay = time.monotonic() - bat_dau
@@ -129,11 +130,17 @@ def ocr_images(client: DocumentIntelligenceClient, images: list[bytes]) -> str:
     return "\n\n".join(parts)
 
 
-def _explain_error(e: HttpResponseError, so_lan: int = 1) -> str:
+def _explain_error(e: HttpResponseError, attempts: int = 1) -> str:
+    # Ca 401/403 gắn TAG_NEEDS_HUMAN: chúng KHÔNG tự khỏi, thử lại bao nhiêu
+    # lần cũng vậy. alert.py đọc mốc này để đổi giọng email — thư mặc định
+    # viết "sự cố khắc phục xong thì tự xử lý", câu đó SAI với hai ca này vì
+    # sẽ không có ai khắc phục nếu không được báo là phải đi làm gì.
     explanation = {
         400: "Yêu cầu không hợp lệ (ảnh hỏng hoặc định dạng lỗi).",
-        401: "Sai key Azure.",
-        403: "Hết quota Free tier (500 trang/tháng) hoặc ảnh quá 4 MB.",
+        401: f"{llm_error.TAG_NEEDS_HUMAN}: Sai AZURE_KEY. Sửa .env rồi khởi động lại job.",
+        403: (f"{llm_error.TAG_NEEDS_HUMAN}: Hết quota Azure Free tier "
+              f"(500 trang/tháng) hoặc ảnh quá 4 MB. Hết quota thì phải NÂNG "
+              f"GÓI — thử lại sẽ không tự khỏi wait tới đầu tháng sau."),
         408: ("Azure xử lý quá lâu rồi bỏ cuộc. Lỗi TẠM THỜI — thường do dịch "
               "vụ đang tải nặng, không phải ảnh hỏng."),
         429: "Bị giới hạn tốc độ.",
@@ -141,8 +148,8 @@ def _explain_error(e: HttpResponseError, so_lan: int = 1) -> str:
         503: "Azure đang quá tải hoặc bảo trì. Tạm thời.",
     }
     added = explanation.get(e.status_code or 0, "")
-    lan = f" (đã thử {so_lan} lần)" if so_lan > 1 else ""
+    attempt = f" (đã thử {attempts} lần)" if attempts > 1 else ""
     # message của Azure hay xuống dòng ba lần cho cùng một nội dung; ép về
     # một dòng để log đọc được.
     thong_diep = " ".join((e.message or "").split())
-    return f"[Azure {e.status_code}] {thong_diep}. {added}{lan}".strip()
+    return f"[Azure {e.status_code}] {thong_diep}. {added}{attempt}".strip()

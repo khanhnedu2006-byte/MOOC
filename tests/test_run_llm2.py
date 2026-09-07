@@ -21,9 +21,9 @@ from evaluation import run_llm2                        # noqa: E402
 from schemas import ExtractedInfo                      # noqa: E402
 
 
-def _doc(ten="Bùi Đức Hòa", khoa="ISO 27001", ngay="01/08/2026"):
-    return ExtractedInfo(recipient_name=ten, certificate_name=khoa,
-                         issue_date=ngay)
+def _doc(name="Bùi Đức Hòa", key="ISO 27001", day="01/08/2026"):
+    return ExtractedInfo(recipient_name=name, certificate_name=key,
+                         issue_date=day)
 
 
 @pytest.fixture
@@ -40,30 +40,30 @@ def moi_truong(monkeypatch):
     return dem
 
 
-def _anh(thu_muc, *ten):
+def _anh(thu_muc, *name):
     thu_muc.mkdir(parents=True, exist_ok=True)
-    for t in ten:
+    for t in name:
         (thu_muc / t).write_bytes(b"x")
     return sorted(thu_muc.iterdir())
 
 
 def test_chay_cho_MOI_anh_trong_thu_muc(moi_truong, tmp_path):
     paths = _anh(tmp_path / "anh", *[f"NV{i}_Khóa {i}.jpg" for i in range(7)])
-    dong, hong = run_llm2.chay(paths, None)
-    assert len(dong) == 7 and moi_truong["azure"] == 7 and hong == []
+    rows, failed = run_llm2.run_all(paths, None)
+    assert len(rows) == 7 and moi_truong["azure"] == 7 and failed == []
 
 
 def test_dung_4_COT_theo_dung_thu_tu(moi_truong, tmp_path):
     """Không có cột kết luận, không có cột lý do — đúng yêu cầu."""
     paths = _anh(tmp_path / "anh", "HOABD3_ISO 27001.jpg")
-    dong, _ = run_llm2.chay(paths, None)
+    rows, _ = run_llm2.run_all(paths, None)
 
-    assert len(dong[0]) == 4
-    assert dong[0] == ["HOABD3_ISO 27001.jpg", "Bùi Đức Hòa", "ISO 27001",
+    assert len(rows[0]) == 4
+    assert rows[0] == ["HOABD3_ISO 27001.jpg", "Bùi Đức Hòa", "ISO 27001",
                        "01/08/2026"]
 
     ra = tmp_path / "kq.xlsx"
-    run_llm2.ghi_excel(dong, ra)
+    run_llm2.write_excel(rows, ra)
     from openpyxl import load_workbook
     ws = load_workbook(ra).active
     assert [c.value for c in ws[1]] == [
@@ -74,10 +74,10 @@ def test_dung_4_COT_theo_dung_thu_tu(moi_truong, tmp_path):
 def test_truong_model_khong_doc_ra_thi_de_RONG(moi_truong, tmp_path, monkeypatch):
     """None -> ô trống, không phải chữ 'None'."""
     monkeypatch.setattr(run_llm2.llm_text, "extract_from_text",
-                        lambda t: _doc(ngay=None))
+                        lambda t: _doc(day=None))
     paths = _anh(tmp_path / "anh", "A_x.jpg")
-    dong, _ = run_llm2.chay(paths, None)
-    assert dong[0][3] == ""
+    rows, _ = run_llm2.run_all(paths, None)
+    assert rows[0][3] == ""
 
 
 def test_anh_hong_de_TRONG_o_chu_khong_nhet_chu_loi(moi_truong, tmp_path, monkeypatch):
@@ -85,30 +85,30 @@ def test_anh_hong_de_TRONG_o_chu_khong_nhet_chu_loi(moi_truong, tmp_path, monkey
     monkeypatch.setattr(run_llm2.ocr_azure, "ocr_images",
                         lambda c, i: (_ for _ in ()).throw(RuntimeError("Azure sập")))
     paths = _anh(tmp_path / "anh", "A_x.jpg")
-    dong, hong = run_llm2.chay(paths, None)
+    rows, failed = run_llm2.run_all(paths, None)
 
-    assert dong[0] == ["A_x.jpg", "", "", ""]
-    assert hong == [("A_x.jpg", "RuntimeError: Azure sập")]
+    assert rows[0] == ["A_x.jpg", "", "", ""]
+    assert failed == [("A_x.jpg", "RuntimeError: Azure sập")]
 
 
 def test_mot_anh_hong_khong_giet_ca_luot_chay(moi_truong, tmp_path, monkeypatch):
-    lan = {"n": 0}
+    attempt = {"n": 0}
 
     def thinh_thoang_hong(_c, _i):
-        lan["n"] += 1
-        if lan["n"] == 1:
+        attempt["n"] += 1
+        if attempt["n"] == 1:
             raise RuntimeError("hỏng")
         return "text ocr"
 
     monkeypatch.setattr(run_llm2.ocr_azure, "ocr_images", thinh_thoang_hong)
     paths = _anh(tmp_path / "anh", "A_x.jpg", "B_y.jpg")
-    dong, hong = run_llm2.chay(paths, None)
+    rows, failed = run_llm2.run_all(paths, None)
 
-    assert len(dong) == 2 and len(hong) == 1
-    assert dong[1][1] == "Bùi Đức Hòa", "ảnh sau không được chạy"
+    assert len(rows) == 2 and len(failed) == 1
+    assert rows[1][1] == "Bùi Đức Hòa", "ảnh sau không được chạy"
 
 
 def test_limit_chan_truoc_khi_goi_azure(moi_truong, tmp_path):
     paths = _anh(tmp_path / "anh", *[f"NV{i}_K{i}.jpg" for i in range(10)])
-    run_llm2.chay(paths, None, limit=3)
+    run_llm2.run_all(paths, None, limit=3)
     assert moi_truong["azure"] == 3

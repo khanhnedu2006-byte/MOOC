@@ -91,16 +91,16 @@ def nguyen_nhan_tu_choi_oan(e: dict, r: dict) -> str:
     quy được về mẫu nào thì ghi rõ "cần mở ảnh kiểm tra" chứ KHÔNG đoán bừa —
     bảng này sẽ đi tới HR, một dòng đoán sai ở đây là một lần mất uy tín.
     """
-    ly_do = r.get("reason") or ""
+    reason = r.get("reason") or ""
     ra = []
 
-    if "Ngày không hợp lệ" in ly_do:
+    if "Ngày không hợp lệ" in reason:
         if (r.get("issue_date") or "").strip() in NGAY_KHONG_DOC_DUOC:
             ra.append("Không đọc được ngày, hệ thống đang xử như ngày sai")
         else:
             ra.append("Ngày đọc được nhưng ngoài khoảng quy định")
 
-    if "Tên không khớp" in ly_do:
+    if "Tên không khớp" in reason:
         ai = r.get("recipient_name") or ""
         elis = e.get("input_employee_name") or ""
         tu_ai, tu_elis = set(normalize(ai).split()), set(normalize(elis).split())
@@ -113,7 +113,7 @@ def nguyen_nhan_tu_choi_oan(e: dict, r: dict) -> str:
         else:
             ra.append("Tên lệch cách viết — cần mở ảnh kiểm tra")
 
-    if "Tên khóa học không khớp" in ly_do:
+    if "Tên khóa học không khớp" in reason:
         ai = normalize(r.get("certificate_name") or "")
         elis = normalize(e.get("input_course_name") or "")
         tu_ai, tu_elis = set(ai.split()), set(elis.split())
@@ -124,7 +124,7 @@ def nguyen_nhan_tu_choi_oan(e: dict, r: dict) -> str:
         else:
             ra.append("Tên khóa KHÁC HẲN — cần mở ảnh kiểm tra")
 
-    return "; ".join(ra) if ra else (ly_do or "(không rõ)")
+    return "; ".join(ra) if ra else (reason or "(không rõ)")
 
 
 def _doc(file_nhan: Path, file_ket_qua: Path) -> tuple[dict, dict]:
@@ -202,8 +202,8 @@ def build(file_nhan, file_ket_qua, file_ra) -> tuple[int, int]:
     tong_quan = wb.active
     tong_quan.title = "Tổng quan"
 
-    def _sheet(ten, rows, mo_ta):
-        ws = wb.create_sheet(ten)
+    def _sheet(name, rows, mo_ta):
+        ws = wb.create_sheet(name)
         ws["A1"] = mo_ta
         ws["A1"].font = Font(name=FONT, bold=True, size=11)
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(COT))

@@ -58,49 +58,49 @@ def _e(x) -> str:
     return html.escape(str(x if x is not None else ""))
 
 
-def _o_kpi(nhan: str, gia_tri: str, mau: str = None, phu: str = "") -> str:
+def _kpi_cell(label: str, value: str, color: str = None, sub: str = "") -> str:
     """Một ô trong hàng KPI."""
-    mau = mau or COLORS["ink"]
+    color = color or COLORS["ink"]
     dong_phu = (f"<div style=\"font-size:11px;color:{COLORS['muted']};"
-                f"padding-top:3px;\">{_e(phu)}</div>") if phu else ""
+                f"padding-top:3px;\">{_e(sub)}</div>") if sub else ""
     return f"""
       <td align="center" width="25%" style="padding:14px 8px;">
         <div style="font-size:11px;letter-spacing:.4px;color:{COLORS['ink2']};
-                    text-transform:uppercase;">{_e(nhan)}</div>
-        <div style="font-size:28px;font-weight:bold;color:{mau};
-                    padding-top:6px;font-family:Segoe UI,Arial,sans-serif;">{gia_tri}</div>
+                    text-transform:uppercase;">{_e(label)}</div>
+        <div style="font-size:28px;font-weight:bold;color:{color};
+                    padding-top:6px;font-family:Segoe UI,Arial,sans-serif;">{value}</div>
         {dong_phu}
       </td>"""
 
 
-def _gach() -> str:
+def _divider() -> str:
     return (f'<tr><td colspan="4" style="border-top:1px solid '
             f'{COLORS["border"]};font-size:0;line-height:0;">&nbsp;</td></tr>')
 
 
-def _tieu_de_muc(text: str) -> str:
+def _section_title(text: str) -> str:
     return f"""
       <tr><td colspan="4" style="padding:16px 12px 6px;font-size:14px;
           font-weight:bold;color:{COLORS['ink']};
           font-family:Segoe UI,Arial,sans-serif;">{_e(text)}</td></tr>"""
 
 
-def _bang_ly_do_tu_choi(rc: dict) -> str:
+def _rejection_reason_table(rc: dict) -> str:
     """Bảng nguyên nhân từ chối, kèm thanh tỷ lệ vẽ bằng ô bảng.
 
     Mẫu số của % là SỐ CA TỪ CHỐI, không phải tổng ba nguyên nhân — vì câu
     hỏi người đọc đặt ra là "trong số bị từ chối, bao nhiêu phần sai tên",
     chứ không phải "sai tên chiếm bao nhiêu phần trong các lỗi".
     """
-    muc = rc["causes"]
+    rows = rc["causes"]
     mau_so = rc["total_rejected"]
     if not mau_so:
         return (f'<tr><td colspan="4" style="padding:6px 12px;font-size:13px;'
                 f'color:{COLORS["muted"]};">Không có chứng chỉ nào bị từ chối.</td></tr>')
 
-    lon_nhat = max((m["count"] for m in muc), default=0) or 1
+    lon_nhat = max((m["count"] for m in rows), default=0) or 1
     hang = []
-    for m in muc:
+    for m in rows:
         pt = m["count"] / mau_so * 100
         w = max(2, round(m["count"] / lon_nhat * 100))
         hang.append(f"""
@@ -139,13 +139,13 @@ def _bang_ly_do_tu_choi(rc: dict) -> str:
       </td></tr>"""
 
 
-def _bang_provider(muc: list[dict]) -> str:
+def _provider_table(rows: list[dict]) -> str:
     """Bảng theo nhà cung cấp, kèm thanh tỷ lệ duyệt vẽ bằng ô bảng.
 
     Thanh tỷ lệ dùng hai <td> có bgcolor và width tính theo phần trăm — cách
     duy nhất vẽ được thanh trong Outlook mà không cần ảnh.
     """
-    if not muc:
+    if not rows:
         return (f'<tr><td colspan="4" style="padding:6px 12px;font-size:13px;'
                 f'color:{COLORS["muted"]};">Chưa có dữ liệu nhà cung cấp.</td></tr>')
     hang = [f"""
@@ -161,7 +161,7 @@ def _bang_provider(muc: list[dict]) -> str:
           <td style="padding:6px 12px;font-size:11px;color:{COLORS['ink2']};
               text-transform:uppercase;" width="130">Tỷ lệ duyệt</td>
         </tr>"""]
-    for m in muc:
+    for m in rows:
         ty_le = m["approval_rate"]
         w_xanh = max(0, min(100, round(ty_le)))
         thanh = f"""
@@ -192,7 +192,7 @@ def _bang_provider(muc: list[dict]) -> str:
       </td></tr>"""
 
 
-def key_findings(so_lieu: dict) -> list[str]:
+def key_findings(stats: dict) -> list[str]:
     """Sinh các gạch đầu dòng Key Findings từ số liệu.
 
     Chỉ nêu điều SỐ LIỆU CHỨNG MINH được. Không viết "chất lượng đang cải
@@ -200,19 +200,19 @@ def key_findings(so_lieu: dict) -> list[str]:
     đúng, đó chưa phải xu hướng.
     """
     ra = []
-    tong = so_lieu["total"]
+    tong = stats["total"]
     if not tong:
         return ["Không có chứng chỉ nào được xử lý trong kỳ này. "
                 "Có thể không ai nộp, cũng có thể job không chạy — nên kiểm tra."]
 
     ra.append(f"Đã xử lý {_n(tong)} chứng chỉ "
-              f"({so_lieu['from_day']} → {so_lieu['to_day']}).")
-    ra.append(f"{so_lieu['approval_rate']:.0f}% được duyệt "
-              f"({_n(so_lieu['approved'])} chứng chỉ).")
-    ra.append(f"{100 - so_lieu['approval_rate']:.0f}% bị từ chối "
-              f"({_n(so_lieu['rejected'])} chứng chỉ).")
+              f"({stats['from_day']} → {stats['to_day']}).")
+    ra.append(f"{stats['approval_rate']:.0f}% được duyệt "
+              f"({_n(stats['approved'])} chứng chỉ).")
+    ra.append(f"{100 - stats['approval_rate']:.0f}% bị từ chối "
+              f"({_n(stats['rejected'])} chứng chỉ).")
 
-    rc = so_lieu["rejection_causes"]
+    rc = stats["rejection_causes"]
     if rc["total_rejected"]:
         lon = max(rc["causes"], key=lambda x: x["count"])
         if lon["count"]:
@@ -228,7 +228,7 @@ def key_findings(so_lieu: dict) -> list[str]:
                       f"trở lên, nên tổng các nguyên nhân lớn hơn số ca từ chối.")
 
     # Xu hướng: chỉ nói khi có TỪ BA MỐC trở lên và mốc cuối đã trọn vẹn.
-    xu_huong = [p for p in so_lieu["trend"] if p["total"] > 0]
+    xu_huong = [p for p in stats["trend"] if p["total"] > 0]
     if len(xu_huong) >= 3:
         dau, cuoi = xu_huong[0]["total"], xu_huong[-1]["total"]
         if dau:
@@ -238,7 +238,7 @@ def key_findings(so_lieu: dict) -> list[str]:
                 ra.append(f"Khối lượng xử lý {huong} {abs(chenh):.0f}% từ mốc "
                           f"đầu kỳ ({_n(dau)}) đến mốc cuối kỳ ({_n(cuoi)}).")
 
-    ncc = so_lieu["by_provider"]
+    ncc = stats["by_provider"]
     if ncc:
         d = ncc[0]
         ra.append(f"Nhà cung cấp nhiều nhất: {d['provider']} "
@@ -246,30 +246,30 @@ def key_findings(so_lieu: dict) -> list[str]:
         # Nhà cung cấp có tỷ lệ duyệt thấp bất thường -> đáng xem lại luật khớp.
         kem = [x for x in ncc if x["total"] >= 5 and x["approval_rate"] < 50]
         if kem:
-            ten = ", ".join(f"{x['provider']} ({x['approval_rate']:.0f}%)"
+            name = ", ".join(f"{x['provider']} ({x['approval_rate']:.0f}%)"
                             for x in kem[:3])
-            ra.append(f"Tỷ lệ duyệt thấp bất thường ở: {ten}. "
+            ra.append(f"Tỷ lệ duyệt thấp bất thường ở: {name}. "
                       f"Nên xem mẫu chứng chỉ của họ có định dạng lạ không.")
 
-    chua_gui = so_lieu["elis"]["unsent"] + so_lieu["elis"]["rejected_by_elis"]
+    chua_gui = stats["elis"]["unsent"] + stats["elis"]["rejected_by_elis"]
     if chua_gui:
         ra.append(f"{_n(chua_gui)} kết quả chưa về được eLIS "
                   f"(chưa nộp hoặc bị từ chối khi nộp).")
     return ra
 
 
-def _khoi_canh_bao(canh_bao: list[str]) -> str:
+def _warning_block(warnings: list[str]) -> str:
     """Khối "Cần chú ý" — diễn giải sẵn các con số thành câu hành động.
 
     Đặt NGAY DƯỚI hàng KPI, trước cả biểu đồ: nếu job chết hoặc eLIS hỏng thì
     đó là thứ duy nhất người đọc cần biết, không nên bắt họ cuộn qua hai biểu
     đồ mới thấy.
     """
-    if not canh_bao:
+    if not warnings:
         return ""
-    muc = "".join(
+    rows = "".join(
         f'<li style="padding:3px 0;font-size:13px;line-height:1.5;">{_e(c)}</li>'
-        for c in canh_bao)
+        for c in warnings)
     return f"""
       <tr><td colspan="4" style="padding:12px;">
         <table width="100%" cellpadding="0" cellspacing="0" border="0"
@@ -277,33 +277,33 @@ def _khoi_canh_bao(canh_bao: list[str]) -> str:
           <tr><td style="padding:12px 14px;">
             <div style="font-size:13px;font-weight:bold;color:{COLORS['ink']};
                         padding-bottom:4px;">Cần chú ý</div>
-            <ul style="margin:0;padding-left:18px;color:{COLORS['ink']};">{muc}</ul>
+            <ul style="margin:0;padding-left:18px;color:{COLORS['ink']};">{rows}</ul>
           </td></tr>
         </table>
       </td></tr>"""
 
 
-def _khoi_bieu_do(co_bieu_do: bool, ten_moc: str) -> str:
+def _chart_block(has_charts: bool, bucket_label: str) -> str:
     """Hai mục biểu đồ. Rỗng khi kỳ báo cáo quá ngắn để vẽ được gì."""
-    if not co_bieu_do:
+    if not has_charts:
         return ""
     return f"""
-  {_gach()}
-  {_tieu_de_muc("Xu hướng xử lý chứng chỉ")}
+  {_divider()}
+  {_section_title("Xu hướng xử lý chứng chỉ")}
   <tr><td colspan="4" align="center" style="padding:4px 12px 12px;">
     <img src="cid:chart_trend" width="640"
-         alt="Biểu đồ đường: tổng xử lý và số được duyệt theo {_e(ten_moc)}"
+         alt="Biểu đồ đường: tổng xử lý và số được duyệt theo {_e(bucket_label)}"
          style="display:block;border:0;max-width:640px;width:100%;"></td></tr>
 
-  {_gach()}
-  {_tieu_de_muc("Được duyệt / Từ chối")}
+  {_divider()}
+  {_section_title("Được duyệt / Từ chối")}
   <tr><td colspan="4" align="center" style="padding:4px 12px 12px;">
     <img src="cid:chart_split" width="640"
-         alt="Biểu đồ cột chồng: cơ cấu kết quả theo {_e(ten_moc)}"
+         alt="Biểu đồ cột chồng: cơ cấu kết quả theo {_e(bucket_label)}"
          style="display:block;border:0;max-width:640px;width:100%;"></td></tr>"""
 
 
-def _chu_thich_loai_tru(so_lieu: dict) -> str:
+def _exclusion_note(stats: dict) -> str:
     """Một dòng ở chân báo cáo cho số ca bị loại vì hỏng kỹ thuật.
 
     Không dựng thành mục riêng — người đọc báo cáo này quan tâm kết quả
@@ -311,32 +311,32 @@ def _chu_thich_loai_tru(so_lieu: dict) -> str:
     bỏ bớt bản ghi là cách một báo cáo bắt đầu nói dối. Ai cần chi tiết thì
     tra mooc_log.db, cột stage.
     """
-    n = so_lieu.get("excluded_technical", 0)
+    n = stats.get("excluded_technical", 0)
     if not n:
         return ""
     return (f" Đã loại {_n(n)} chứng chỉ khỏi thống kê vì hệ thống không đọc "
             f"được (eLIS không trả file, AI lỗi…) — không phải nhân viên khai sai.")
 
 
-def build_html(so_lieu: dict) -> tuple[str, list[tuple[str, bytes]]]:
+def build_html(stats: dict) -> tuple[str, list[tuple[str, bytes]]]:
     """Dựng HTML báo cáo. Trả về (html, [(cid, png_bytes), ...])."""
     anh: list[tuple[str, bytes]] = []
-    xu_huong = so_lieu["trend"]
+    xu_huong = stats["trend"]
 
     # Ít hơn hai mốc thì KHÔNG vẽ biểu đồ. Một điểm không thành đường, và
     # một cột chồng chỉ lặp lại đúng những con số đã có ở hàng KPI phía trên
     # — thêm hình chỉ làm báo cáo dài ra mà không nói thêm được gì.
-    co_bieu_do = len(xu_huong) >= 2
-    if co_bieu_do:
+    has_charts = len(xu_huong) >= 2
+    if has_charts:
         anh.append(("chart_trend", charts.line_chart(xu_huong)))
         anh.append(("chart_split", charts.stacked_bar_chart(xu_huong)))
 
-    ten_moc = {"day": "ngày", "week": "tuần", "month": "tháng"}.get(
-        so_lieu.get("bucket", "day"), so_lieu.get("bucket"))
+    bucket_label = {"day": "ngày", "week": "tuần", "month": "tháng"}.get(
+        stats.get("bucket", "day"), stats.get("bucket"))
 
     bullets = "".join(
         f'<li style="padding:3px 0;font-size:13px;line-height:1.5;">{_e(b)}</li>'
-        for b in key_findings(so_lieu))
+        for b in key_findings(stats))
 
     return f"""
 <div style="font-family:Segoe UI,Arial,Helvetica,sans-serif;
@@ -348,44 +348,44 @@ def build_html(so_lieu: dict) -> tuple[str, list[tuple[str, bytes]]]:
     <div style="font-size:18px;font-weight:bold;letter-spacing:.5px;
                 color:{COLORS['ink']};">BÁO CÁO XÁC MINH CHỨNG CHỈ</div>
     <div style="font-size:12px;color:{COLORS['ink2']};padding-top:4px;">
-      {_e(so_lieu['from_day'])} &nbsp;→&nbsp; {_e(so_lieu['to_day'])}
-      &nbsp;·&nbsp; thống kê theo {_e(ten_moc)}</div>
+      {_e(stats['from_day'])} &nbsp;→&nbsp; {_e(stats['to_day'])}
+      &nbsp;·&nbsp; thống kê theo {_e(bucket_label)}</div>
   </td></tr>
 
-  {_gach()}
+  {_divider()}
   <tr>
-    {_o_kpi("Tổng xử lý", _n(so_lieu['total']))}
-    {_o_kpi("Được duyệt", _n(so_lieu['approved']), COLORS['green'])}
-    {_o_kpi("Từ chối", _n(so_lieu['rejected']), COLORS['blue'])}
-    {_o_kpi("Tỷ lệ duyệt", f"{so_lieu['approval_rate']:.0f}%", COLORS['green'])}
+    {_kpi_cell("Tổng xử lý", _n(stats['total']))}
+    {_kpi_cell("Được duyệt", _n(stats['approved']), COLORS['green'])}
+    {_kpi_cell("Từ chối", _n(stats['rejected']), COLORS['blue'])}
+    {_kpi_cell("Tỷ lệ duyệt", f"{stats['approval_rate']:.0f}%", COLORS['green'])}
   </tr>
 
-  {_khoi_canh_bao(so_lieu.get("warnings") or [])}
-  {_khoi_bieu_do(co_bieu_do, ten_moc)}
+  {_warning_block(stats.get("warnings") or [])}
+  {_chart_block(has_charts, bucket_label)}
 
-  {_gach()}
-  {_tieu_de_muc(f"Lý do từ chối ({_n(so_lieu['rejected'])} chứng chỉ)")}
-  {_bang_ly_do_tu_choi(so_lieu['rejection_causes'])}
+  {_divider()}
+  {_section_title(f"Lý do từ chối ({_n(stats['rejected'])} chứng chỉ)")}
+  {_rejection_reason_table(stats['rejection_causes'])}
 
-  {_gach()}
-  {_tieu_de_muc("Theo nhà cung cấp chứng chỉ")}
-  {_bang_provider(so_lieu['by_provider'])}
+  {_divider()}
+  {_section_title("Theo nhà cung cấp chứng chỉ")}
+  {_provider_table(stats['by_provider'])}
 
-  {_gach()}
-  {_tieu_de_muc("Key Findings")}
+  {_divider()}
+  {_section_title("Key Findings")}
   <tr><td colspan="4" style="padding:0 12px 18px;">
     <ul style="margin:0;padding-left:20px;color:{COLORS['ink']};">{bullets}</ul>
   </td></tr>
 
   <tr><td colspan="4" bgcolor="#f6f8fa"
       style="padding:10px 12px;font-size:11px;color:{COLORS['muted']};">
-    Báo cáo tự động từ hệ thống xác minh chứng chỉ MOOC.{_chu_thich_loai_tru(so_lieu)}
+    Báo cáo tự động từ hệ thống xác minh chứng chỉ MOOC.{_exclusion_note(stats)}
   </td></tr>
  </table>
 </div>""", anh
 
 
-def build_text(so_lieu: dict) -> str:
+def build_text(stats: dict) -> str:
     """Bản text thuần — phần text/plain của email, và fallback khi ảnh bị chặn.
 
     Không phải hình thức: một số client (và người đọc trên đồng hồ, hoặc
@@ -393,20 +393,20 @@ def build_text(so_lieu: dict) -> str:
     nghĩa, nên nó chứa cả bảng số của hai biểu đồ.
     """
     d = ["BÁO CÁO XÁC MINH CHỨNG CHỈ MOOC",
-         f"{so_lieu['from_day']} -> {so_lieu['to_day']}", "",
-         f"  Tổng xử lý     : {_n(so_lieu['total'])}",
-         f"  Được duyệt     : {_n(so_lieu['approved'])} ({so_lieu['approval_rate']:.0f}%)",
-         f"  Từ chối        : {_n(so_lieu['rejected'])}",
-         f"  Tỷ lệ duyệt    : {so_lieu['approval_rate']:.0f}%"]
+         f"{stats['from_day']} -> {stats['to_day']}", "",
+         f"  Tổng xử lý     : {_n(stats['total'])}",
+         f"  Được duyệt     : {_n(stats['approved'])} ({stats['approval_rate']:.0f}%)",
+         f"  Từ chối        : {_n(stats['rejected'])}",
+         f"  Tỷ lệ duyệt    : {stats['approval_rate']:.0f}%"]
 
-    if so_lieu["trend"]:
+    if stats["trend"]:
         d += ["", "XU HƯỚNG (số liệu của biểu đồ):",
               f"  {'Mốc':<12}{'Tổng':>8}{'Duyệt':>8}{'Từ chối':>9}"]
-        for p in so_lieu["trend"]:
+        for p in stats["trend"]:
             d.append(f"  {p['bucket']:<12}{_n(p['total']):>8}"
                      f"{_n(p['approved']):>8}{_n(p['rejected']):>9}")
 
-    rc = so_lieu["rejection_causes"]
+    rc = stats["rejection_causes"]
     if rc["total_rejected"]:
         d += ["", f"LÝ DO TỪ CHỐI ({_n(rc['total_rejected'])} chứng chỉ):"]
         for m in rc["causes"]:
@@ -416,16 +416,16 @@ def build_text(so_lieu: dict) -> str:
             d.append(f"  (Tổng lớn hơn {_n(rc['total_rejected'])} vì "
                      f"{_n(rc['multi_cause'])} chứng chỉ sai từ 2 tiêu chí trở lên.)")
 
-    if so_lieu["by_provider"]:
+    if stats["by_provider"]:
         d += ["", "THEO NHÀ CUNG CẤP:",
               f"  {'Nhà cung cấp':<22}{'Tổng':>7}{'Duyệt':>8}{'Từ chối':>9}{'Tỷ lệ':>8}"]
-        for m in so_lieu["by_provider"]:
+        for m in stats["by_provider"]:
             d.append(f"  {m['provider'][:21]:<22}{_n(m['total']):>7}"
                      f"{_n(m['approved']):>8}{_n(m['rejected']):>9}"
                      f"{m['approval_rate']:>7.0f}%")
 
-    if so_lieu.get("warnings"):
-        d += ["", "CẦN CHÚ Ý:"] + [f"  - {c}" for c in so_lieu["warnings"]]
+    if stats.get("warnings"):
+        d += ["", "CẦN CHÚ Ý:"] + [f"  - {c}" for c in stats["warnings"]]
 
-    d += ["", "KEY FINDINGS:"] + [f"  - {b}" for b in key_findings(so_lieu)]
+    d += ["", "KEY FINDINGS:"] + [f"  - {b}" for b in key_findings(stats)]
     return "\n".join(d)

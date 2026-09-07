@@ -42,8 +42,8 @@ class MailSendError(Exception):
     """
 
 def _send_smtp(title: str, html_body: str, text_body: str,
-               images: list | None = None) -> None:
-    """Gửi báo cáo qua SMTP (mặc định Office 365).
+               images: list | None = None, mail_to: str | None = None) -> None:
+    """Gửi một email qua SMTP (mặc định Office 365).
 
     Gửi email nhiều phần (multipart/alternative): bản chữ thuần và bản HTML
     trong cùng một thư. Ứng dụng mail nào đọc được HTML thì hiện bản đẹp,
@@ -54,6 +54,12 @@ def _send_smtp(title: str, html_body: str, text_body: str,
     từ internet, người đọc sẽ thấy một ô trống kèm dòng "Click here to
     download pictures". Ảnh nằm trong thư thì không bị chặn.
 
+    mail_to: người nhận. Rỗng = dùng settings.mail_to (báo cáo định kỳ).
+    Tham số này có mặt vì alert.py gửi cảnh báo tới một địa chỉ KHÁC. Viết
+    thêm một hàm gửi thứ hai cho cảnh báo là cách hỏng chắc chắn: toàn bộ
+    phần chẩn đoán lỗi SMTP bên dưới (App Password, MFA, chặn cổng 587) sẽ
+    phải nhân đôi, và bản thứ hai sẽ lạc hậu ngay lần sửa đầu tiên.
+
     LƯU Ý VỀ HẠN SỬ DỤNG: Microsoft đang khai tử Basic Auth cho SMTP AUTH
     trên Exchange Online, mốc hiện tại là 31/12/2026. Sau đó cách này ngừng
     hoạt động và phải chuyển sang Microsoft Graph API hoặc SMTP relay nội
@@ -63,22 +69,27 @@ def _send_smtp(title: str, html_body: str, text_body: str,
     import smtplib
     from email.message import EmailMessage
 
+    # Người nhận mặc định là MAIL_TO; alert.py truyền ALERT_MAIL_TO vào.
+    dia_chi = mail_to if mail_to is not None else settings.mail_to
+    ten_bien = "MAIL_TO" if mail_to is None else "ALERT_MAIL_TO"
+
     missing = [name for name, ground_truth in [
         ("SMTP_HOST", settings.smtp_host),
         ("SMTP_USER", settings.smtp_user),
         ("SMTP_PASSWORD", settings.smtp_password),
-        ("MAIL_TO", settings.mail_to),
+        (ten_bien, dia_chi),
     ] if not ground_truth]
     if missing:
         raise MailSendError(
             "Thiếu cấu hình trong .env: " + ", ".join(missing) + "\n"
             "  SMTP_USER     = email công ty của bạn\n"
             "  SMTP_PASSWORD = App Password (KHÔNG phải mật khẩu đăng nhập)\n"
-            "  MAIL_TO      = email mentor\n"
+            "  MAIL_TO      = email mentor (nhận báo cáo định kỳ)\n"
+            "  ALERT_MAIL_TO = email nhận cảnh báo lỗi hệ thống\n"
             "  Bỏ --send để xem trước nội dung mà không cần cấu hình."
         )
 
-    recipient = [e.strip() for e in settings.mail_to.split(",") if e.strip()]
+    recipient = [e.strip() for e in dia_chi.split(",") if e.strip()]
     sender = settings.mail_from or settings.smtp_user
 
     candidate = EmailMessage()
@@ -144,24 +155,24 @@ def _send_smtp(title: str, html_body: str, text_body: str,
         ) from e
 
 
-def _tieu_de(stats: dict) -> str:
+def _subject_line(stats: dict) -> str:
     ky = (stats["from_day"] if stats["from_day"] == stats["to_day"]
           else f"{stats['from_day']} → {stats['to_day']}")
     return (f"[MOOC] Báo cáo {ky} — {stats['total']} chứng chỉ, "
             f"duyệt {stats['approval_rate']:.0f}%")
 
 
-def gui_bao_cao_ky(from_day: str, to_day: str, bucket: str = "day") -> None:
+def send_period_report(from_day: str, to_day: str, bucket: str = "day") -> None:
     """Dựng và GỬI báo cáo cho một khoảng thời gian. Scheduler gọi hàm này."""
     import report_layout
 
     stats = report.period_report(from_day, to_day, bucket)
     html_body, images = report_layout.build_html(stats)
-    _send_smtp(_tieu_de(stats), html_body,
+    _send_smtp(_subject_line(stats), html_body,
                report_layout.build_text(stats), images)
 
 
-def _doc_ngay(chuoi: str, ten_co: str) -> str:
+def _parse_day(text: str, flag_name: str) -> str:
     """Đọc ngày từ dòng lệnh, chuẩn hóa về YYYY-MM-DD.
 
     CHẤP NHẬN thiếu số 0 ("2026-8-5") và dấu gạch chéo ("2026/08/05"), rồi tự
@@ -174,11 +185,11 @@ def _doc_ngay(chuoi: str, ten_co: str) -> str:
 
     Sai thật thì báo một dòng rõ ràng, không đổ traceback vào mặt người dùng.
     """
-    raw = (chuoi or "").strip().replace("/", "-").replace(".", "-")
-    phan = raw.split("-")
-    if len(phan) == 3 and all(x.isdigit() for x in phan):
-        nam, thang, ngay = phan
-        raw = f"{int(nam):04d}-{int(thang):02d}-{int(ngay):02d}"
+    raw = (text or "").strip().replace("/", "-").replace(".", "-")
+    part = raw.split("-")
+    if len(part) == 3 and all(x.isdigit() for x in part):
+        year, month, day = part
+        raw = f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
     try:
         return date.fromisoformat(raw).isoformat()
     except ValueError:
@@ -186,14 +197,14 @@ def _doc_ngay(chuoi: str, ten_co: str) -> str:
         # sai tham số dòng lệnh, người dùng cần một câu hướng dẫn chứ không
         # cần thấy ruột của date.fromisoformat.
         raise SystemExit(
-            f"{ten_co} không hợp lệ: {chuoi!r}\n"
+            f"{flag_name} không hợp lệ: {text!r}\n"
             f"  Định dạng: YYYY-MM-DD, ví dụ 2026-08-25\n"
-            f"  (Thiếu số 0 như 2026-8-25 cũng được, nhưng {chuoi!r} thì không "
+            f"  (Thiếu số 0 như 2026-8-25 cũng được, nhưng {text!r} thì không "
             f"đọc được.)"
         ) from None
 
 
-def _khoang_mac_dinh() -> tuple[str, str]:
+def _default_period() -> tuple[str, str]:
     """7 ngày gần nhất, kết thúc HÔM QUA.
 
     Vì sao không phải một ngày: biểu đồ đường một điểm thì vô nghĩa, và con
@@ -203,8 +214,8 @@ def _khoang_mac_dinh() -> tuple[str, str]:
     Kết thúc hôm qua vì hôm nay chưa chạy hết — số liệu ngày đang dở luôn
     thấp hơn thực tế và làm người đọc tưởng khối lượng đang giảm.
     """
-    den = date.today() - timedelta(days=1)
-    return (den - timedelta(days=6)).isoformat(), den.isoformat()
+    end = date.today() - timedelta(days=1)
+    return (end - timedelta(days=6)).isoformat(), end.isoformat()
 
 
 def main():
@@ -223,15 +234,15 @@ def main():
     args = p.parse_args()
 
     if args.day:
-        from_day = to_day = _doc_ngay(args.day, "--day")
+        from_day = to_day = _parse_day(args.day, "--day")
     elif args.from_day or args.to_day:
         if not (args.from_day and args.to_day):
             print("Dùng --from và --to cùng nhau, hoặc --day cho một ngày.")
             return 1
-        from_day = _doc_ngay(args.from_day, "--from")
-        to_day = _doc_ngay(args.to_day, "--to")
+        from_day = _parse_day(args.from_day, "--from")
+        to_day = _parse_day(args.to_day, "--to")
     else:
-        from_day, to_day = _khoang_mac_dinh()
+        from_day, to_day = _default_period()
 
     if from_day > to_day:
         print(f"--from ({from_day}) sau --to ({to_day}).")
@@ -253,9 +264,9 @@ def main():
     if args.send:
         try:
             html_body, images = report_layout.build_html(stats)
-            _send_smtp(_tieu_de(stats), html_body,
+            _send_smtp(_subject_line(stats), html_body,
                        report_layout.build_text(stats), images)
-            print(f"Đã gửi email tới {settings.mail_to}: {_tieu_de(stats)}")
+            print(f"Đã gửi email tới {settings.mail_to}: {_subject_line(stats)}")
         except MailSendError as e:
             print(f"KHÔNG GỬI ĐƯỢC:\n{e}")
             return 1

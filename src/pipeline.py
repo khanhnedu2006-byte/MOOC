@@ -25,8 +25,19 @@ from schemas import Verdict, ProcessResult, InputInfo, ExtractedInfo
 
 logger = logging.getLogger(__name__)
 
+# Ca BỎ QUA: đọc được ảnh nhưng không xác minh được danh tính người học.
+# KHÔNG phải hỏng kỹ thuật (thử lại không bao giờ khỏi) và KHÔNG phải kết luận
+# nghiệp vụ (không nộp gì về eLIS). Xem run.py mục 2.
+SKIP_STAGE = "skipped_external_email"
+
 
 def _both_fields_match(extracted: ExtractedInfo, given: InputInfo) -> bool:
+    """True khi tên VÀ khóa học khớp với input.
+
+    - Tên: khớp tên nhân viên hoặc mã nhân viên.
+    - Khóa học: khớp (hỗ trợ song ngữ, khớp một trong hai ngôn ngữ là đủ).
+    Thời gian kiểm riêng (_date_in_range) để ghi được lý do rõ ràng.
+    """
     return (
         compare.match_name_or_code(
             extracted.recipient_name, given.employee_name, given.employee_code
@@ -55,8 +66,40 @@ def _llms_agree(t1: ExtractedInfo, t2: ExtractedInfo) -> bool:
     )
 
 
+# Tên trên ảnh KHÔNG nối được với nhân viên nào -> không kết luận được.
+#
+# Trả về đuôi email ngoài công ty (để ghi vào lý do), hoặc None nếu vẫn kết
+# luận được như bình thường.
+
+def _unverifiable_identity(extracted: ExtractedInfo, given: InputInfo) -> str | None:
+    if compare.match_name_or_code(extracted.recipient_name,
+                                  given.employee_name, given.employee_code):
+        return None
+
+    if not compare.match_course_bilingual(
+            extracted.certificate_name, extracted.certificate_name_alt,
+            given.course_name, settings.course_match_mode):
+        return None
+    if not _date_in_range(extracted):
+        return None
+
+    domain = compare.external_email(extracted.recipient_name)
+    if domain:
+        return ("Không xác minh được danh tính: chứng chỉ ghi email ngoài công "
+                f"ty (@{domain})")
+
+    if compare.name_missing_words(extracted.recipient_name, given.employee_name):
+        return ("Không xác minh được danh tính: tên trên chứng chỉ thiếu họ "
+                f"hoặc tên đệm (\"{extracted.recipient_name}\" so với "
+                f"\"{given.employee_name}\")")
+
+    return None
+
+
 def _mismatch_reason(extracted: ExtractedInfo, given: InputInfo, stage: str) -> str:
     """Tạo lý do gọn: chỉ nêu trường nào không khớp (tên / khóa học / thời gian).
+
+    Liệt kê MỌI trường sai, nhưng không kèm giá trị hay tầng xử lý.
     """
     name_matches = compare.match_name_or_code(
         extracted.recipient_name, given.employee_name, given.employee_code
@@ -90,10 +133,10 @@ def process(
     Các hàm gọi API được truyền vào (dependency injection) để test được mà
     không cần gọi API thật, và để pipeline không phụ thuộc cứng vào module nào.
     """
-    def verdict(kq, reason, stage, extracted=None):
+    def verdict(result, reason, stage, extracted=None):
         return ProcessResult(
             employee_code=given.employee_code,
-            verdict=kq,
+            verdict=result,
             extracted=extracted,
             reason=reason,
             stage=stage,
@@ -143,6 +186,9 @@ def process(
     # ===== So LLM1 với LLM2 (chặt) =====
     if _llms_agree(llm1, llm2):
         # Hai máy đọc ra GIỐNG nhau -> tin tưởng kết quả đó, và nó khác input.
+        skip = _unverifiable_identity(llm2, given)
+        if skip:
+            return verdict(Verdict.WAITING, skip, SKIP_STAGE, llm2)
         return verdict(Verdict.REJECTED, _mismatch_reason(llm2, given, "đồng thuận"),
                        "llm1_vs_llm2", llm2)
 
@@ -154,4 +200,7 @@ def process(
         return verdict(Verdict.APPROVED,
                        "Khớp ở LLM2 (Azure đọc lại, LLM1 đọc sai)", "llm2", llm2)
 
+    skip = _unverifiable_identity(llm2, given)
+    if skip:
+        return verdict(Verdict.WAITING, skip, SKIP_STAGE, llm2)
     return verdict(Verdict.REJECTED, _mismatch_reason(llm2, given, "LLM2"), "llm2", llm2)

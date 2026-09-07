@@ -71,7 +71,7 @@ import dateparser
 
 def _parse_with_order(date_string: str, order: str):
     """Parse ngày theo một thứ tự cụ thể (DMY hoặc MDY). Trả date hoặc None."""
-    kq = dateparser.parse(
+    result = dateparser.parse(
         date_string,
         settings={
             "DATE_ORDER": order,
@@ -79,7 +79,7 @@ def _parse_with_order(date_string: str, order: str):
             "REQUIRE_PARTS": ["day", "month", "year"],
         },
     )
-    return kq.date() if kq else None
+    return result.date() if result else None
 
 
 def parse_date(date_string: str | None):

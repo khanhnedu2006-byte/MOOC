@@ -28,10 +28,10 @@ def _dong(row, email, course, name="Bùi Đức Hòa"):
             "employee_name": name, "employee_code": code_from_email(email)}
 
 
-def _tao_anh(thu_muc, *ten):
+def _tao_anh(thu_muc, *name):
     """Tạo file rỗng — công cụ ghép chỉ đọc TÊN, không mở nội dung."""
     ra = []
-    for t in ten:
+    for t in name:
         p = thu_muc / t
         p.write_bytes(b"")
         ra.append(p)
@@ -40,27 +40,27 @@ def _tao_anh(thu_muc, *ten):
 
 # ===== Ghép đúng =====
 
-@pytest.mark.parametrize("ten_file", [
+@pytest.mark.parametrize("file_name", [
     "hoabd3_Learning Microsoft 365 Copilot for Work.jpg",
     "hoabd3_Learning_Microsoft_365_Copilot_for_Work.png",
     "HOABD3-Learning-Microsoft-365-Copilot-for-Work.pdf",
     "hoabd3_learning microsoft 365 copilot for work (1).jpeg",
 ])
-def test_ghep_duoc_moi_cach_dat_ten(tmp_path, ten_file):
+def test_ghep_duoc_moi_cach_dat_ten(tmp_path, file_name):
     """Bốn cách đặt tên khác nhau phải cho cùng một kết quả ghép.
 
     Ca "(1)" là ca thật hay gặp: tải trùng tên thì trình duyệt tự thêm hậu
     tố. Không bỏ hậu tố trước khi chuẩn hóa thì "1" thành một từ trong khóa
     và ảnh đó vĩnh viễn không khớp dòng nào.
     """
-    anh = _tao_anh(tmp_path, ten_file)
+    anh = _tao_anh(tmp_path, file_name)
     rows = [_dong(2, "hoabd3@fpt.com.vn", "Learning Microsoft 365 Copilot for Work")]
 
-    kq = match_images.match(rows, anh)
+    result = match_images.match(rows, anh)
 
-    assert len(kq["matched"]) == 1, f"không ghép được: {ten_file}"
-    assert kq["matched"][0][1] == anh[0]
-    assert kq["rows_no_image"] == [] and kq["images_no_row"] == []
+    assert len(result["matched"]) == 1, f"không ghép được: {file_name}"
+    assert result["matched"][0][1] == anh[0]
+    assert result["rows_no_image"] == [] and result["images_no_row"] == []
 
 
 def test_ghep_dung_cap_khi_thu_tu_lech(tmp_path):
@@ -77,8 +77,8 @@ def test_ghep_dung_cap_khi_thu_tu_lech(tmp_path):
         _dong(4, "anv2@fpt.com", "AI Trends"),
     ]
 
-    kq = match_images.match(rows, anh)
-    cap = {r["excel_row"]: p.name for r, p in kq["matched"]}
+    result = match_images.match(rows, anh)
+    cap = {r["excel_row"]: p.name for r, p in result["matched"]}
 
     assert cap == {
         2: "hoabd3_Beyond Basic PowerPoint Slides.jpg",
@@ -111,20 +111,20 @@ def test_dong_thieu_anh_duoc_bao_ra(tmp_path):
     rows = [_dong(2, "hoabd3@fpt.com", "ISO 27001"),
             _dong(3, "anv2@fpt.com", "Khóa không có ảnh")]
 
-    kq = match_images.match(rows, anh)
+    result = match_images.match(rows, anh)
 
-    assert len(kq["matched"]) == 1
-    assert [r["excel_row"] for r in kq["rows_no_image"]] == [3]
+    assert len(result["matched"]) == 1
+    assert [r["excel_row"] for r in result["rows_no_image"]] == [3]
 
 
 def test_anh_thua_duoc_bao_ra(tmp_path):
     anh = _tao_anh(tmp_path, "hoabd3_ISO 27001.jpg", "xxx_Khong co trong excel.jpg")
     rows = [_dong(2, "hoabd3@fpt.com", "ISO 27001")]
 
-    kq = match_images.match(rows, anh)
+    result = match_images.match(rows, anh)
 
-    assert len(kq["matched"]) == 1
-    assert [p.name for p in kq["images_no_row"]] == ["xxx_Khong co trong excel.jpg"]
+    assert len(result["matched"]) == 1
+    assert [p.name for p in result["images_no_row"]] == ["xxx_Khong co trong excel.jpg"]
 
 
 def test_trung_khoa_thi_bao_mo_ho_chu_khong_tu_chon(tmp_path):
@@ -136,12 +136,12 @@ def test_trung_khoa_thi_bao_mo_ho_chu_khong_tu_chon(tmp_path):
     anh = _tao_anh(tmp_path, "hoabd3_ISO 27001.jpg", "hoabd3_ISO-27001.png")
     rows = [_dong(2, "hoabd3@fpt.com", "ISO 27001")]
 
-    kq = match_images.match(rows, anh)
+    result = match_images.match(rows, anh)
 
-    assert kq["matched"] == [], "đã tự chọn một ảnh trong ca mơ hồ"
-    assert len(kq["ambiguous"]) == 1
-    assert sorted(kq["ambiguous"][0]["rows"]) == [2]
-    assert len(kq["ambiguous"][0]["images"]) == 2
+    assert result["matched"] == [], "đã tự chọn một ảnh trong ca mơ hồ"
+    assert len(result["ambiguous"]) == 1
+    assert sorted(result["ambiguous"][0]["rows"]) == [2]
+    assert len(result["ambiguous"][0]["images"]) == 2
 
 
 def test_hai_dong_trung_nhau_cung_bao_mo_ho(tmp_path):
@@ -150,10 +150,10 @@ def test_hai_dong_trung_nhau_cung_bao_mo_ho(tmp_path):
     rows = [_dong(2, "hoabd3@fpt.com", "ISO 27001"),
             _dong(9, "hoabd3@fpt.com", "ISO 27001")]
 
-    kq = match_images.match(rows, anh)
+    result = match_images.match(rows, anh)
 
-    assert kq["matched"] == []
-    assert sorted(kq["ambiguous"][0]["rows"]) == [2, 9]
+    assert result["matched"] == []
+    assert sorted(result["ambiguous"][0]["rows"]) == [2, 9]
 
 
 def test_khong_ghep_mo_chi_goi_y(tmp_path):
@@ -161,13 +161,13 @@ def test_khong_ghep_mo_chi_goi_y(tmp_path):
     anh = _tao_anh(tmp_path, "hoabd3_Learning Microsoft 365 Copilot.jpg")
     rows = [_dong(2, "hoabd3@fpt.com", "Learning Microsoft 365 Copilot for Work")]
 
-    kq = match_images.match(rows, anh)
+    result = match_images.match(rows, anh)
 
-    assert kq["matched"] == [], "đã tự ghép mờ — đúng loại sai không có triệu chứng"
-    assert len(kq["rows_no_image"]) == 1
-    assert len(kq["suggestions"]) == 1
-    assert kq["suggestions"][0]["excel_row"] == 2
-    assert 0.5 <= kq["suggestions"][0]["score"] < 1.0
+    assert result["matched"] == [], "đã tự ghép mờ — đúng loại sai không có triệu chứng"
+    assert len(result["rows_no_image"]) == 1
+    assert len(result["suggestions"]) == 1
+    assert result["suggestions"][0]["excel_row"] == 2
+    assert 0.5 <= result["suggestions"][0]["score"] < 1.0
 
 
 def test_phep_cong_luon_khop(tmp_path):
@@ -182,12 +182,12 @@ def test_phep_cong_luon_khop(tmp_path):
             _dong(4, "khac@fpt.com", "Khóa thiếu ảnh"),
             _dong(5, "bttc1@fpt.com", "Trung")]
 
-    kq = match_images.match(rows, anh)
+    result = match_images.match(rows, anh)
 
-    mo_ho_dong = sum(len(a["rows"]) for a in kq["ambiguous"])
-    mo_ho_anh = sum(len(a["images"]) for a in kq["ambiguous"])
-    assert len(kq["matched"]) + len(kq["rows_no_image"]) + mo_ho_dong == len(rows)
-    assert len(kq["matched"]) + len(kq["images_no_row"]) + mo_ho_anh == len(anh)
+    mo_ho_dong = sum(len(a["rows"]) for a in result["ambiguous"])
+    mo_ho_anh = sum(len(a["images"]) for a in result["ambiguous"])
+    assert len(result["matched"]) + len(result["rows_no_image"]) + mo_ho_dong == len(rows)
+    assert len(result["matched"]) + len(result["images_no_row"]) + mo_ho_anh == len(anh)
 
 
 # ===== Sinh file nhãn =====
@@ -325,20 +325,20 @@ def test_thieu_cot_status_van_chay_binh_thuong(tmp_path):
 
 # ===== Hoa/thường trong email KHÔNG được ảnh hưởng tới việc ghép =====
 
-@pytest.mark.parametrize("email,ten_file", [
+@pytest.mark.parametrize("email,file_name", [
     ("DungHA31@fpt.com",  "DUNGHA31_Java Cơ bản.png"),
     ("dungHA31@fpt.com",  "dungha31_Java Cơ bản.png"),
     ("DUNGHA31@FPT.COM",  "DungHA31_Java Cơ bản.png"),
     ("DungNV114@fpt.com", "DUNGNV114_Java Cơ bản.png"),
 ])
-def test_hoa_thuong_trong_email_khong_anh_huong(tmp_path, email, ten_file):
+def test_hoa_thuong_trong_email_khong_anh_huong(tmp_path, email, file_name):
     """Email FPT viết kiểu 'DungHA31' (tên thường + chữ cái đầu viết hoa).
 
     code_from_email() hạ chữ thường, normalize() hạ tiếp lần nữa, nên mọi
     cách viết hoa đều phải ra cùng một khóa. Test này neo lại điều đó để
     không ai đi sửa nhầm chỗ khi gặp ca ghép hụt vì lý do khác.
     """
-    anh = _tao_anh(tmp_path, ten_file)
+    anh = _tao_anh(tmp_path, file_name)
     rows = [_dong(2, email, "Java Cơ bản")]
     assert len(match_images.match(rows, anh)["matched"]) == 1
 
@@ -361,8 +361,8 @@ def test_bao_cao_tach_chua_nop_anh_voi_ghep_hut(tmp_path, capsys):
         _dong(4, "khongco@fpt.com", "Khóa nào đó"),             # chưa nộp
     ]
 
-    kq = match_images.match(rows, anh)
-    match_images._in_bao_cao(rows, anh, kq, {
+    result = match_images.match(rows, anh)
+    match_images._in_bao_cao(rows, anh, result, {
         "email": "Email", "course": "Course", "name": None,
         "status": None, "comment": None, "all": ["Email", "Course"]})
 
@@ -420,10 +420,10 @@ def test_khong_goi_y_anh_cua_nguoi_khac(tmp_path):
     anh = _tao_anh(tmp_path, "KIENNT128_Claude in Google Vertex Al.png")
     rows = [_dong(52, "ducdm45@fpt.com", "Claude in Google Vertex Al")]
 
-    kq = match_images.match(rows, anh)
+    result = match_images.match(rows, anh)
 
-    assert kq["matched"] == []
-    assert kq["suggestions"] == [], "đã gợi ý ảnh của nhân viên khác"
+    assert result["matched"] == []
+    assert result["suggestions"] == [], "đã gợi ý ảnh của nhân viên khác"
 
 
 def test_van_goi_y_khi_CUNG_ma_nhan_vien(tmp_path):
@@ -431,11 +431,11 @@ def test_van_goi_y_khi_CUNG_ma_nhan_vien(tmp_path):
     anh = _tao_anh(tmp_path, "hoabd3_Learning Microsoft 365 Copilot.jpg")
     rows = [_dong(2, "hoabd3@fpt.com", "Learning Microsoft 365 Copilot for Work")]
 
-    kq = match_images.match(rows, anh)
+    result = match_images.match(rows, anh)
 
-    assert kq["matched"] == []
-    assert len(kq["suggestions"]) == 1
-    assert kq["suggestions"][0]["excel_row"] == 2
+    assert result["matched"] == []
+    assert len(result["suggestions"]) == 1
+    assert result["suggestions"][0]["excel_row"] == 2
 
 
 # ===== Báo cáo đầy đủ ra CSV =====
@@ -450,9 +450,9 @@ def test_bao_cao_day_du_KHONG_cat_bot_dong(tmp_path):
     anh = _tao_anh(tmp_path, *[f"NGUOI{i}_Khóa {i}.jpg" for i in range(30)])
     rows = [_dong(i + 2, f"khac{i}@fpt.com", f"Khóa nào đó {i}") for i in range(25)]
 
-    kq = match_images.match(rows, anh)
+    result = match_images.match(rows, anh)
     ra = tmp_path / "bao_cao.csv"
-    n = match_images.ghi_bao_cao_day_du(rows, anh, kq, ra)
+    n = match_images.write_full_report(rows, anh, result, ra)
 
     assert n == 55, "cắt bớt dòng trong file báo cáo"
     doc = list(_csv.DictReader(ra.open(encoding="utf-8-sig")))
@@ -469,9 +469,9 @@ def test_bao_cao_day_du_phan_loai_dung(tmp_path):
     rows = [_dong(2, "hoabd3@fpt.com", "Khóa khác hẳn"),      # ghep_hut
             _dong(3, "khongco@fpt.com", "Khóa gì đó")]        # chua_nop_anh
 
-    kq = match_images.match(rows, anh)
+    result = match_images.match(rows, anh)
     ra = tmp_path / "bao_cao.csv"
-    match_images.ghi_bao_cao_day_du(rows, anh, kq, ra)
+    match_images.write_full_report(rows, anh, result, ra)
 
     theo_loai = {d["loai"]: d
                  for d in _csv.DictReader(ra.open(encoding="utf-8-sig"))}
@@ -488,9 +488,9 @@ def test_bao_cao_day_du_ghi_ca_ca_mo_ho(tmp_path):
     anh = _tao_anh(tmp_path, "hoabd3_ISO 27001.jpg", "hoabd3_ISO-27001.png")
     rows = [_dong(2, "hoabd3@fpt.com", "ISO 27001")]
 
-    kq = match_images.match(rows, anh)
+    result = match_images.match(rows, anh)
     ra = tmp_path / "bao_cao.csv"
-    match_images.ghi_bao_cao_day_du(rows, anh, kq, ra)
+    match_images.write_full_report(rows, anh, result, ra)
 
     doc = list(_csv.DictReader(ra.open(encoding="utf-8-sig")))
     mo_ho = [d for d in doc if d["loai"] == "mo_ho"]

@@ -230,6 +230,52 @@ def read_recent_logs(row_count=20, db_path=None):
 TECHNICAL_STAGES = ("llm1_error", "stage2_error", "system_error",
                     "file_error", "download_error", "no_file", "soft_fail_zip")
 
+# Ca BỎ QUA — CỐ Ý KHÔNG nằm trong TECHNICAL_STAGES.
+# Thêm vào đó thì technical_retry_state() đếm nó như hỏng kỹ thuật: với chu kỳ
+# poll 5 giây, chỉ 25 giây sau hệ thống gửi mail báo động cho người vận hành về
+# một chứng chỉ mà hệ thống chẳng làm gì sai cả.
+SKIP_STAGE = "skipped_external_email"
+
+
+def skipped_ids(user_course_ids, db_path=None) -> set:
+    """Những chứng chỉ ĐANG bị bỏ qua, để không xử lý lại.
+
+    Vì sao phải chặn bằng DB chứ không kiểm tra lại mỗi vòng: ca này chỉ lộ ra
+    SAU KHI đã chạy hết pipeline (Gemma + Azure + LLM2). Bản ghi vẫn nằm
+    WAITING nên vòng getCert sau trả về đúng nó — không chặn thì cứ 5 giây lại
+    đốt một lượt LLM cho một kết quả không bao giờ đổi.
+
+    Không bao giờ đổi thật: cái email cá nhân in cứng trên ảnh rồi, không ai
+    sửa được. Đường ra duy nhất là người duyệt vào eLIS xử lý, mà thao tác đó
+    đưa bản ghi RỜI WAITING nên nó không quay lại hàng đợi nữa.
+
+    Lấy dòng MỚI NHẤT (MAX(id)) chứ không phải "từng có dòng skip": nếu chứng
+    chỉ sau đó được xử lý bình thường thì dòng mới đè lên và nó tự rơi khỏi
+    danh sách này. Dùng MAX(id) chứ không MAX(created_at) vì created_at chỉ
+    chính xác tới giây — hai dòng trong cùng một giây sẽ hòa nhau.
+    """
+    ids = [str(i) for i in user_course_ids if i]
+    if not ids:
+        return set()
+
+    conn = _connect(db_path)
+    try:
+        out = set()
+        for i in range(0, len(ids), 500):
+            part = ids[i:i + 500]
+            placeholders = ",".join("?" * len(part))
+            rows = conn.execute(
+                f"SELECT p.user_course_id FROM process_log p "
+                f"WHERE p.user_course_id IN ({placeholders}) "
+                f"  AND p.stage = ? "
+                f"  AND p.id = (SELECT MAX(q.id) FROM process_log q "
+                f"              WHERE q.user_course_id = p.user_course_id)",
+                (*part, SKIP_STAGE)).fetchall()
+            out.update(r[0] for r in rows)
+        return out
+    finally:
+        conn.close()
+
 
 def technical_retry_state(user_course_ids, db_path=None) -> dict:
     """Với mỗi user_course_id: đã hỏng kỹ thuật MẤY LẦN và LẦN CUỐI khi nào.
@@ -255,8 +301,8 @@ def technical_retry_state(user_course_ids, db_path=None) -> dict:
         # Chia lô để không vượt giới hạn số tham số của SQLite (999).
         out = {}
         for i in range(0, len(ids), 500):
-            phan = ids[i:i + 500]
-            cho_id = ",".join("?" * len(phan))
+            part = ids[i:i + 500]
+            cho_id = ",".join("?" * len(part))
             cho_stage = ",".join("?" * len(TECHNICAL_STAGES))
             rows = conn.execute(
                 f"SELECT user_course_id, COUNT(*), MAX(created_at) "
@@ -264,7 +310,48 @@ def technical_retry_state(user_course_ids, db_path=None) -> dict:
                 f"WHERE user_course_id IN ({cho_id}) "
                 f"  AND stage IN ({cho_stage}) "
                 f"GROUP BY user_course_id",
-                (*phan, *TECHNICAL_STAGES)).fetchall()
+                (*part, *TECHNICAL_STAGES)).fetchall()
+            out.update({r[0]: (r[1], r[2]) for r in rows})
+        return out
+    finally:
+        conn.close()
+
+
+def technical_failure_detail(user_course_ids, db_path=None) -> dict:
+    """Với mỗi user_course_id: (stage, reason) của lần hỏng kỹ thuật GẦN NHẤT.
+
+    Dùng để dựng email cảnh báo. technical_retry_state() chỉ trả về SỐ LẦN,
+    mà số lần một mình thì email chỉ nói được "5 chứng chỉ hỏng" — người nhận
+    vẫn phải mở log lên mới biết hỏng vì cái gì. Có stage và reason thì thư
+    nói thẳng "Azure hết hạn mức" hay "eLIS không trả file", tức là đọc xong
+    biết đi sửa ở đâu.
+
+    Lấy theo MAX(id) chứ không phải MAX(created_at): id tự tăng nên luôn đúng
+    thứ tự ghi, còn created_at là chuỗi và hai lần thử trong cùng một giây sẽ
+    bằng nhau, lúc đó không biết dòng nào mới hơn.
+
+    Trả về {user_course_id: (stage, reason)}. Id chưa hỏng lần nào thì KHÔNG
+    có trong dict.
+    """
+    ids = [str(i) for i in user_course_ids if i]
+    if not ids:
+        return {}
+
+    conn = _connect(db_path)
+    try:
+        out = {}
+        for i in range(0, len(ids), 400):
+            part = ids[i:i + 400]
+            cho_id = ",".join("?" * len(part))
+            cho_stage = ",".join("?" * len(TECHNICAL_STAGES))
+            rows = conn.execute(
+                f"SELECT user_course_id, stage, reason FROM process_log "
+                f"WHERE id IN ("
+                f"    SELECT MAX(id) FROM process_log "
+                f"    WHERE user_course_id IN ({cho_id}) "
+                f"      AND stage IN ({cho_stage}) "
+                f"    GROUP BY user_course_id)",
+                (*part, *TECHNICAL_STAGES)).fetchall()
             out.update({r[0]: (r[1], r[2]) for r in rows})
         return out
     finally:

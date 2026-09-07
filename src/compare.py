@@ -1,22 +1,4 @@
-"""Module so sánh (compare).
-
-Chứa các luật khớp đã chốt. Mọi chuỗi đều được đưa qua process_data.normalize()
-trước khi so, nên ở đây không lặp lại việc chuẩn hóa.
-
-Hai kiểu so, dùng cho hai mục đích khác nhau:
-
-1. So với input người nhập (match_name, match_course): tách chuỗi thành tập hợp
-   TỪ rồi so tuyệt đối, bỏ qua thứ tự. Xử lý được đảo thứ tự surname/given name
-   ("A NGUYEN VAN" = "Nguyen Van A"). So chặt từng từ, không chịu lỗi OCR trong
-   từ — đây là lựa chọn ưu tiên độ chặt.
-
-2. identical_after_normalize(): so kết quả LLM1 với LLM2.
-   So CHẶT (== sau chuẩn hóa) vì cả hai đều là MÁY đọc cùng một ảnh — không có
-   yếu tố gõ tay. Hai máy đọc ra y hệt nhau mới là bằng chứng đồng thuận đáng
-   tin. Nới lỏng ở đây sẽ làm hỏng chính mục đích của bước này.
-
-Riêng match_code(): so mã NV tuyệt đối, tách từng từ (chứng chỉ in username/ID).
-"""
+import re
 
 from process_data import normalize
 
@@ -161,3 +143,57 @@ def match_course_bilingual(primary, secondary, input_value, mode="strict"):
         if match_course(f"{primary} {secondary}", input_value, mode):
             return True
     return False
+
+
+# ===== Chứng chỉ ghi email thay cho tên người nhận =====
+#
+# Nhân viên học khóa ngoài (Coursera, Udemy...) thường đăng ký bằng email cá
+# nhân, nên chứng chỉ in "minhnt4487@gmail.com" thay vì tên. Không có cách nào
+# nối chuỗi đó với nhân viên nào cả -> không xác minh được danh tính.
+#
+# Email CÔNG TY thì ngược lại, tự khớp: normalize() cắt "@" và "." thành khoảng
+# trắng nên "doannv19@fpt.com" thành "doannv19 fpt com", và match_code tìm thấy
+# mã nhân viên nằm trong đó. Vì vậy chỉ đuôi NGOÀI công ty mới cần xử lý riêng.
+COMPANY_EMAIL_DOMAIN = "fpt.com"
+
+_EMAIL_PATTERN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def external_email(name_on_image: str | None) -> str | None:
+    """Trả về ĐUÔI email ngoài công ty in trên ảnh, hoặc None.
+
+    Chạy trên chuỗi GỐC, trước normalize(): normalize cắt mất dấu "@" nên sau
+    đó không còn phân biệt được email với tên người nữa.
+
+    None có hai nghĩa khác nhau — "không có email nào" và "có email công ty" —
+    và người gọi đối xử với hai ca đó giống nhau: cứ so tên/mã như bình thường.
+    """
+    if not name_on_image:
+        return None
+    found = _EMAIL_PATTERN.search(str(name_on_image))
+    if not found:
+        return None
+    domain = found.group(0).rsplit("@", 1)[-1].lower()
+    return None if domain == COMPANY_EMAIL_DOMAIN else domain
+
+
+def name_missing_words(name_on_image: str | None,
+                       employee_name: str | None) -> bool:
+    """True khi tên trên ảnh là TẬP CON THỰC SỰ của tên eLIS — thiếu từ.
+
+    "Lê Tiến" so với "Lê Xuân Tiến": mọi từ trên ảnh đều có trong tên eLIS,
+    nhưng ảnh thiếu "xuân". Nhà cấp chứng chỉ ngoài thường in tên người học tự
+    gõ lúc đăng ký, mà người Việt hay bỏ tên đệm khi gõ.
+
+    Dùng tập con THỰC SỰ (<) chứ không phải <=: hai tập bằng nhau thì match_name
+    đã bắt từ trước, tới được đây nghĩa là chắc chắn có chênh lệch.
+
+    KHÔNG bắt chiều ngược lại (ảnh thừa từ so với eLIS). Ảnh thừa từ có thể là
+    chức danh, có thể là tên người khác in kèm — hai thứ rất khác nhau, không
+    quy về một luật được.
+    """
+    image = set(normalize(name_on_image).split())
+    given = set(normalize(employee_name).split())
+    if not image or not given:
+        return False
+    return image < given

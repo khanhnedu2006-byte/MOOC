@@ -32,8 +32,8 @@ def test_ngay_rong_va_ngay_rac_deu_la_KHONG_DOC_DUOC():
     Gộp hai thứ này chính là lỗi đang làm hệ thống chặn oan: nó lẫn lộn
     'không có bằng chứng' với 'bằng chứng cho thấy sai'.
     """
-    for ngay in ("", "01/01/0001", "0001-01-01"):
-        e, r = _cap("Ngày không hợp lệ", ai_ngay=ngay)
+    for day in ("", "01/01/0001", "0001-01-01"):
+        e, r = _cap("Ngày không hợp lệ", ai_ngay=day)
         assert "Không đọc được ngày" in export_errors.nguyen_nhan_tu_choi_oan(e, r)
 
 
@@ -53,8 +53,8 @@ def test_bo_ten_dem_duoc_nhan_dien():
 
 
 def test_email_hoac_username_duoc_nhan_dien():
-    for ten in ("minhnt4487@gmail.com", "kieuhuuthanh23698"):
-        e, r = _cap("Tên không khớp", ai_ten=ten)
+    for name in ("minhnt4487@gmail.com", "kieuhuuthanh23698"):
+        e, r = _cap("Tên không khớp", ai_ten=name)
         assert "email/username" in export_errors.nguyen_nhan_tu_choi_oan(e, r)
 
 
@@ -104,8 +104,8 @@ def test_nhieu_truong_sai_thi_liet_ke_het():
 
 def _bo_du_lieu(tmp_path):
     import csv
-    nhan = tmp_path / "eval_set.csv"
-    with nhan.open("w", encoding="utf-8-sig", newline="") as f:
+    label = tmp_path / "eval_set.csv"
+    with label.open("w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(["case_id", "image_path", "input_employee_name",
                     "input_course_name", "input_employee_code", "gt_verdict", "note"])
@@ -127,14 +127,14 @@ def _bo_du_lieu(tmp_path):
                     "", "Nguyễn Đồng Thiện", "SAN and NAS", "31/03/2026"])
         w.writerow(["003", "", "APPROVED", "llm1", "khớp", "",
                     "Trần Văn C", "ISO 27001", "01/05/2026"])   # ĐÚNG -> không vào bảng
-    return nhan, ket_qua
+    return label, ket_qua
 
 
 def test_tach_dung_hai_huong_va_bo_ca_dung(tmp_path):
-    nhan, ket_qua = _bo_du_lieu(tmp_path)
+    label, ket_qua = _bo_du_lieu(tmp_path)
     ra = tmp_path / "review.xlsx"
 
-    duyet_oan, tu_choi_oan = export_errors.build(nhan, ket_qua, ra)
+    duyet_oan, tu_choi_oan = export_errors.build(label, ket_qua, ra)
 
     assert (duyet_oan, tu_choi_oan) == (1, 1), "ca máy đoán ĐÚNG lọt vào bảng lệch"
 
@@ -148,9 +148,9 @@ def test_tach_dung_hai_huong_va_bo_ca_dung(tmp_path):
 
 
 def test_cot_hr_de_trong_cho_nguoi_dien(tmp_path):
-    nhan, ket_qua = _bo_du_lieu(tmp_path)
+    label, ket_qua = _bo_du_lieu(tmp_path)
     ra = tmp_path / "review.xlsx"
-    export_errors.build(nhan, ket_qua, ra)
+    export_errors.build(label, ket_qua, ra)
 
     from openpyxl import load_workbook
     ws = load_workbook(ra)["Máy từ chối - Người duyệt"]
@@ -163,12 +163,12 @@ def test_cot_hr_de_trong_cho_nguoi_dien(tmp_path):
 def test_ca_khong_chay_duoc_khong_vao_bang(tmp_path):
     """Ca hỏng kỹ thuật (verdict rỗng) không phải 'lệch với người duyệt'."""
     import csv
-    nhan, ket_qua = _bo_du_lieu(tmp_path)
+    label, ket_qua = _bo_du_lieu(tmp_path)
     with ket_qua.open("a", encoding="utf-8-sig", newline="") as f:
         csv.writer(f).writerow(["004", "", "", "", "", "OSError: hỏng", "", "", ""])
-    with nhan.open("a", encoding="utf-8-sig", newline="") as f:
+    with label.open("a", encoding="utf-8-sig", newline="") as f:
         csv.writer(f).writerow(["004", "data/image/d.jpg", "D", "K", "d1",
                                 "APPROVED", ""])
 
-    duyet_oan, tu_choi_oan = export_errors.build(nhan, ket_qua, tmp_path / "r.xlsx")
+    duyet_oan, tu_choi_oan = export_errors.build(label, ket_qua, tmp_path / "r.xlsx")
     assert (duyet_oan, tu_choi_oan) == (1, 1)

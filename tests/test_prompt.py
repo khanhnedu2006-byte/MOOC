@@ -55,10 +55,10 @@ def test_placeholder_ton_tai_trong_prompt():
 def test_text_ocr_that_su_di_vao_prompt():
     """Đây là test bắt được lỗi đã xảy ra ở production."""
     llm = _LlmGia(JSON_HOP_LE)
-    moc = "GIAY CHUNG NHAN — Bui Duc Hoa — ISO 27001 — 10/07/2026"
-    llm_text.extract_from_text(moc, llm=llm)
+    bucket = "GIAY CHUNG NHAN — Bui Duc Hoa — ISO 27001 — 10/07/2026"
+    llm_text.extract_from_text(bucket, llm=llm)
 
-    assert moc in llm.da_nhan, "text OCR không được đưa vào prompt"
+    assert bucket in llm.da_nhan, "text OCR không được đưa vào prompt"
     assert llm_text.PLACEHOLDER not in llm.da_nhan, (
         "prompt gửi đi CÒN NGUYÊN placeholder — LLM sẽ hỏi lại thay vì trích "
         "xuất, và lỗi chỉ lộ ra ở bước parse JSON."
@@ -125,10 +125,10 @@ def test_hai_prompt_cung_yeu_cau_dung_bo_truong():
     trả về hai schema khác nhau, và bước đồng thuận mất ý nghĩa.
     """
     truong = set(ExtractedInfo.model_fields)
-    for ten, prompt in (("llm_vision", llm_vision.PROMPT),
+    for name, prompt in (("llm_vision", llm_vision.PROMPT),
                         ("llm_text", llm_text.PROMPT)):
         for t in truong:
-            assert t in prompt, f"{ten}.PROMPT không nhắc tới trường {t!r}"
+            assert t in prompt, f"{name}.PROMPT không nhắc tới trường {t!r}"
 
 
 # =====================================================================
@@ -190,9 +190,9 @@ def test_azure_loi_tam_thoi_duoc_thu_lai():
 
     import ocr_azure
 
-    def loi(ma):
+    def loi(code):
         e = HttpResponseError(message="tạm thời")
-        e.status_code = ma
+        e.status_code = code
         return e
 
     def client(ket_qua):
@@ -210,9 +210,9 @@ def test_azure_loi_tam_thoi_duoc_thu_lai():
         return c
 
     with patch.object(ocr_azure.time, "sleep"):
-        for ma in (408, 429, 500, 503):
-            assert ocr_azure.ocr_bytes(client([loi(ma), "TEXT"]), b"x") == "TEXT", (
-                f"Azure {ma} không được thử lại")
+        for code in (408, 429, 500, 503):
+            assert ocr_azure.ocr_bytes(client([loi(code), "TEXT"]), b"x") == "TEXT", (
+                f"Azure {code} không được thử lại")
 
 
 def test_azure_loi_vinh_vien_khong_thu_lai():
@@ -223,16 +223,16 @@ def test_azure_loi_vinh_vien_khong_thu_lai():
 
     import ocr_azure
 
-    for ma in (400, 401, 403):
+    for code in (400, 401, 403):
         e = HttpResponseError(message="vĩnh viễn")
-        e.status_code = ma
+        e.status_code = code
         c = MagicMock()
         c.begin_analyze_document.side_effect = e
         with patch.object(ocr_azure.time, "sleep"):
             with pytest.raises(ocr_azure.OcrError):
                 ocr_azure.ocr_bytes(c, b"x")
         assert c.begin_analyze_document.call_count == 1, (
-            f"Azure {ma} bị thử lại {c.begin_analyze_document.call_count} lần")
+            f"Azure {code} bị thử lại {c.begin_analyze_document.call_count} lần")
 
 
 def test_moi_ma_loi_tam_thoi_deu_co_giai_thich():
@@ -241,14 +241,14 @@ def test_moi_ma_loi_tam_thoi_deu_co_giai_thich():
 
     import ocr_azure
 
-    for ma in ocr_azure.MA_LOI_TAM_THOI | {400, 401, 403}:
+    for code in ocr_azure.MA_LOI_TAM_THOI | {400, 401, 403}:
         e = HttpResponseError(message="x")
-        e.status_code = ma
-        mo_ta = ocr_azure._explain_error(e)
-        assert str(ma) in mo_ta
-        if ma not in (502, 504):        # hai mã này hiếm, dùng chung 5xx
-            assert len(mo_ta) > len(f"[Azure {ma}] x."), (
-                f"mã {ma} không có lời giải thích nào")
+        e.status_code = code
+        describe = ocr_azure._explain_error(e)
+        assert str(code) in describe
+        if code not in (502, 504):        # hai mã này hiếm, dùng chung 5xx
+            assert len(describe) > len(f"[Azure {code}] x."), (
+                f"mã {code} không có lời giải thích nào")
 
 
 # ===== Luật chống các lỗi đã đo được trên dữ liệu thật =====
@@ -267,26 +267,26 @@ def _hai_prompt():
     return [("llm_vision", llm_vision.PROMPT), ("llm_text", llm_text.PROMPT)]
 
 
-@_pytest.mark.parametrize("ten,prompt", _hai_prompt())
-def test_co_truong_rieng_cho_nguoi_ky(ten, prompt):
+@_pytest.mark.parametrize("name,prompt", _hai_prompt())
+def test_co_truong_rieng_cho_nguoi_ky(name, prompt):
     """Chứng chỉ Codelearn của 'tienpham89' bị đọc thành 'ĐỖ VĂN KHẮC'.
 
     Tên người nhận in chữ mảnh ở giữa trang; tên giám đốc IN ĐẬM VIẾT HOA ở
     cuối, cạnh nét ký. Model chọn chữ nổi bật nhất. Cho người ký một ô riêng
     buộc model phải PHÂN BIỆT hai vai trò thay vì chọn bừa một cái tên.
     """
-    assert "signatory_name" in prompt, f"{ten}: mất trường tên người ký"
+    assert "signatory_name" in prompt, f"{name}: mất trường tên người ký"
 
 
-@_pytest.mark.parametrize("ten,prompt", _hai_prompt())
-def test_cam_lay_ten_canh_chu_ky(ten, prompt):
+@_pytest.mark.parametrize("name,prompt", _hai_prompt())
+def test_cam_lay_ten_canh_chu_ky(name, prompt):
     thap = prompt.lower()
     assert "chữ ký" in thap
-    assert "giám đốc" in thap, f"{ten}: không nêu chức danh để model tránh"
+    assert "giám đốc" in thap, f"{name}: không nêu chức danh để model tránh"
 
 
-@_pytest.mark.parametrize("ten,prompt", _hai_prompt())
-def test_chap_nhan_username_lam_ten_nguoi_nhan(ten, prompt):
+@_pytest.mark.parametrize("name,prompt", _hai_prompt())
+def test_chap_nhan_username_lam_ten_nguoi_nhan(name, prompt):
     """Nhiều chứng chỉ in username ('tienpham89') chứ không phải họ tên.
 
     Không nói rõ thì model đi tìm 'một chuỗi trông giống tên người' ở chỗ
@@ -295,8 +295,8 @@ def test_chap_nhan_username_lam_ten_nguoi_nhan(ten, prompt):
     assert "username" in prompt.lower()
 
 
-@_pytest.mark.parametrize("ten,prompt", _hai_prompt())
-def test_tach_ten_khoa_theo_NGON_NGU(ten, prompt):
+@_pytest.mark.parametrize("name,prompt", _hai_prompt())
+def test_tach_ten_khoa_theo_NGON_NGU(name, prompt):
     """Tên khóa song ngữ -> tách: tiếng Việt vào certificate_name, tiếng Anh
     vào certificate_name_alt.
 
@@ -311,13 +311,13 @@ def test_tach_ten_khoa_theo_NGON_NGU(ten, prompt):
     # xanh — test xanh vì lý do sai.
     gon = " ".join(prompt.split())
     assert "certificate_name = bản TIẾNG VIỆT" in gon, (
-        f"{ten}: không nói rõ certificate_name là bản tiếng Việt")
+        f"{name}: không nói rõ certificate_name là bản tiếng Việt")
     assert "certificate_name_alt = bản TIẾNG ANH" in gon, (
-        f"{ten}: không nói rõ certificate_name_alt là bản tiếng Anh")
+        f"{name}: không nói rõ certificate_name_alt là bản tiếng Anh")
 
 
-@_pytest.mark.parametrize("ten,prompt", _hai_prompt())
-def test_chi_lay_ten_khoa_khong_lay_cau_bao_quanh(ten, prompt):
+@_pytest.mark.parametrize("name,prompt", _hai_prompt())
+def test_chi_lay_ten_khoa_khong_lay_cau_bao_quanh(name, prompt):
     """Chứng chỉ in: Đã hoàn thành khoá học "Python cơ bản".
 
     Tên khóa là "Python cơ bản", KHÔNG phải cả câu. Lấy cả câu thì chuỗi dài
@@ -327,8 +327,8 @@ def test_chi_lay_ten_khoa_khong_lay_cau_bao_quanh(ten, prompt):
     assert "Has successfully completed the course" in prompt
 
 
-@_pytest.mark.parametrize("ten,prompt", _hai_prompt())
-def test_giu_nguyen_chu_khong_phai_latin(ten, prompt):
+@_pytest.mark.parametrize("name,prompt", _hai_prompt())
+def test_giu_nguyen_chu_khong_phai_latin(name, prompt):
     """'AI入門講座' bị đọc thành 'AIXFEDE'.
 
     Bịa một chuỗi Latin còn tệ hơn bỏ trống: bỏ trống thì phần Latin còn lại
@@ -339,8 +339,8 @@ def test_giu_nguyen_chu_khong_phai_latin(ten, prompt):
     assert "BỎ TRỐNG" in prompt
 
 
-@_pytest.mark.parametrize("ten,prompt", _hai_prompt())
-def test_cam_lay_ngay_tu_dong_ho_he_thong(ten, prompt):
+@_pytest.mark.parametrize("name,prompt", _hai_prompt())
+def test_cam_lay_ngay_tu_dong_ho_he_thong(name, prompt):
     """Có 'chứng chỉ' thật ra là ảnh chụp màn hình Udacity.
 
     Trên đó ngày duy nhất là đồng hồ taskbar Windows — không phải ngày hoàn
@@ -349,6 +349,6 @@ def test_cam_lay_ngay_tu_dong_ho_he_thong(ten, prompt):
     assert "taskbar" in prompt.lower()
 
 
-@_pytest.mark.parametrize("ten,prompt", _hai_prompt())
-def test_thieu_thi_de_null_chu_khong_doan(ten, prompt):
+@_pytest.mark.parametrize("name,prompt", _hai_prompt())
+def test_thieu_thi_de_null_chu_khong_doan(name, prompt):
     assert "để null" in prompt and "không bịa" in prompt

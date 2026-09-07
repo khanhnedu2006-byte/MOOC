@@ -36,3 +36,5 @@ evaluation/*.xls
 ~$*.xlsx
 eval_images/
 .report_state.json
+# Moc da gui canh bao loi he thong (de chan gui thu trung).
+.alert_state.json

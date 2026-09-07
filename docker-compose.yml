@@ -39,6 +39,18 @@ services:
       # dung lai = quen da gui = gui trung bao cao cho mentor.
       - ./.report_state.json:/app/.report_state.json
 
+      # Moc canh bao loi he thong da gui. Cung ly do, nhung hau qua nang hon:
+      # su co ha tang thuong lam container crash-loop, va `restart:
+      # unless-stopped` dung lai lien tuc. Mat moc moi lan dung lai nghia la
+      # moi lan dung lai gui them mot thu canh bao — dung luc he thong dang
+      # hong nhat thi hop thu nguoi van hanh ngap thu trung.
+      #
+      # File nay phai TON TAI truoc khi `docker compose up`, giong
+      # mooc_log.db: Docker gap bind-mount FILE chua co se tao mot THU MUC
+      # trung ten, va alert.py se khong ghi duoc moc.
+      #   PowerShell: '{}' | Out-File -Encoding utf8 .alert_state.json
+      - ./.alert_state.json:/app/.alert_state.json
+
     # Tự bật lại khi container chết hoặc khi máy khởi động lại.
     # "unless-stopped": tôn trọng khi bạn chủ động `docker compose down`.
     restart: unless-stopped

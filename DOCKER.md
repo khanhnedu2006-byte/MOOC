@@ -21,8 +21,20 @@ tên và SQLite sẽ báo lỗi khó hiểu.
 Tạo trước bằng cách chạy `python run.py once` một lần ở ngoài, hoặc:
 
 ```powershell
-python -c "import sys; sys.path.insert(0,'src'); from database import database; database.khoi_tao()"
+python -c "import sys; sys.path.insert(0,'src'); from database import database; database.init_db()"
 ```
+
+Hai file trạng thái cũng là bind-mount FILE nên cũng phải tồn tại trước:
+
+```powershell
+if (!(Test-Path .report_state.json)) { '{}' | Out-File -Encoding utf8 .report_state.json }
+if (!(Test-Path .alert_state.json))  { '{}' | Out-File -Encoding utf8 .alert_state.json }
+```
+
+`.alert_state.json` giữ mốc "đã gửi cảnh báo lỗi hệ thống". Mất nó mỗi lần
+dựng lại container là chuyện đáng lo hơn nghe tưởng: sự cố hạ tầng thường làm
+container crash-loop, và `restart: unless-stopped` dựng lại liên tục — mỗi lần
+dựng lại lại gửi thêm một thư cảnh báo, đúng lúc hệ thống đang hỏng nhất.
 
 ## Các lệnh khác hay dùng
 

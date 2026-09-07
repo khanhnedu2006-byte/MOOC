@@ -111,8 +111,8 @@ def write_verdict(image_path: Path | None, verdict) -> None:
         if not json_path.is_file():
             return
         meta = json.loads(json_path.read_text(encoding="utf-8"))
-        kq = getattr(verdict, "verdict", None)
-        meta["he_thong_ket_luan"] = getattr(kq, "value", None) or str(kq)
+        result = getattr(verdict, "verdict", None)
+        meta["he_thong_ket_luan"] = getattr(result, "value", None) or str(result)
         meta["he_thong_ly_do"] = getattr(verdict, "reason", None)
         meta["he_thong_tang"] = getattr(verdict, "stage", None)
         json_path.write_text(

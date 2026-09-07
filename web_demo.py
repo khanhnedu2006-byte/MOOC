@@ -77,7 +77,7 @@ def process_demo(image_path, name, code, course):
     given = InputInfo(employee_name=name, course_name=course, employee_code=code)
 
     try:
-        kq = pipeline.process(
+        result = pipeline.process(
             images=images,
             given=given,
             extract_from_image=llm_vision.extract_from_image,
@@ -88,17 +88,17 @@ def process_demo(image_path, name, code, course):
     except Exception as e:
         return display_image, f"Lỗi khi xử lý: {e}"
 
-    icon = "✅" if kq.verdict.value == "APPROVED" else "❌"
+    icon = "✅" if result.verdict.value == "APPROVED" else "❌"
     lines = [
-        f"## {icon} {kq.verdict.value}",
+        f"## {icon} {result.verdict.value}",
         "",
-        f"**Lý do:** {kq.reason}",
-        f"**Tầng xử lý:** {kq.stage}",
+        f"**Lý do:** {result.reason}",
+        f"**Tầng xử lý:** {result.stage}",
         "",
         "### Thông tin trích được từ ảnh",
     ]
-    if kq.extracted:
-        t = kq.extracted
+    if result.extracted:
+        t = result.extracted
         lines.append(f"- Tên người nhận: **{t.recipient_name}**")
         lines.append(f"- Tên chứng chỉ: **{t.certificate_name}**")
         if t.certificate_name_alt:

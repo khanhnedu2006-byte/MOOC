@@ -140,27 +140,27 @@ def rejection_causes(from_day: str, to_day: str, db_path=None) -> dict:
     finally:
         conn.close()
 
-    dem = {nhan: 0 for _, nhan in REJECTION_CAUSES}
+    dem = {label: 0 for _, label in REJECTION_CAUSES}
     khac = 0
     nhieu_ly_do = 0
     for (reason,) in rows:
         r = reason or ""
-        trung = [nhan for chuoi, nhan in REJECTION_CAUSES if chuoi in r]
-        for nhan in trung:
-            dem[nhan] += 1
+        trung = [label for text, label in REJECTION_CAUSES if text in r]
+        for label in trung:
+            dem[label] += 1
         if len(trung) >= 2:
             nhieu_ly_do += 1
         if not trung:
             khac += 1
 
-    muc = [{"label": nhan, "count": dem[nhan]} for _, nhan in REJECTION_CAUSES]
+    items = [{"label": label, "count": dem[label]} for _, label in REJECTION_CAUSES]
     if khac:
         # Không phân loại được: reason lạ, hoặc dòng cũ ghi bằng định dạng khác.
         # Hiện ra chứ không giấu — giấu thì tổng không bao giờ khớp.
-        muc.append({"label": "Không rõ nguyên nhân", "count": khac})
+        items.append({"label": "Không rõ nguyên nhân", "count": khac})
 
     return {
-        "causes": muc,
+        "causes": items,
         "total_rejected": len(rows),
         "multi_cause": nhieu_ly_do,
     }
@@ -185,8 +185,8 @@ def failure_breakdown(from_day: str, to_day: str, db_path=None) -> list[dict]:
 
     gom: dict[str, int] = {}
     for stage, n in rows:
-        nhan = FAILURE_GROUPS.get(stage, f"Khác ({stage or 'không rõ'})")
-        gom[nhan] = gom.get(nhan, 0) + n
+        label = FAILURE_GROUPS.get(stage, f"Khác ({stage or 'không rõ'})")
+        gom[label] = gom.get(label, 0) + n
     return [{"label": k, "count": v}
             for k, v in sorted(gom.items(), key=lambda x: -x[1])]
 
@@ -242,13 +242,13 @@ def trend(from_day: str, to_day: str, bucket: str = "day", db_path=None) -> list
     try:
         w, p = _period_where(from_day, to_day)
         rows = _rows(conn, f"""
-            SELECT strftime('{dinh_dang}', created_at) AS moc,
+            SELECT strftime('{dinh_dang}', created_at) AS bucket,
                    COUNT(*) AS total,
                    SUM(verdict='APPROVED') AS approved,
                    SUM(verdict='REJECTED') AS rejected
             FROM process_log
             WHERE {w} AND stage IN {BUSINESS_STAGES}
-            GROUP BY moc ORDER BY moc""", p)
+            GROUP BY bucket ORDER BY bucket""", p)
     finally:
         conn.close()
 
@@ -257,11 +257,11 @@ def trend(from_day: str, to_day: str, bucket: str = "day", db_path=None) -> list
                "rejected": r[3] or 0}
         for r in rows
     }
-    ra = []
-    for moc in _cac_moc(from_day, to_day, bucket):
-        ra.append(co_du_lieu.get(moc, {"bucket": moc, "total": 0,
-                                       "approved": 0, "rejected": 0}))
-    return ra
+    out = []
+    for point in _cac_moc(from_day, to_day, bucket):
+        out.append(co_du_lieu.get(point, {"bucket": point, "total": 0,
+                                          "approved": 0, "rejected": 0}))
+    return out
 
 
 def _cac_moc(from_day: str, to_day: str, bucket: str) -> list[str]:
@@ -272,16 +272,16 @@ def _cac_moc(from_day: str, to_day: str, bucket: str) -> list[str]:
     d = d0
     while d <= d1:
         if bucket == "day":
-            khoa = d.isoformat()
+            key = d.isoformat()
         elif bucket == "week":
             # %W của SQLite: tuần bắt đầu thứ Hai, tuần trước thứ Hai đầu
             # tiên của năm là tuần 00. strftime của Python dùng cùng quy ước.
-            khoa = d.strftime("%Y-W%W")
+            key = d.strftime("%Y-W%W")
         else:
-            khoa = d.strftime("%Y-%m")
-        if khoa not in seen:
-            seen.add(khoa)
-            thay.append(khoa)
+            key = d.strftime("%Y-%m")
+        if key not in seen:
+            seen.add(key)
+            thay.append(key)
         d += timedelta(days=1)
     return thay
 

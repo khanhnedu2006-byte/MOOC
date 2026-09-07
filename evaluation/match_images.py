@@ -173,7 +173,7 @@ def read_excel(path: str | Path, col_email: str | None = None,
     i_status = _tim_cot(headers, _STATUS_HINTS)
     i_comment = _tim_cot(headers, _COMMENT_HINTS)
 
-    thieu = [ten for ten, i in (("email", i_email), ("tên khóa học", i_course))
+    thieu = [name for name, i in (("email", i_email), ("tên khóa học", i_course))
              if i is None]
     if thieu:
         raise ValueError(
@@ -231,8 +231,8 @@ def match(rows: list[dict], images: list[Path]) -> dict:
     matched, ambiguous = [], []
     dong_da_ghep, anh_da_ghep = set(), set()
 
-    for khoa, ds_dong in khoa_dong.items():
-        ds_anh = khoa_anh.get(khoa, [])
+    for key, ds_dong in khoa_dong.items():
+        ds_anh = khoa_anh.get(key, [])
         if not ds_anh:
             continue
         if len(ds_dong) > 1 or len(ds_anh) > 1:
@@ -240,7 +240,7 @@ def match(rows: list[dict], images: list[Path]) -> dict:
             # không có cách nào biết ảnh nào ứng dòng nào. Chọn bừa là ghép
             # sai một cách không thể phát hiện, nên báo ra để người quyết.
             ambiguous.append({
-                "key": " ".join(khoa),
+                "key": " ".join(key),
                 "rows": [r["excel_row"] for r in ds_dong],
                 "images": [str(p) for p in ds_anh],
             })
@@ -267,9 +267,9 @@ def match(rows: list[dict], images: list[Path]) -> dict:
     # là không gợi ý gì.
     suggestions = []
     for r in rows_no_image:
-        ma = r["employee_code"].lower()
+        code = r["employee_code"].lower()
         cung_ma = [p for p in images_no_row
-                   if p.name.split("_")[0].strip().lower() == ma]
+                   if p.name.split("_")[0].strip().lower() == code]
         if not cung_ma:
             continue
         k = set(key_of(f"{r['employee_code']} {r['course_name']}"))
@@ -330,7 +330,7 @@ def to_cases(matched: list[tuple[dict, Path]]) -> list[EvalCase]:
     return cases
 
 
-def ghi_bao_cao_day_du(rows, images, kq, path) -> int:
+def write_full_report(rows, images, result, path) -> int:
     """Ghi TOÀN BỘ ca chưa ghép ra CSV — không cắt bớt dòng nào.
 
     Bảng in ra màn hình cố ý cắt ở 20 dòng cho dễ đọc, nhưng cắt bớt là thứ
@@ -344,26 +344,26 @@ def ghi_bao_cao_day_du(rows, images, kq, path) -> int:
       mo_ho           — trùng khóa, công cụ không tự chọn
     """
     ma_co_anh = {p.name.split("_")[0].strip().lower() for p in images}
-    dong = []
+    rows = []
 
-    for p in sorted(kq["images_no_row"]):
-        dong.append(["anh_thua", p.name, p.name.split("_")[0].strip(), "", "",
+    for p in sorted(result["images_no_row"]):
+        rows.append(["anh_thua", p.name, p.name.split("_")[0].strip(), "", "",
                      "Có ảnh nhưng không có dòng nào trong Excel"])
 
-    for r in sorted(kq["rows_no_image"], key=lambda x: x["excel_row"]):
-        ma = r["employee_code"].lower()
-        if ma in ma_co_anh:
+    for r in sorted(result["rows_no_image"], key=lambda x: x["excel_row"]):
+        code = r["employee_code"].lower()
+        if code in ma_co_anh:
             khac = "; ".join(sorted(p.name for p in images
-                                    if p.name.split("_")[0].strip().lower() == ma))
-            dong.append(["ghep_hut", "", r["employee_code"], r["excel_row"],
+                                    if p.name.split("_")[0].strip().lower() == code))
+            rows.append(["ghep_hut", "", r["employee_code"], r["excel_row"],
                          r["course_name"],
                          f"Mã NV có ảnh khóa khác: {khac}"])
         else:
-            dong.append(["chua_nop_anh", "", r["employee_code"], r["excel_row"],
+            rows.append(["chua_nop_anh", "", r["employee_code"], r["excel_row"],
                          r["course_name"], "Mã NV này không có ảnh nào"])
 
-    for a in kq["ambiguous"]:
-        dong.append(["mo_ho", "; ".join(a["images"]), "", "; ".join(map(str, a["rows"])),
+    for a in result["ambiguous"]:
+        rows.append(["mo_ho", "; ".join(a["images"]), "", "; ".join(map(str, a["rows"])),
                      a["key"], "Trùng khóa — công cụ KHÔNG tự chọn, cần đổi tên ảnh"])
 
     path = Path(path)
@@ -372,11 +372,11 @@ def ghi_bao_cao_day_du(rows, images, kq, path) -> int:
         w = csv.writer(f)
         w.writerow(["loai", "ten_file_anh", "ma_nv", "dong_excel",
                     "ten_khoa_hoc", "ghi_chu"])
-        w.writerows(dong)
-    return len(dong)
+        w.writerows(rows)
+    return len(rows)
 
 
-def _in_bao_cao(rows, images, kq, cot) -> None:
+def _in_bao_cao(rows, images, result, cot) -> None:
     """In báo cáo ghép. BA SỐ PHẢI CỘNG ĐÚNG thì mới tin được kết quả."""
     print("\n=== Cột đã dùng trong Excel ===")
     print(f"  email        : {cot['email']!r}")
@@ -390,35 +390,35 @@ def _in_bao_cao(rows, images, kq, cot) -> None:
         print("        (nộp trùng, HR đã ghi nhận, khóa ngoài danh mục MOOC...).")
     print(f"  (mọi cột có trong file: {', '.join(cot['all'])})")
 
-    so_mo_ho_dong = sum(len(a["rows"]) for a in kq["ambiguous"])
-    so_mo_ho_anh = sum(len(a["images"]) for a in kq["ambiguous"])
+    so_mo_ho_dong = sum(len(a["rows"]) for a in result["ambiguous"])
+    so_mo_ho_anh = sum(len(a["images"]) for a in result["ambiguous"])
     print("\n=== Kết quả ghép ===")
     print(f"  Dòng Excel      : {len(rows)}")
     print(f"  File ảnh        : {len(images)}")
-    print(f"  Ghép được       : {len(kq['matched'])}")
-    print(f"  Dòng thiếu ảnh  : {len(kq['rows_no_image'])}")
-    print(f"  Ảnh thừa        : {len(kq['images_no_row'])}")
-    print(f"  Mơ hồ (trùng)   : {len(kq['ambiguous'])} nhóm "
+    print(f"  Ghép được       : {len(result['matched'])}")
+    print(f"  Dòng thiếu ảnh  : {len(result['rows_no_image'])}")
+    print(f"  Ảnh thừa        : {len(result['images_no_row'])}")
+    print(f"  Mơ hồ (trùng)   : {len(result['ambiguous'])} nhóm "
           f"({so_mo_ho_dong} dòng, {so_mo_ho_anh} ảnh)")
 
     # Phép cộng kiểm tra: nếu không khớp thì chính công cụ này đang sai, và
     # người dùng cần biết ngay chứ không phải tin vào con số "ghép được".
-    tong_dong = len(kq["matched"]) + len(kq["rows_no_image"]) + so_mo_ho_dong
-    tong_anh = len(kq["matched"]) + len(kq["images_no_row"]) + so_mo_ho_anh
+    tong_dong = len(result["matched"]) + len(result["rows_no_image"]) + so_mo_ho_dong
+    tong_anh = len(result["matched"]) + len(result["images_no_row"]) + so_mo_ho_anh
     if tong_dong != len(rows) or tong_anh != len(images):
         print(f"\n  !! PHÉP CỘNG KHÔNG KHỚP (dòng {tong_dong}/{len(rows)}, "
               f"ảnh {tong_anh}/{len(images)}) — đừng dùng kết quả này.")
 
-    if kq["ambiguous"]:
+    if result["ambiguous"]:
         print("\n--- Mơ hồ: cùng mã NV + cùng khóa học xuất hiện nhiều lần ---")
         print("    Công cụ KHÔNG tự chọn. Đổi tên ảnh cho khác nhau rồi chạy lại.")
-        for a in kq["ambiguous"][:20]:
+        for a in result["ambiguous"][:20]:
             print(f"  * {a['key']}")
             print(f"      dòng Excel: {a['rows']}")
             for p in a["images"]:
                 print(f"      ảnh      : {p}")
 
-    if kq["rows_no_image"]:
+    if result["rows_no_image"]:
         # Tách làm hai nhóm. Chúng trông giống nhau trong báo cáo cũ nhưng là
         # hai vấn đề khác hẳn, và nhầm nhóm là đi sửa nhầm chỗ:
         #
@@ -427,9 +427,9 @@ def _in_bao_cao(rows, images, kq, cot) -> None:
         #   - Mã CÓ ảnh khóa khác  -> ghép hụt đúng khóa này. Đây mới là ca
         #     đáng ngờ: có thể tên khóa viết lệch giữa hai bên.
         ma_co_anh = {p.name.split("_")[0].strip().lower() for p in images}
-        chua_nop = [r for r in kq["rows_no_image"]
+        chua_nop = [r for r in result["rows_no_image"]
                     if r["employee_code"].lower() not in ma_co_anh]
-        hut = [r for r in kq["rows_no_image"]
+        hut = [r for r in result["rows_no_image"]
                if r["employee_code"].lower() in ma_co_anh]
 
         if chua_nop:
@@ -455,16 +455,16 @@ def _in_bao_cao(rows, images, kq, cot) -> None:
             if len(hut) > 12:
                 print(f"  ... còn {len(hut) - 12} dòng nữa")
 
-    if kq["images_no_row"]:
-        print(f"\n--- {len(kq['images_no_row'])} ảnh không tìm thấy dòng Excel ---")
-        for p in kq["images_no_row"][:20]:
+    if result["images_no_row"]:
+        print(f"\n--- {len(result['images_no_row'])} ảnh không tìm thấy dòng Excel ---")
+        for p in result["images_no_row"][:20]:
             print(f"  {p.name}")
-        if len(kq["images_no_row"]) > 20:
-            print(f"  ... còn {len(kq['images_no_row']) - 20} ảnh nữa")
+        if len(result["images_no_row"]) > 20:
+            print(f"  ... còn {len(result['images_no_row']) - 20} ảnh nữa")
 
-    if kq["suggestions"]:
+    if result["suggestions"]:
         print("\n--- Gợi ý (KHÔNG tự ghép — bạn tự xác nhận rồi sửa tên file) ---")
-        for s in kq["suggestions"][:20]:
+        for s in result["suggestions"][:20]:
             print(f"  dòng {s['excel_row']} ({s['course_name'][:40]})")
             print(f"      giống {s['score']:.0%} với: {s['image']}")
 
@@ -488,13 +488,13 @@ def main(argv=None) -> int:
 
     rows, cot = read_excel(args.excel, args.col_email, args.col_course, args.col_name)
     images = list_images(args.images)
-    kq = match(rows, images)
-    _in_bao_cao(rows, images, kq, cot)
+    result = match(rows, images)
+    _in_bao_cao(rows, images, result, cot)
 
     # Báo cáo đầy đủ ghi CẢ khi --dry-run: nó là thứ để đọc, không phải bộ dữ
     # liệu. Bảng trên màn hình cắt ở 20 dòng, nên đây mới là bản dùng được để
     # gửi đi đối chiếu.
-    n = ghi_bao_cao_day_du(rows, images, kq, args.report)
+    n = write_full_report(rows, images, result, args.report)
     print(f"\nĐã ghi danh sách ĐẦY ĐỦ {n} ca chưa ghép: {args.report}")
     print("  (lọc cột 'loai': anh_thua / chua_nop_anh / ghep_hut / mo_ho)")
 
@@ -502,11 +502,11 @@ def main(argv=None) -> int:
         print("\n(--dry-run: chưa ghi file nhãn)")
         return 0
 
-    if not kq["matched"]:
+    if not result["matched"]:
         print("\nKhông ghép được cặp nào — không ghi file nhãn.")
         return 1
 
-    cases = to_cases(kq["matched"])
+    cases = to_cases(result["matched"])
     write_dataset(cases, args.out)
     print(f"\nĐã ghi {len(cases)} ca vào: {args.out}")
     print("Bước tiếp theo: mở file đó bằng Excel, điền các cột gt_* "

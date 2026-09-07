@@ -58,9 +58,9 @@ def test_gom_theo_ly_do_cung_nguyen_nhan_ve_mot_nhom():
 def test_gom_theo_ly_do_giu_du_ngu_canh():
     """Chỉ giữ tên lớp lỗi là chưa đủ: 'Exception' không nói được gì."""
     nhom = run_eval._gom_theo_ly_do({"a": "LlmVisionError: JSON không khớp schema: x"})
-    khoa = nhom[0][0]
-    assert "LlmVisionError" in khoa
-    assert "JSON" in khoa, "cắt mất phần giải thích, chỉ còn tên lớp lỗi"
+    key = nhom[0][0]
+    assert "LlmVisionError" in key
+    assert "JSON" in key, "cắt mất phần giải thích, chỉ còn tên lớp lỗi"
 
 
 def test_gom_theo_ly_do_khong_co_dau_hai_cham():
@@ -131,7 +131,7 @@ def test_ghi_ket_qua_tho_giu_ca_ket_qua_lan_loi(tmp_path, monkeypatch):
         "002": None,
     }
     out = tmp_path / "last_run.csv"
-    run_eval._ghi_ket_qua_tho(cases, results, {"002": "ValueError: hỏng"}, out)
+    run_eval._write_raw_results(cases, results, {"002": "ValueError: hỏng"}, out)
 
     rows = list(csv.DictReader(out.open(encoding="utf-8-sig")))
     assert rows[0]["verdict"] == "APPROVED"
@@ -149,14 +149,14 @@ def test_check_dem_dung_file_thieu(tmp_path, monkeypatch, capsys):
     (anh / "co.jpg").write_bytes(b"x")
     monkeypatch.setattr(run_eval, "PROJECT_ROOT", tmp_path)
 
-    ma = run_eval.check_dataset([_ca("001", "data/image/co.jpg"),
+    code = run_eval.check_dataset([_ca("001", "data/image/co.jpg"),
                                  _ca("002", "data/image/khong.jpg")])
 
     ra = capsys.readouterr().out
     assert "Có file ảnh : 1" in ra
     assert "THIẾU file  : 1" in ra
     assert "data/image/khong.jpg" in ra
-    assert ma == 1, "thiếu file mà vẫn trả mã 0 thì script gọi nó không biết"
+    assert code == 1, "thiếu file mà vẫn trả mã 0 thì script gọi nó không biết"
 
 
 def test_check_bao_ro_chua_gan_gt_verdict(tmp_path, monkeypatch, capsys):
@@ -229,7 +229,7 @@ def test_fill_verdict_dien_dung_va_khong_dung_toi_gt_khac(tmp_path):
     assert ra["001"].gt_recipient_name is None
 
 
-@pytest.mark.parametrize("ly_do,ten,trong_pham_vi", [
+@pytest.mark.parametrize("reason,name,trong_pham_vi", [
     ("CB log trùng khóa học", "Nộp trùng khóa", False),
     ("log trùng", "Nộp trùng khóa", False),
     ("CB log double khóa học", "Nộp trùng khóa", False),
@@ -242,9 +242,9 @@ def test_fill_verdict_dien_dung_va_khong_dung_toi_gt_khac(tmp_path):
     ("Chứng chỉ thiếu thời gian hoàn thành, CB vui lòng bổ sung thêm",
      "Chứng chỉ thiếu thời gian hoàn thành", True),
 ])
-def test_phan_loai_ly_do_nguoi_duyet(ly_do, ten, trong_pham_vi):
+def test_phan_loai_ly_do_nguoi_duyet(reason, name, trong_pham_vi):
     """Cùng một chuyện có chục cách viết tay — phải về cùng một nhóm."""
-    assert run_eval._nhom_ly_do(ly_do) == (ten, trong_pham_vi)
+    assert run_eval._nhom_ly_do(reason) == (name, trong_pham_vi)
 
 
 def test_ly_do_la_thi_coi_la_TRONG_pham_vi():
@@ -253,9 +253,9 @@ def test_ly_do_la_thi_coi_la_TRONG_pham_vi():
     Đoán nhầm thành 'ngoài phạm vi' là lặng lẽ tha cho một lỗi thật của hệ
     thống — hướng sai nguy hiểm hơn hẳn hướng ngược lại.
     """
-    ten, trong_pham_vi = run_eval._nhom_ly_do("một lý do chưa từng gặp")
+    name, trong_pham_vi = run_eval._nhom_ly_do("một lý do chưa từng gặp")
     assert trong_pham_vi is True
-    assert "Khác" in ten
+    assert "Khác" in name
 
 
 def test_bang_bat_dong_tach_trong_va_ngoai_pham_vi(capsys):
@@ -277,7 +277,7 @@ def test_bang_bat_dong_tach_trong_va_ngoai_pham_vi(capsys):
         _ca("002", note="elis=REJECTED | lý do người duyệt: FIS HR tự động xuất Udemy"),
         _ca("003", note="elis=REJECTED | lý do người duyệt: Chứng chỉ thiếu thời gian hoàn thành"),
     ]
-    run_eval._bang_bat_dong(cases, KqGia())
+    run_eval._print_disagreements(cases, KqGia())
 
     ra = capsys.readouterr().out
     assert "2 ca ngoài phạm vi" in ra
@@ -301,9 +301,9 @@ def test_ghi_that_bai_thi_file_cu_van_nguyen(tmp_path, monkeypatch):
     truoc = f.read_text(encoding="utf-8-sig")
 
     # Mô phỏng Excel đang khóa file: os.replace hỏng ở bước cuối.
-    def khoa(a, b):
+    def key(a, b):
         raise PermissionError(13, "Permission denied")
-    monkeypatch.setattr(ds.os, "replace", khoa)
+    monkeypatch.setattr(ds.os, "replace", key)
 
     with pytest.raises(PermissionError) as e:
         ds.write_dataset([_ca("002")], f)
@@ -338,6 +338,6 @@ def test_last_run_bi_khoa_thi_khong_lam_chet_ca_luot_chay(tmp_path, monkeypatch,
         return goc(self, *a, **kw)
 
     monkeypatch.setattr(pathlib.Path, "open", gia)
-    run_eval._ghi_ket_qua_tho([_ca("001")], {"001": None}, {}, out)   # không được ném
+    run_eval._write_raw_results([_ca("001")], {"001": None}, {}, out)   # không được ném
 
     assert "KHÔNG ghi được last_run.csv" in capsys.readouterr().out
