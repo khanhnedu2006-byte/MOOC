@@ -71,7 +71,6 @@ def is_technical_failure(result: ProcessResult) -> bool:
 def is_skip(result: ProcessResult) -> bool:
     return result.stage == database.SKIP_STAGE
 
-# Thử lại api
 # Gọi 1 request eLIS, tự thử lại khi lỗi tạm thời (502, timeout).
 # Thử tối đa RETRY_COUNT lần, cách nhau RETRY_DELAY_SECONDS giây
 def call_with_retry(func, *args, **kwargs):

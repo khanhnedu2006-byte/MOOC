@@ -7,6 +7,15 @@ eLIS đã đăng ký (tên nhân viên, tên khóa học, thời gian), rồi t�
 Mục tiêu: bỏ bước duyệt tay từng chứng chỉ, nhưng **không** duyệt bừa — mọi ca
 hệ thống không tự tin đều để lại dấu vết đủ để người tra lại.
 
+Ba loại ca **không** đi theo đường thường, và cả ba đều được chặn **trước khi
+tốn một lượt LLM nào**:
+
+| Loại | Nguyên nhân | Kết cục |
+|---|---|---|
+| Hỏng kỹ thuật | Azure/LLM/eLIS lỗi | Ở lại `WAITING`, thử lại mãi, quá ngưỡng thì gửi mail |
+| Bỏ qua | Không xác minh được danh tính người học | Ở lại `WAITING`, **không** thử lại, chờ người duyệt |
+| Nộp trùng | Khóa này của nhân viên này đã được duyệt | `REJECTED` ngay, không quét |
+
 ---
 
 ## Mục lục
@@ -15,7 +24,7 @@ hệ thống không tự tin đều để lại dấu vết đủ để người
 2. [Cài đặt](#2-cài-đặt)
 3. [Luồng 1 — Job sản xuất `run.py`](#3-luồng-1--job-sản-xuất-runpy)
 4. [Luồng 2 — Luật so khớp](#4-luồng-2--luật-so-khớp)
-5. [Luồng 3 — Ca hỏng kỹ thuật và cơ chế thử lại](#5-luồng-3--ca-hỏng-kỹ-thuật-và-cơ-chế-thử-lại)
+5. [Luồng 3 — Ca không đi theo đường thường](#5-luồng-3--ca-không-đi-theo-đường-thường)
 6. [Luồng 4 — Báo cáo qua email](#6-luồng-4--báo-cáo-qua-email)
 7. [Luồng 5 — Đánh giá độ chính xác (evaluation)](#7-luồng-5--đánh-giá-độ-chính-xác-evaluation)
 8. [Luồng 6 — Kiểm tra khả năng trích xuất của LLM2](#8-luồng-6--kiểm-tra-khả-năng-trích-xuất-của-llm2)
@@ -95,21 +104,28 @@ mục đích của nó.
 Hệ quả cần nhớ khi đọc số liệu: **tỉ lệ đúng của tầng 2 KHÔNG so sánh được với
 tầng 1**, vì tầng 2 chỉ nhận những ca khó mà tầng 1 đã trượt (selection bias).
 
-### 1.3. Ba nhãn kết luận
+### 1.3. Các nhãn kết luận
 
-| Nhãn | Nghĩa | Có nộp về eLIS không |
-|---|---|---|
-| `APPROVED` | Chứng chỉ hợp lệ | Có |
-| `REJECTED` | Nội dung chứng chỉ không khớp dữ liệu eLIS | Có |
-| `WAITING` | **Hệ thống chưa xử lý được** (lỗi kỹ thuật) | **Không** — để nguyên trên eLIS cho vòng sau |
+| Nhãn | `stage` | Nghĩa | Nộp về eLIS |
+|---|---|---|---|
+| `APPROVED` | `llm1`, `llm2` | Chứng chỉ hợp lệ | Có |
+| `REJECTED` | `llm1`, `llm2`, `llm1_vs_llm2` | Nội dung không khớp dữ liệu eLIS | Có |
+| `REJECTED` | `duplicate` | Khóa này đã được duyệt trước đó | Có |
+| `WAITING` | `TECHNICAL_STAGES` | **Hệ thống chưa xử lý được** (lỗi kỹ thuật) | **Không** |
+| `WAITING` | `SKIP_STAGE` | **Không xác minh được danh tính** người học | **Không** |
 
-`WAITING` chỉ tồn tại trong log và trên màn hình. Nó có mặt vì nếu hiển thị
-những ca này là `REJECTED`, người vận hành sẽ đọc log rồi đi báo học viên
-"chứng chỉ bị từ chối", trong khi hệ thống chỉ đang hẹn thử lại sau vài phút.
+Hai dòng `WAITING` cuối chỉ tồn tại trong log và trên màn hình — bản ghi eLIS
+không bị chạm vào, nó giữ nguyên trạng thái chờ duyệt sẵn có. Nhãn này có mặt
+vì nếu ghi những ca đó là `REJECTED`, người vận hành sẽ đọc log rồi đi báo học
+viên "chứng chỉ bị từ chối", trong khi hệ thống chưa hề đánh giá được nội dung.
+
+Hai dòng đó giống nhau ở chỗ không nộp gì, nhưng **khác nhau ở việc thử lại**:
+ca kỹ thuật được thử lại mãi vì sự cố sẽ khỏi, ca bỏ qua thì không bao giờ —
+cái sai nằm cứng trên ảnh, thử nghìn lần vẫn thế.
 
 > **Luật HR: lỗi hệ thống KHÔNG BAO GIỜ thành `REJECTED`.** Ca hỏng kỹ thuật
 > ở lại `WAITING` và được thử lại mãi, không giới hạn số lần; hỏng tới ngưỡng
-> thì gửi email cảnh báo cho người vận hành. Chi tiết ở [mục 5](#5-luồng-3--ca-hỏng-kỹ-thuật-và-cơ-chế-thử-lại).
+> thì gửi email cảnh báo cho người vận hành. Chi tiết ở [mục 5](#5-luồng-3--ca-không-đi-theo-đường-thường).
 
 ---
 
@@ -125,8 +141,8 @@ pip install -r requirements.txt
 copy .env.example .env
 # Mở .env và điền: FPT_API_KEY, AZURE_ENDPOINT, AZURE_KEY, ELIS_API_KEY
 
-# 3. Kiểm tra kết nối eLIS trước khi chạy job
-python test_api.py 1
+# 3. Kiểm tra kết nối eLIS trước khi chạy job (chỉ đọc, không đổi gì)
+python run.py status
 ```
 
 **Yêu cầu bắt buộc trong `.env`:** `FPT_API_KEY`, `AZURE_ENDPOINT`, `AZURE_KEY`.
@@ -189,61 +205,85 @@ chạy nền.
 ### 3.3. Vòng đời một chứng chỉ trong một lượt
 
 ```
-① getCert (tối đa 100 item)
+① getCert?status=WAITING (tối đa 100 item)
       │
       ▼
-Cắt hàng đợi (_sap_xep_va_loc) — GIỮ NGUYÊN thứ tự eLIS trả về
-      ├─ gặp ca còn giãn cách → DỪNG tại đó, mọi ca sau CHỜ THEO
+split_duplicates()  ── nhân viên này đã được duyệt khóa này chưa?
+      └─ RỒI → REJECTED "Cán bộ nộp trùng khóa học", nộp ③ ngay.
+               KHÔNG tải file, KHÔNG gọi LLM, KHÔNG chặn ca sau.
+      │
+      ▼
+filter_queue() — GIỮ NGUYÊN thứ tự eLIS trả về
+      ├─ đã bị BỎ QUA ở vòng trước → loại khỏi hàng đợi, im lặng
+      ├─ gặp ca còn giãn cách       → DỪNG tại đó, mọi ca sau CHỜ THEO
       └─ đã hỏng ≥ TECHNICAL_ALERT_AFTER → GỬI EMAIL cảnh báo,
                                             và VẪN ở nguyên vị trí cũ
       │
+      ▼   xử lý TỪNG chứng chỉ một, không chia lô
+kiểm nộp trùng LẦN HAI ── bắt ca trùng nhau ngay trong cùng vòng này
+      └─ trùng → REJECTED, nộp ③, không tải file
+      │
       ▼
-Chia lô theo BATCH_SIZE (ép về khoảng 1–20)
+② download-certificates (1 cặp id)
+      ├─ lỗi        → ghi log WAITING (download_error), DỪNG CẢ VÒNG
+      └─ thiếu file → ghi log WAITING (no_file),      DỪNG CẢ VÒNG
       │
-      ▼   với mỗi lô:
-② download-certificates
-      ├─ cả lô lỗi     → ghi log WAITING từng cái, sang lô sau
-      └─ thiếu file    → ghi log WAITING (stage = no_file)
-      │
-      ▼   với mỗi file:
+      ▼
 (tùy chọn) lưu vào cert_archive/  ← đặt TRƯỚC khi scan
       │
       ▼
 file_utils.read_as_images()   ← kiểm MIME bằng nội dung thật, PDF render 200 DPI
       │
       ▼
-pipeline.process()  → APPROVED / REJECTED / hỏng kỹ thuật
-      │
-      ▼
-In kết luận ra màn hình → ghi DB → nộp NGAY lô này về ③
-      │
-      ▼
-Hỏng kỹ thuật → KHÔNG nộp, KHÔNG chuyển chỗ, và DỪNG CẢ VÒNG.
-                Các ca phía sau chưa tới lượt. Vòng sau (hết giãn cách)
-                thử lại CHÍNH NÓ, ở CHÍNH CHỖ đó.
+pipeline.process()
+      ├─ APPROVED              → nộp ③, GHI NHỚ vào chỉ mục lịch sử
+      ├─ REJECTED              → nộp ③ (không ghi nhớ — chưa được duyệt)
+      ├─ BỎ QUA (SKIP_STAGE)   → ghi log WAITING, KHÔNG nộp gì
+      └─ hỏng kỹ thuật         → ghi log WAITING, KHÔNG nộp, DỪNG CẢ VÒNG
 ```
+
+**Có HAI cửa kiểm nộp trùng, không phải một.** Cửa đầu vòng lọc cả danh sách;
+cửa thứ hai bắt trường hợp hai bản ghi trùng nhau cùng nằm trong một vòng — lúc
+cửa đầu chạy thì chưa cái nào được duyệt nên cả hai đều lọt. Xem
+[5.7](#57-nộp-trùng-khóa-học).
+
+**Chỉ `APPROVED` mới được ghi vào chỉ mục lịch sử.** `REJECTED` nghĩa là chứng
+chỉ chưa được công nhận, nên nhân viên nộp lại khóa đó là chuyện bình thường,
+không phải nộp trùng.
+
+**Không còn cơ chế chia lô.** `BATCH_SIZE` đã bị bỏ: mỗi vòng lấy từng chứng
+chỉ ra xử lý rồi nộp ngay. Nộp ngay vì kết quả chưa nộp thì bản ghi vẫn
+`WAITING`, vòng poll sau tải lại và gọi LLM lại — tốn thêm một lượt cho mỗi
+cái. Gom cả mẻ rồi mới nộp còn khiến toàn bộ công đã làm phụ thuộc vào một
+request duy nhất ở cuối; chỉ cần nó hỏng (rớt mạng, container restart) là mất
+sạch.
 
 **Hàng đợi chạy đúng thứ tự và chặn đầu hàng.** Xem
 [5.2b](#52b-chặn-đầu-hàng-chưa-xong-1-thì-chưa-tới-lượt-2).
 
-**Vì sao nộp ngay sau mỗi lô, không gom hết rồi nộp một lần:** kết quả chưa nộp
-thì bản ghi vẫn `WAITING`, vòng poll sau sẽ tải lại và gọi LLM lại — tốn thêm
-một lượt LLM cho mỗi cái. Gom cả mẻ rồi mới nộp còn khiến toàn bộ công đã làm
-phụ thuộc vào một request duy nhất ở cuối; chỉ cần nó hỏng (rớt mạng, container
-restart) là mất sạch.
+**Ca nộp trùng và ca bỏ qua KHÔNG chặn hàng đợi** — chúng là chuyện của riêng
+một chứng chỉ, không phải sự cố cả lô. Chỉ ca hỏng kỹ thuật mới chặn.
 
 **Vì sao lưu archive TRƯỚC khi scan:** nếu pipeline chết giữa chừng thì ảnh vẫn
 còn — mà ca làm pipeline chết mới là ca đáng nghiên cứu nhất.
 
-### 3.4. Hai trường thông tin nộp về eLIS
+### 3.4. Trường thông tin nộp về eLIS
+
+`build_result_dto()` gửi đúng một trường bình luận:
 
 | Trường | Nội dung | Người đọc |
 |---|---|---|
-| `comment` | Kết luận cho học viên. APPROVED → "Hợp lệ". Sai nghiệp vụ → nêu đúng trường sai. Hỏng kỹ thuật → câu trung tính, **không đổ lỗi học viên**, không lộ chi tiết nội bộ. | Học viên |
-| `comment_cer` | Thông tin AI **đọc được** từ ảnh (`AI đọc được — Tên: … \| Khóa học: … \| Ngày: …`), để người duyệt đối chiếu bằng mắt. Không phải kết luận. | Người duyệt |
+| `comment` | Kết luận cho học viên. APPROVED → `"Hợp lệ"`. Sai nghiệp vụ → nêu đúng trường sai. Nộp trùng → `"Cán bộ nộp trùng khóa học"`. | Học viên |
 
-Tên tầng xử lý (`llm1`, `llm2`…) **không** xuất hiện ở hai trường này — chúng
-chỉ có nghĩa với người bảo trì và đã nằm trong bảng log.
+Tài liệu API ③ có thêm trường tùy chọn `comment_cer`, nhưng hệ thống **không
+gửi**: không có bằng chứng nào cho thấy giao diện eLIS hiển thị nó, và gửi một
+trường không ai đọc chỉ làm payload nặng thêm mà không giúp được ai.
+
+Tên tầng xử lý (`llm1`, `llm2`…) **không** xuất hiện ở đây — chúng chỉ có nghĩa
+với người bảo trì và đã nằm trong bảng log.
+
+**Ca hỏng kỹ thuật và ca bỏ qua không đi qua hàm này** — chúng thoát sớm ở
+`handle_one_certificate()` và không gọi API ③ lần nào.
 
 ### 3.5. Mã dùng để đối chiếu ≠ mã gửi về eLIS
 
@@ -281,7 +321,18 @@ trong hai đúng.
   So **chặt** từng từ, không chịu lỗi OCR trong từ (`"nguyen"` ≠ `"nguyeen"`).
 
 - **Khớp mã** (`match_code`): quét xem mã NV có xuất hiện như một **cụm từ liên
-  tiếp** trong tên trên ảnh không. Mã là chuỗi máy nên phải khớp chính xác.
+  tiếp** trong tên trên ảnh không. Mã là chuỗi máy nên phải khớp chính xác —
+  `hungnt97` khác `hungnt98` là hai người, không dùng fuzzy. Quét theo cụm để
+  bắt ca chứng chỉ in `"hungnt97 hungnt97"` hoặc lẫn chữ khác, đồng thời tránh
+  khớp một phần (mã `nv` không khớp nhầm `nvidia`).
+
+> **Ca "tên + email trong cùng một trường."** LLM đôi khi trích ra
+> `"PHAM TUNG ANH anhpt34@fpt.com"`. Sau chuẩn hóa, chuỗi này thành tập
+> `{pham, tung, anh, anhpt34, fpt, com}`. eLIS gửi `"Phạm Tùng Anh"` → tập
+> `{pham, tung, anh}`. Hai tập **không bằng nhau** → nhánh khớp tên trượt.
+> Nhưng nhánh **khớp mã** quét thấy từ `anhpt34` trùng khớp tuyệt đối
+> `employee_code` → **APPROVED**. Đây là lý do `match_name_or_code` có hai
+> nhánh chứ không chỉ một.
 
 > ⚠️ **Luật tên đệm đang chờ HR.** Hiện tại tên rút gọn (`"Anh Le"` cho
 > `"Lê Hoàng Anh"`) bị coi là **không khớp**. Đo trên bộ dữ liệu thật: nới luật
@@ -307,6 +358,12 @@ Nên `match_course_bilingual()` thử **đủ ba đường**, khớp một đư�
 2. nửa thứ hai → bắt ca eLIS lưu ngôn ngữ kia
 3. **ghép hai nửa** → bắt ca eLIS lưu cả hai
 
+Thiếu bước 3 là lỗi đã xảy ra thật: chứng chỉ `TIENLX6` in đúng nguyên chuỗi
+song ngữ mà eLIS lưu, model tách làm hai theo đúng yêu cầu, rồi không nửa nào
+bằng chuỗi eLIS nữa → **từ chối oan một chứng chỉ hợp lệ, đọc đúng**.
+
+Ba đường chỉ **nới thêm**, không bỏ đường nào — một ca đang `APPROVED` không thể
+vì thay đổi này mà thành `REJECTED`.
 
 Prompt cũng yêu cầu chỉ lấy **đúng tên khóa**, không lấy cả câu bao quanh:
 với `"Python cơ bản" has successfully completed the course "Python fundamentals"`,
@@ -337,12 +394,13 @@ thay vì `"Không khớp"` chung chung).
 Tên không khớp; Tên khóa học không khớp; Ngày không hợp lệ
 ```
 
-Không kèm giá trị đọc được và không kèm tên tầng — hai thứ đó nằm ở
-`comment_cer` và ở cột `stage` trong DB.
+Không kèm giá trị đọc được và không kèm tên tầng. Giá trị AI đọc được nằm ở
+các cột `name_on_image` / `certificate_name` / `date_on_image` trong DB, tên
+tầng nằm ở cột `stage` — cả hai đều **không** được gửi về eLIS.
 
 ---
 
-## 5. Luồng 3 — Ca hỏng kỹ thuật và cơ chế thử lại
+## 5. Luồng 3 — Ca không đi theo đường thường
 
 ### 5.1. Thế nào là "hỏng kỹ thuật"
 
@@ -364,6 +422,13 @@ Các ca này **không bị nộp `REJECTED`** — chúng ở lại `WAITING` tr�
 thống chưa hề đánh giá được nội dung.
 
 ### 5.2. Luật HR: lỗi hệ thống KHÔNG BAO GIỜ thành REJECTED
+
+> **Đây là luật do HR chốt, không phải lựa chọn kỹ thuật.** Lý do của HR: lỗi
+> hệ thống thì **cả dãy cùng lỗi**. Nộp `REJECTED` trong tình huống đó là từ
+> chối oan hàng loạt chứng chỉ hợp lệ chỉ vì hạ tầng chập mười phút.
+>
+> Nhánh "bỏ cuộc sau N lần → nộp REJECTED" **đã bị gỡ bỏ hoàn toàn**.
+
 ```
 Ca hỏng kỹ thuật
    │
@@ -381,6 +446,18 @@ Ca hỏng kỹ thuật
    └─ Không có nhánh nào khác. Chứng chỉ ở lại WAITING trên eLIS cho tới khi
       sự cố khắc phục xong — lúc đó nó tự được xử lý, không cần thao tác tay.
 ```
+
+**Vì sao phải có email.** Nhánh bỏ cuộc cũ không phải vô cớ mà có: nó chặn
+tình trạng chứng chỉ nằm `WAITING` vĩnh viễn mà **không ai biết**. Bỏ nó đi mà
+không thay bằng gì thì lỗi hệ thống trở nên hoàn toàn im lặng — eLIS hiện
+"đang chờ duyệt" mãi mãi, job cứ thử lại mỗi hai phút, không có gì báo cho
+người vận hành. Email giữ lại phần "có người biết", bỏ phần "máy tự quyết sai".
+
+**Vì sao giãn cách đổi từ 6 tiếng xuống 2 phút.** Mốc 6 tiếng hợp lý khi còn
+nhánh bỏ cuộc, vì khi đó mỗi lượt thử là một bước tiến tới quyết định
+`REJECTED` nên phải tiến thật chậm. Giờ không còn quyết định nào để tiến tới;
+mục tiêu duy nhất là **bắt lại sớm nhất khi hạ tầng khỏe lại**, nên giãn cách
+phải ngắn.
 
 **Số lần đếm được lưu trong `mooc_log.db`**, nên nó sống qua các lần khởi động
 lại container.
@@ -401,6 +478,28 @@ Sau 2'   : thử 1 → hỏng lần 2. Lại dừng.
 Lần 5    : hỏng lần 5 → GỬI EMAIL, và vẫn thử tiếp mãi.
 Khi 1 xong: vòng đó chạy tiếp luôn 2, 3, 4...
 ```
+
+**Vì sao chặn thay vì chạy tiếp.** Đúng lập luận của HR: hỏng kỹ thuật là hỏng
+**cả lô**. Chạy tiếp 2, 3, 4 ngay khi 1 vừa hỏng chỉ khiến chúng hỏng theo và
+**đội số lần hỏng của chính chúng lên** vì một sự cố chúng chưa từng gây ra —
+rồi cả bốn cái cùng chạm ngưỡng cảnh báo vì đúng một sự cố duy nhất.
+
+Ca phía sau **không bị quét rồi vứt kết quả** — vòng dừng **trước** khi quét,
+nên không tốn lượt LLM nào và không ghi thêm dòng hỏng nào cho chúng.
+
+Đã bỏ **ba** cơ chế trước đó:
+
+| Cơ chế cũ | Vì sao bỏ |
+|---|---|
+| Ca đã từng hỏng xếp xuống **cuối** hàng đợi | Xuống cuối thì gặp lại đúng sự cố đó. Không cứu được gì, mà làm mất thứ tự eLIS nên log khó đối chiếu với màn hình eLIS |
+| Thử lại các ca hỏng thêm một lần ở **cuối vòng** | Lượt thứ hai diễn ra vài giây sau lượt đầu nên gặp lại đúng sự cố — tốn thêm một lượt LLM cho mỗi chứng chỉ. Giãn cách 2 phút của vòng sau làm việc đó tốt hơn, vì nó **thật sự** cho sự cố thời gian tự khỏi |
+| Giữ nguyên chỗ nhưng **vẫn chạy tiếp** 2, 3, 4 | Vẫn đội số lần hỏng của 2, 3, 4 lên vì một sự cố không liên quan đến chúng |
+
+**Bỏ cơ chế thứ hai còn sửa một chỗ sai lệch trong cấu hình.** Khi mỗi vòng thử
+hai lần, `TECHNICAL_ALERT_AFTER=5` thật ra chỉ là **3 vòng** — không ai đọc
+cấu hình mà đoán ra được điều đó. Giờ "hỏng 5 lần" đúng bằng **5 vòng ≈ 10
+phút**, khớp với thứ cấu hình nói.
+
 > ### ⚠️ Cái giá của chặn đầu hàng
 > Luật này an toàn khi ca đứng đầu hỏng vì **hạ tầng** — lúc đó cả lô hỏng nên
 > chặn không mất gì. Nhưng nếu nó hỏng vì **lý do của riêng nó**, cụ thể là
@@ -408,13 +507,18 @@ Khi 1 xong: vòng đó chạy tiếp luôn 2, 3, 4...
 > cũng vẫn lỗi và **nó chặn cả hàng đợi vô thời hạn**. Một nhân viên nộp nhầm
 > file hỏng có thể làm cả phòng không được duyệt chứng chỉ.
 >
+> **Email cảnh báo ở lần thứ 5 là thứ duy nhất cứu được tình huống đó.** Nên
+> `SMTP_USER` / `SMTP_PASSWORD` phải được điền và phải hoạt động — không có
+> nó, cảnh báo chỉ ghi vào log và hàng đợi đứng im mà không ai biết.
 >
 > Nếu muốn `file_error` **không** chặn hàng (vì nó là lỗi của riêng một chứng
 > chỉ, không phải lỗi hệ thống), đó là một thay đổi nhỏ — hỏi khi cần.
 
-**Lưu ý về `BATCH_SIZE`.** Luật chặn đầu hàng chạy đúng nhất với `BATCH_SIZE=1`
-(mặc định). Giá trị lớn hơn vẫn tải cả lô về trước rồi mới quét lần lượt và
-dừng đúng chỗ, nhưng lô đã tải là chi phí đã bỏ ra cho những ca chưa tới lượt.
+**Không còn `BATCH_SIZE`.** Cơ chế chia lô đã bị bỏ hẳn — mỗi vòng lấy từng
+chứng chỉ ra tải, quét, nộp rồi mới sang cái tiếp theo. Luật chặn đầu hàng
+trước đây chạy đúng nhất với `BATCH_SIZE=1`; giá trị lớn hơn vẫn dừng đúng chỗ
+nhưng lô đã tải là chi phí bỏ ra cho những ca chưa tới lượt. Bỏ chia lô làm
+điều đó thành không thể xảy ra, thay vì chỉ khuyến cáo đừng làm.
 
 ### 5.3. Email cảnh báo (`src/alert.py`)
 
@@ -440,7 +544,107 @@ giống hệt nhau trong vài phút — người nhận sẽ lọc bỏ tất, v
 dụng đúng lúc cần nhất. Một thư liệt kê đủ mọi ca vừa đúng lập luận của HR
 (lỗi hệ thống là **một** sự cố, không phải 50) vừa đọc được.
 
-**Nhịp gửi: mail đầu ngay khi chạm ngưỡng, sau đó mỗi tiếng một mail nhắc lại**
+### Khối "Trạng thái 3 API của eLIS"
+
+Thư **luôn in đủ ba API**, kể cả khi chỉ một cái hỏng — "không nhắc tới" và
+"vẫn tốt" là hai chuyện khác nhau, và ở giữa một sự cố thì suy đoán nhầm chỗ
+đó rất tốn thời gian.
+
+| API | Việc nó làm | Hệ quả khi chết |
+|---|---|---|
+| ① `getCert` | Lấy danh sách chờ duyệt | **Hệ thống đứng im** — không lấy được hàng đợi nên không xử lý được cái nào |
+| ② `download-certificates` | Tải file chứng chỉ | Chứng chỉ ở lại WAITING, tự khỏi khi eLIS sống lại. **Nhẹ nhất** |
+| ③ `ProcessUserCourseStatus` | Nộp kết quả duyệt | **Đang đốt tiền** — đã quét xong (đã trả phí Gemma + Azure) nhưng kết quả không nộp được, vòng sau quét lại từ đầu |
+
+Cột "hệ quả" là phần quan trọng nhất: biết "API ① lỗi" vẫn chưa biết có phải
+bỏ việc đang làm để xử lý ngay hay không. Ba API hỏng cho ra **ba mức khẩn cấp
+khác hẳn nhau**.
+
+Với mỗi API đang hỏng, thư ghi: **thất bại mấy lần liên tiếp**, **hỏng từ lúc
+nào**, **lý do gốc** (nguyên văn thông báo lỗi, để dán vào ticket cho IT), và
+**hệ quả**.
+
+**Trước đây hai trong ba API không bao giờ báo được.** Cơ chế cảnh báo đếm số
+dòng log có `stage` kỹ thuật, mà chỉ API ② mới ghi ra loại dòng đó:
+
+| API | Trước | Nay |
+|---|---|---|
+| ① | Lỗi bay lên `run_forever`, không ghi DB → **im lặng**, còn in "Không còn chứng chỉ chờ duyệt" (sai sự thật) | Bắt tại chỗ, đếm, cảnh báo. Log nói đúng: "KHÔNG gọi được eLIS" |
+| ② | Có báo | Vẫn báo, thêm tên API và lý do gốc |
+| ③ | Chỉ đánh dấu `elis_sent_ok=0` — không phải stage kỹ thuật → **im lặng** trong khi đang quét lại vòng tròn | Đếm và cảnh báo |
+
+**Một thư, không phải hai.** API ② chết thì nó **vừa** là lỗi API **vừa** làm
+chứng chỉ hỏng — gửi hai thư riêng là nói hai lần về đúng một sự cố. Gộp lại
+còn cho ra thứ hai thư riêng không có: **nguyên nhân nằm cạnh hậu quả**, trong
+cùng một màn hình.
+
+Khi API ① chết, thư ghi *"Bị ảnh hưởng: TOÀN BỘ hàng đợi (không lấy được danh
+sách nên không đếm được)"* — không phải `0`. In số 0 ở đó khiến người nhận
+tưởng sự cố vô hại và để tới mai mới xem: đúng ca nặng nhất lại bị hạ mức
+khẩn cấp.
+
+### Khối "Sự cố này KHÔNG tự khỏi"
+
+Thư mặc định viết *"sự cố khắc phục xong thì chứng chỉ tự được xử lý, không
+cần thao tác gì thêm"*. Câu đó đúng với Azure quá tải hay eLIS chập, nhưng
+**sai** với hết tiền / sai key / file hỏng — sẽ không có ai khắc phục gì nếu
+không được nói là phải đi làm gì.
+
+Với những ca đó, thư đổi giọng thành một khối đỏ:
+
+```
+*** SỰ CỐ NÀY KHÔNG TỰ KHỎI — CẦN NGƯỜI XỬ LÝ ***
+  - HẾT TIỀN hoặc hết hạn mức FPT AI Marketplace. Thử lại sẽ KHÔNG tự khỏi
+    — phải nạp thêm hạn mức cho tài khoản thì hệ thống mới chạy lại được.
+
+Hệ thống vẫn thử lại đều nhưng sẽ hỏng y như vậy cho tới khi việc trên
+được làm xong.
+```
+
+Câu này **bỏ trùng**: Azure hết quota làm 40 chứng chỉ cùng hỏng vì đúng một
+lý do, in 40 dòng giống hệt nhau thì không ai đọc hết.
+
+### Bảng phân loại lỗi LLM (`src/llm_error.py`)
+
+`llm_vision` và `llm_text` gọi **cùng** một model qua **cùng** một endpoint
+nên gặp y hệt các lỗi. Bảng nằm ở module riêng để hai file dùng chung một bản
+— chép hai bản là cách chắc chắn để chúng lệch nhau, đúng chuyện đã xảy ra
+với prompt của chính hai file đó.
+
+| Nhận diện | Kết luận | Thử lại? |
+|---|---|---|
+| `402`, hoặc message chứa `insufficient_quota` / `insufficient balance` / `quota exceeded` / `billing` / `hết hạn mức` | **Hết tiền / hết hạn mức FPT** — phải nạp thêm | **Không** |
+| `401` | Sai `FPT_API_KEY` (hoặc key bị thu hồi) | **Không** |
+| `403` | Key không có quyền gọi model này | **Không** |
+| `404` | Sai `FPT_MODEL` (chú ý chữ **B** hoa) hoặc `FPT_BASE_URL` | **Không** |
+| message chứa `context_length_exceeded` / `maximum context length` | Chứng chỉ quá nhiều chữ, vượt giới hạn ngữ cảnh | **Không** |
+| `429` **không** kèm dấu hiệu quota | Giới hạn tốc độ gọi model | **Có**, 3 lần |
+| `408`, `500`, `502`, `503`, `504` | Lỗi phía FPT Cloud | **Có**, 3 lần |
+| Không rút được mã | Rớt mạng / DNS / timeout socket | **Có**, 3 lần |
+
+**Cái bẫy của mã 429.** Các endpoint kiểu OpenAI dùng `429` cho **hai chuyện
+trái ngược**: rate-limit (đợi vài giây là khỏi) và `insufficient_quota` (đợi
+mãi cũng không khỏi). Phân loại `429` chỉ theo mã số là sai một nửa số ca —
+phải đọc cả nội dung message. Phần lớn test trong `test_llm_error.py` canh
+đúng chỗ này.
+
+**Mã lỗi rút từ hai nguồn.** `.status_code` của exception SDK, và nếu không có
+thì regex `Error code: (\d{3})` trong chuỗi. Phụ thuộc vào `.status_code` một
+mình là phụ thuộc vào chi tiết nội bộ của thư viện, thứ đã đổi vài lần giữa
+các phiên bản.
+
+**Thêm retry cho LLM.** Trước đây `ocr_azure` thử lại 3 lần cho lỗi tạm thời
+còn `llm_vision`/`llm_text` **không thử lại lần nào** — một cú `429` thoáng
+qua ở tầng LLM làm chứng chỉ kẹt 2 phút, trong khi đúng cú đó ở tầng Azure tự
+khỏi sau 2 giây. Giờ hai tầng dùng cùng một luật: 3 lần, giãn 2s rồi 5s, và
+**không** thử lại lỗi vĩnh viễn.
+
+Azure cũng được gắn cùng nhãn cho `401`/`403` — hết quota F0 thì phải **nâng
+gói**, thử lại không tự khỏi cho tới đầu tháng sau.
+
+### Nhịp gửi
+
+**Mail đầu ngay khi chạm ngưỡng, sau đó mỗi tiếng một mail nhắc lại**
 chừng nào sự cố còn (`ALERT_COOLDOWN_HOURS`, mặc định 1).
 
 | Tình huống | Có gửi không |
@@ -463,8 +667,10 @@ cả cho những sự cố sau.
 tiếng đủ thưa để không ai lọc bỏ, đủ dày để sự cố bị bỏ quên nổi lên lại trong
 ca trực tiếp theo.
 
-"Loại sự cố" nhận diện bằng **tập `stage` đang hỏng**, không phải bằng danh
-sách chứng chỉ. Danh sách đổi mỗi vòng (ca cũ xong, ca mới vào), nên lấy nó
+"Loại sự cố" nhận diện bằng **tập `stage` đang hỏng cộng mã những API đang
+chết**, không phải bằng danh sách chứng chỉ. Thiếu vế thứ hai thì lúc API ①
+chết (không có chứng chỉ nào để hỏng) khóa sẽ là chuỗi rỗng, và cơ chế chống
+trùng nuốt luôn thư báo API hỏng. Danh sách đổi mỗi vòng (ca cũ xong, ca mới vào), nên lấy nó
 làm mốc thì thư nào cũng là "sự cố mới" và cơ chế chặn thành vô dụng trong khi
 vẫn trông như đang hoạt động.
 
@@ -494,6 +700,142 @@ Danh sách hoãn chỉ in ra khi **tập id thay đổi** — in mỗi vòng th�
 Log in `hỏng 7 lần` chứ **không** in dạng phân số `7/5`: mẫu số gợi ý rằng tới
 đó là dừng, mà giờ không còn mốc dừng nào. Người vận hành đọc "2/3" sẽ đi báo
 học viên rằng chứng chỉ sắp bị từ chối — đúng thứ luật HR mới cấm.
+
+---
+
+### 5.6. Bỏ qua — không xác minh được danh tính
+
+Ca **đọc được ảnh** nhưng không nối được tên đọc ra với nhân viên nào. Không
+phải lỗi hệ thống, cũng không phải nhân viên khai sai — hệ thống đơn giản
+không có căn cứ để kết luận. Từ chối là từ chối oan, nên đẩy sang người duyệt.
+
+Toàn bộ luật nằm trong `pipeline._unverifiable_identity()`, chạy **bốn bước
+theo đúng thứ tự**:
+
+```
+1. Tên hoặc mã NV khớp?                        -> KHÔNG bỏ qua, kết luận bình thường
+2. Tên khóa học hoặc ngày cũng sai?             -> KHÔNG bỏ qua, để REJECTED xử
+3. Ảnh in email NGOÀI fpt.com?                  -> BỎ QUA
+4. Tên trên ảnh THIẾU họ hoặc tên đệm?          -> BỎ QUA
+```
+
+**Bước 1 phải đứng trước bước 3.** Chứng chỉ in `doannv19@fpt.com` cũng là
+email, nhưng `normalize()` cắt `@` và `.` thành khoảng trắng nên chuỗi thành
+`"doannv19 fpt com"`, và `match_code` tìm thấy mã nhân viên nằm trong đó. Trong
+162 ca đánh giá có 7 ca ảnh in email; 6 ca là email công ty và **đang chạy
+đúng**. Hỏi email trước là nuốt luôn cả 6.
+
+**Bước 2 tồn tại vì phép so tên khóa học không cần biết người đó là ai.** Chứng
+chỉ ghi khóa khác thì không thỏa mãn đăng ký, bất kể chủ nhân là ai — kết luận
+đó đứng vững trên bằng chứng của chính nó. Bỏ qua ở đây còn tệ hơn cho học
+viên: bị từ chối thì họ đọc được `"Tên khóa học không khớp"` và biết đường nộp
+lại, còn bị bỏ qua thì không nhận được gì. Đo trên bộ đánh giá: **6/10 ca**
+vướng danh tính còn sai cả khóa học hoặc ngày.
+
+Hai luật nhận diện, đo trên 162 ca đánh giá thật:
+
+| Luật | Hàm | Bắt được |
+|---|---|---|
+| Email ngoài công ty | `compare.external_email()` | 1/162 — `minhnt4487@gmail.com` (mã NV là `minhnt159`) |
+| Thiếu họ / tên đệm | `compare.name_missing_words()` | 9/162 — `"Lê Tiến"` so với `"Lê Xuân Tiến"` |
+
+Luật thứ hai dùng **tập con thực sự** (`<`), không phải `<=`: hai tập bằng nhau
+thì `match_name` đã bắt từ trước. Nó cũng **không** bắt chiều ngược lại (ảnh
+thừa từ) — ảnh thừa từ có thể là chức danh, cũng có thể là tên người khác in
+kèm, hai thứ đó không quy về một luật được.
+
+**Ba điểm khác hẳn ca hỏng kỹ thuật:**
+
+| | Hỏng kỹ thuật | Bỏ qua |
+|---|---|---|
+| Chặn hàng đợi | Có | **Không** |
+| Tính vào ngưỡng gửi mail | Có | **Không** — `SKIP_STAGE` cố ý không nằm trong `TECHNICAL_STAGES` |
+| Thử lại | 2 phút/lần, mãi mãi | **Không bao giờ** |
+
+Điểm thứ hai quan trọng hơn vẻ ngoài: chu kỳ poll là 5 giây còn ngưỡng cảnh
+báo là 5 lần, nên nếu xếp nhầm `SKIP_STAGE` vào `TECHNICAL_STAGES` thì **25
+giây** sau người vận hành nhận mail báo động về một chứng chỉ mà hệ thống chẳng
+làm gì sai.
+
+**Không gọi API ③.** Bản ghi eLIS giữ nguyên trạng thái sẵn có, hệ thống không
+ghi gì vào trường `comment`. Thứ chặn nó quay lại vòng sau là **dòng log**
+`SKIP_STAGE` trong `mooc_log.db`, qua `database.skipped_ids()` — hàm này lấy
+dòng **mới nhất** theo `MAX(id)`, nên chứng chỉ nào về sau được xử lý bình
+thường sẽ tự rơi khỏi danh sách bỏ qua.
+
+Đường ra duy nhất là người duyệt vào eLIS bấm duyệt hoặc từ chối; thao tác đó
+đưa bản ghi rời `WAITING` và getCert thôi trả về nó.
+
+> **Giới hạn đã biết:** ảnh in `"NGUYEN THUY LINH minhnt4487@gmail.com"` vẫn bị
+> bỏ qua dù tên đúng nằm ngay đó, vì `match_name` so tập hợp từ tuyệt đối nên
+> ba từ thừa làm phép so trượt. Chữa được, nhưng phải nới `match_name` thành so
+> tập con — mà luật khớp tên **đang chờ HR**. Hướng sai này an toàn (về tay
+> người duyệt, không bị từ chối oan) nên để nguyên và ghi lại ở
+> `tests/test_skip.py`.
+
+### 5.7. Nộp trùng khóa học
+
+Có **hai luồng** cùng đẩy chứng chỉ vào eLIS: hệ thống này (quét bằng AI), và
+luồng đồng bộ tự động của FPT Elearning (đẩy thẳng, không xác minh). Cùng một
+khóa của cùng một người vì thế có thể vào eLIS hai lần, thành **hai bản ghi
+riêng với hai `user_course_id` khác nhau**.
+
+Đo trên 208.426 dòng dữ liệu thật: **80.217** bản ghi khóa nội bộ FPT được
+duyệt mà không có tên người duyệt nào — đó là luồng tự động. **4.270** cặp
+(nhân viên, khóa học) được nộp từ hai lần trở lên, trong đó **3.944** cặp đã có
+ít nhất một lần được duyệt.
+
+**Khóa đối chiếu là EMAIL + TÊN KHÓA HỌC**, không phải `user_course_id`: hai
+lần nộp là hai bản ghi riêng nên id luôn khác nhau, tra theo nó thì không bao
+giờ khớp được cái gì. Kiểm chứng trên dữ liệu thật: không dòng nào thiếu email,
+và không email nào ứng với hai mã nhân viên.
+
+Tên khóa học đưa qua `normalize()` trước khi so — dữ liệu thật có 6.268 cách
+viết tên, sau chuẩn hóa còn 6.132. So thô là bỏ sót 129 nhóm chỉ lệch dấu cách
+thừa hoặc hoa/thường.
+
+**Chỉ mục lịch sử** (`src/history.py`) giữ trong bộ nhớ:
+
+```
+{email chữ thường: {tên khóa đã chuẩn hóa, ...}}
+```
+
+Dựng bằng `getCert?status=APPROVED`, kéo hết trang với `size=1000` (trần API).
+UAT: 4 request. Production ~194.000 bản ghi: khoảng 194 request. Nạp lại mỗi
+`HISTORY_REFRESH_MINUTES` phút.
+
+Không lưu xuống DB vì API không có tham số "lấy từ ngày X trở đi" — mỗi lần làm
+mới đều phải kéo lại toàn bộ, nên bảng DB cũng chỉ là xóa sạch ghi lại. Đo thật
+với 194.000 mục: **17 MB** bộ nhớ, và 100 lượt tra mỗi vòng poll hết **0,004
+mili giây** (tra chỉ mục là một phép băm, chi phí không phụ thuộc kích thước).
+
+**Hai cửa chặn, và cửa thứ hai không thừa:**
+
+```
+split_duplicates()        đầu vòng, lọc cả danh sách
+handle_one_certificate()  ngay trước khi tải file
+```
+
+Cửa đầu chạy **một lần** trên cả danh sách, nên hai bản ghi trùng nhau **nằm
+trong cùng một vòng** đều lọt qua nó — lúc đó chưa cái nào được duyệt. Cái đầu
+được quét, duyệt, rồi ghi vào chỉ mục qua `history.remember()`; chỉ cửa thứ hai
+mới chặn được cái sau.
+
+**Hỏng thì MỞ, không đóng.** Kéo lịch sử thất bại thì `refresh()` ghi log rồi
+**giữ nguyên chỉ mục cũ**, không xóa đi — bản cũ vẫn bắt được phần lớn ca trùng
+còn hơn là không có gì. Nếu lỗi ngay từ lần nạp đầu tiên thì chỉ mục rỗng, và
+chỉ mục rỗng nghĩa là không phát hiện được ca trùng nào — chứng chỉ đi tiếp
+theo luồng bình thường.
+
+Chiều ngược lại mới nguy: coi lỗi mạng là "chưa từng duyệt" rồi từ chối hàng
+loạt thì một sự cố hạ tầng biến thành hàng trăm từ chối oan.
+
+> **Chưa có cửa sổ thời gian.** Hiện cứ trùng là từ chối, kể cả người học lại
+> sau hai năm. Dữ liệu production cho thấy trong 1.163 cặp từng được duyệt hai
+> lần, **613 cặp duyệt trong cùng một ngày** (gần như chắc chắn là lọt lưới)
+> nhưng **73 cặp cách nhau trên 6 tháng** (nhiều khả năng là học lại hợp lệ).
+> `ActionDateTime` có sẵn trong bản ghi API trả về nên thêm cửa sổ là dễ —
+> đang chờ HR trả lời khóa nào phải học lại định kỳ.
 
 ---
 
@@ -738,11 +1080,38 @@ như `run_local`. Không liên quan eLIS.
 ### 9.3. Kiểm tra kết nối eLIS
 
 ```powershell
-python test_api.py 1      # API ① getCert — chỉ đọc, an toàn
-python test_api.py 2      # API ② download — cần id lấy từ ①
+python run.py status
 ```
 
-**Không có test cho API ③** vì nó thay đổi trạng thái thật trên eLIS.
+Lệnh này gọi **API ① getCert** và in hàng đợi kèm trạng thái thử lại của từng
+ca. Chỉ đọc, không tải file, không gọi LLM, không đổi trạng thái bản ghi nào —
+chạy bao nhiêu lần cũng được. Xem [3.2](#32-status--lệnh-chẩn-đoán-miễn-phí).
+
+**Không có script nào gọi API ③** vì nó thay đổi trạng thái thật trên eLIS.
+
+#### Những gì đã đo được về API ①
+
+Trong quá trình dựng luật chống nộp trùng, ba script chẩn đoán dùng-một-lần đã
+được viết rồi xóa sau khi lấy xong số liệu. Kết quả chúng đo được ghi lại ở đây
+vì đó là **căn cứ thiết kế** của mục [5.7](#57-nộp-trùng-khóa-học), và vì đo
+lại tốn công hơn nhiều so với đọc một bảng:
+
+| Câu hỏi | Kết quả |
+|---|---|
+| `status` nhận giá trị nào | `WAITING` / `APPROVED` / `REJECTED` — ba con số khác nhau (4 / 3.134 / 13 trên UAT), tức API **lọc thật** chứ không phớt lờ tham số |
+| `size` trần bao nhiêu | **1000** — gửi `size=5000` vẫn chỉ nhận về 1000 |
+| Lọc được theo nhân viên? | **Không** — `employeeId`, `employee_id`, `employeeCode` đều bị bỏ qua, cả ba đều trả về nguyên 3.134 bản ghi |
+| Bản ghi APPROVED có gì | `courseId`, `ActionDateTime` (lúc ghi comment), `ActionBy`, `comment`, `submitStatus` |
+
+> **Bẫy khi đo API kiểu này:** bỏ qua tham số lạ là hành vi rất thường gặp. Nếu
+> `status=APPROVED` trả về đúng số bản ghi như `status=WAITING` thì đó **không**
+> phải "lấy được lịch sử" — đó là API phớt lờ giá trị mình gửi và trả về mặc
+> định. Phải **so số liệu giữa các giá trị**, không chỉ xem có báo lỗi hay không.
+
+> **`ActionDateTime` ≠ `submitDatetime`.** Cái đầu là lúc comment được ghi, cái
+> sau là lúc học viên nộp. Giao diện eLIS có thể đang hiện cái sau. Lẫn hai mốc
+> này đủ để kết luận nhầm rằng một câu chữ do bản code cũ ghi từ tháng trước
+> vừa mới được sinh ra hôm qua.
 
 ---
 
@@ -773,7 +1142,6 @@ Chạy lệnh một lần trong container mà không đụng job đang chạy n�
 
 ```bash
 docker compose run --rm job python run.py status
-docker compose run --rm job python test_api.py 1
 ```
 
 ---
@@ -827,10 +1195,12 @@ Biến môi trường thắng file. Toàn bộ định nghĩa nằm ở `src/con
 | Biến | Mặc định | Giải thích |
 |---|---|---|
 | `POLL_INTERVAL_SECONDS` | `5` | Chỉ áp dụng khi **hết việc**. Còn việc thì job làm liên tục, không nghỉ |
-| `BATCH_SIZE` | `1` | Số chứng chỉ xử lý trong **một** lô: tải file → scan → nộp kết quả. Lô nhỏ = mất ít công hơn khi eLIS lỗi giữa chừng; lô lớn = ít request hơn. **eLIS giới hạn 20 cặp mỗi request tải file**, giá trị lớn hơn bị ép về 20 |
 | `RETRY_COUNT` | `3` | Số lần gọi lại **một request eLIS** khi gặp lỗi tạm thời (502, timeout). Khác hoàn toàn với `TECHNICAL_ALERT_AFTER` |
 | `RETRY_DELAY_SECONDS` | `5` | Nghỉ giữa các lần gọi lại đó |
-| `TIMEOUT_SECONDS` | `60` | Timeout mỗi request HTTP |
+| `TIMEOUT_SECONDS` | `60` | **Hiện không có tác dụng** — `src/client.py` viết cứng `timeout=30` cho API ①, `60` cho ② và ③. Sửa giá trị trong `.env` sẽ không đổi gì. Hoặc nối dây vào `client.py`, hoặc bỏ biến này đi |
+
+> **`BATCH_SIZE` đã bị xóa.** Hệ thống xử lý từng chứng chỉ một, không chia lô.
+> Để lại dòng đó trong `.env` cũng vô hại — không mã nào đọc nó nữa.
 
 ### 11.6. Kho lưu chứng chỉ
 
@@ -862,6 +1232,20 @@ Biến môi trường thắng file. Toàn bộ định nghĩa nằm ở `src/con
 Cảnh báo dùng chung cấu hình SMTP với báo cáo (`SMTP_HOST`, `SMTP_USER`,
 `SMTP_PASSWORD`) — chỉ khác người nhận.
 
+### 11.7c. Chống nộp trùng khóa học
+
+| Biến | Mặc định | Giải thích |
+|---|---|---|
+| `DUPLICATE_CHECK` | `1` | `1` = bật. Chứng chỉ của khóa nhân viên **đã được duyệt** bị từ chối ngay, không tốn lượt LLM nào |
+| `HISTORY_REFRESH_MINUTES` | `60` | Bao lâu nạp lại lịch sử đã duyệt từ eLIS. Nạp lại tốn ~194 request trên production nên đừng đặt quá dày. Chỉ mục cũ **không** gây từ chối oan — nó chỉ làm hệ thống bỏ sót ca trùng, tức xử lý y như khi chưa có luật này |
+
+Chi tiết cơ chế ở [5.7](#57-nộp-trùng-khóa-học).
+
+**Luật bỏ qua (mục 5.6) không có tham số nào trong `.env`** — nó luôn bật. Đuôi
+email công ty được viết cứng ở `compare.COMPANY_EMAIL_DOMAIN = "fpt.com"`; sửa
+một dòng đó là đổi được, nhưng đây là quyết định nghiệp vụ nên cố ý không để
+người vận hành đổi qua `.env`.
+
 ### 11.8. Email
 
 | Biến | Mặc định | Giải thích |
@@ -892,6 +1276,7 @@ thư viện. Bảng `process_log`, mỗi chứng chỉ đã xử lý là một d
 
 | Cột | Nội dung |
 |---|---|
+| `id` | Khóa tự tăng. **Không chỉ để đánh số** — `skipped_ids()` và `technical_failure_detail()` dùng `MAX(id)` để lấy dòng mới nhất của mỗi chứng chỉ. Không dùng `MAX(created_at)` vì cột đó chỉ chính xác tới giây, hai dòng trong cùng một giây sẽ hòa nhau |
 | `created_at` | Thời điểm xử lý |
 | `user_course_id` | Id bản ghi eLIS — nối với màn hình eLIS |
 | `employee_id` | Mã NV do eLIS cấp (vd `00332383`) — thứ **gửi ngược về eLIS** |
@@ -902,10 +1287,32 @@ thư viện. Bảng `process_log`, mỗi chứng chỉ đã xử lý là một d
 | `date_on_image` | Ngày AI đọc được |
 | `verdict` | `APPROVED` / `REJECTED` / `WAITING` |
 | `reason` | Lý do (đã sạch, không chứa tên tầng) |
-| `stage` | Tầng ra kết luận: `llm1`, `llm2`, `llm1_vs_llm2`, hoặc một trong các `TECHNICAL_STAGES` |
+| `stage` | Xem bảng dưới |
 | `provider` | Nhà cung cấp chứng chỉ (Udemy, Coursera…) |
 | `elis_sent_ok` | `1`=eLIS nhận, `0`=eLIS từ chối, `NULL`=chưa gửi |
 | `elis_message` | Thông điệp eLIS trả về khi từ chối |
+
+Các giá trị `stage` có thể gặp:
+
+| `stage` | Nghĩa | `verdict` đi kèm |
+|---|---|---|
+| `llm1` | Gemma đọc ảnh và kết luận ngay | `APPROVED` / `REJECTED` |
+| `llm2` | Tầng 2 (Azure + LLM2) kết luận | `APPROVED` / `REJECTED` |
+| `llm1_vs_llm2` | Hai model đồng thuận, và khác input | `REJECTED` |
+| `duplicate` | Nhân viên đã được duyệt khóa này | `REJECTED` |
+| `skipped_external_email` | Không xác minh được danh tính (mục 5.6) | `WAITING` |
+| `llm1_error`, `stage2_error`, `file_error`, `download_error`, `no_file`, `soft_fail_zip`, `system_error` | Hỏng kỹ thuật (`TECHNICAL_STAGES`) | `WAITING` |
+
+> **`skipped_external_email` và `duplicate` cố ý KHÔNG nằm trong
+> `TECHNICAL_STAGES`.** Thêm vào đó thì `technical_retry_state()` đếm chúng như
+> sự cố hệ thống, và với chu kỳ poll 5 giây thì 25 giây sau người vận hành nhận
+> mail báo động về một chứng chỉ mà hệ thống chẳng làm gì sai.
+
+> **Tên `skipped_external_email` hiện hơi hẹp nghĩa** — nó được đặt lúc luật bỏ
+> qua mới chỉ có một điều kiện (email ngoài công ty), giờ nó chứa cả ca thiếu
+> họ/tên đệm. Đổi thành `skipped_unverified_identity` thì đúng hơn, nhưng những
+> dòng cũ trong DB sẽ mang giá trị cũ và không được `skipped_ids()` nhận ra
+> nữa. Để nguyên cho tới lần dọn DB gần nhất.
 
 **Cột `course_name` có mặt vì:** thiếu nó thì từ DB không thể biết dòng log nào
 ứng với khóa học nào. Ca hỏng kỹ thuật còn tệ hơn — không đọc được ảnh nên
@@ -925,7 +1332,6 @@ MOOC/
 ├── run.py                    # ★ Job sản xuất: loop / once / retry / status
 ├── run_local.py              # Chạy thử một ảnh bằng tay
 ├── web_demo.py               # Giao diện Gradio
-├── test_api.py               # Kiểm tra kết nối eLIS ① ②
 ├── send_report.py            # Dựng + gửi báo cáo email
 ├── scheduler.py              # Kiểm tra tới giờ gửi báo cáo chưa
 ├── report_layout.py          # Bộ dựng HTML báo cáo (DUY NHẤT)
@@ -934,10 +1340,12 @@ MOOC/
 │   ├── config.py             # ★ Toàn bộ cấu hình (.env) + get_llm()
 │   ├── client.py             # Gọi 3 API eLIS
 │   ├── pipeline.py           # ★ Ba lần so cho MỘT chứng chỉ
-│   ├── compare.py            # ★ Luật so khớp tên / mã / khóa học
+│   ├── compare.py            # ★ Luật so khớp tên / mã / khóa học + nhận diện ca bỏ qua
+│   ├── history.py            # ★ Chỉ mục khóa đã hoàn thành, để chặn nộp trùng
 │   ├── process_data.py       # normalize(), code_from_email(), date_in_range()
 │   ├── llm_vision.py         # Prompt + gọi LLM1 (đọc ảnh)
 │   ├── llm_text.py           # Prompt + gọi LLM2 (đọc text OCR) — giữ ĐỒNG BỘ với llm_vision
+│   ├── llm_error.py          # ★ Phân loại lỗi LLM + retry (hai file trên dùng chung)
 │   ├── ocr_azure.py          # Azure Document Intelligence
 │   ├── file_utils.py         # Kiểm MIME thật + render PDF → ảnh
 │   ├── schemas.py            # Verdict, InputInfo, ExtractedInfo, ProcessResult
@@ -946,7 +1354,7 @@ MOOC/
 │   └── charts.py             # Biểu đồ cho báo cáo
 │
 ├── database/
-│   ├── database.py           # SQLite: ghi log, đếm số lần hỏng kỹ thuật
+│   ├── database.py           # SQLite: ghi log, đếm hỏng kỹ thuật, tra ca đã bỏ qua
 │   └── report.py             # Truy vấn số liệu cho báo cáo
 │
 ├── evaluation/
@@ -964,6 +1372,9 @@ MOOC/
 ├── cert_archive/             # Kho chứng chỉ (gitignored)
 ├── mooc_log.db               # Log SQLite (gitignored)
 ├── Dockerfile · docker-compose.yml · DOCKER.md
+├── .env                      # Key thật (gitignored)
+├── .env.example              # Mẫu — ĐƯỢC git theo dõi, xem mục 15
+├── pyproject.toml            # Cấu hình ruff
 ├── requirements.txt          # Đầy đủ (lập trình ở máy)
 └── requirements-job.txt      # Gọn (container chạy job)
 ```
@@ -979,12 +1390,20 @@ hai bộ luật khác nhau. `tests/test_prompt.py` canh việc này.
 ## 14. Test
 
 ```powershell
-pytest              # toàn bộ
+pytest              # toàn bộ — 374 test
 ruff check .        # lint
 ```
 
 Test **không** gọi API thật — mọi hàm gọi API được truyền vào pipeline dưới dạng
 tham số (dependency injection), nên test thay bằng hàm giả.
+
+`tests/conftest.py` đặt `DUPLICATE_CHECK=0` cho toàn bộ phiên chạy. Không có
+dòng đó thì mọi test đi qua `process_one_round` đều kéo lịch sử từ eLIS thật —
+chậm, phụ thuộc mạng, và bẩn. `tests/test_duplicate.py` tự bật luật cho riêng
+nó. Cùng file cũng có fixture xóa chỉ mục `history` giữa các test, vì chỉ mục
+là biến mức module nên nó sống xuyên suốt cả phiên: không xóa thì một test bật
+luật sẽ để lại dữ liệu cho mọi test chạy sau, kiểu rò rỉ chỉ lộ ra khi đổi thứ
+tự test.
 
 Vài test đáng chú ý:
 
@@ -994,10 +1413,23 @@ Vài test đáng chú ý:
   trường ↔ ngôn ngữ, không chỉ kiểm tra "có chữ TIẾNG VIỆT trong prompt".
 - `test_match_images.py` — canh việc **không** tách tên file theo `_` đầu tiên.
 - `test_course_name.py` — canh cả ba đường khớp song ngữ.
+- `test_llm_error.py` — canh cái bẫy mã `429` (rate-limit vs hết tiền), và
+  canh việc lỗi vĩnh viễn **không** bị thử lại.
 - `test_retry.py::test_qua_nguong_KHONG_BAO_GIO_nop_rejected` — canh **luật
   HR**. Ai khôi phục nhánh bỏ cuộc cũ thì test này đỏ.
 - `test_alert.py` — phần lớn canh việc **không gửi trùng**, vì gửi thiếu thì
   thấy ngay còn gửi trùng chỉ phát hiện khi đã spam mất người nhận.
+- `test_skip.py` — 7 ca email và 9 ca thiếu tên đệm đều lấy **nguyên từ bộ
+  đánh giá thật**, nên test hỏng nghĩa là hành vi lệch khỏi dữ liệu thật chứ
+  không phải lệch khỏi ý tôi. `test_ca_bo_qua_KHONG_BAO_GIO_duoc_nop_ve_elis`
+  canh chiều ngược: ai nối ca bỏ qua vào API ③ thì test này đỏ.
+- `test_duplicate.py::test_nop_cung_khoa_HAI_LAN_trong_MOT_vong` — canh **cửa
+  chặn thứ hai**. Chính test này phát hiện thiết kế ban đầu chỉ lọc một lần ở
+  đầu vòng nên hai bản ghi trùng nhau trong cùng một vòng đều lọt.
+
+**Mỗi luật mới đều được kiểm bằng đột biến**: cố ý làm hỏng từng chốt rồi xem
+test có bắt không. Lần chạy đầu của luật bỏ qua có một chốt lọt lưới (thứ tự
+kiểm tra trong `_unverifiable_identity`), phải viết thêm test mới bắt được.
 
 ---
 
@@ -1037,9 +1469,59 @@ match_report.csv  ·  error_review.xlsx
 
 | Việc | Tình trạng |
 |---|---|
-| Luật **tên đệm** (`"Anh Le"` vs `"Lê Hoàng Anh"`) | **Chờ HR.** Đo được: nới luật giảm từ chối oan 19 → 9, nhưng `"Nguyễn Tuấn"` khớp nhiều người. **Không sửa cho tới khi HR kết luận** |
-| Đo lại độ chính xác sau khi sửa prompt + khớp song ngữ | Chưa chạy — cần gọi LLM thật trên cả bộ |
+| Luật **tên đệm** (`"Anh Le"` vs `"Lê Hoàng Anh"`) | **Chờ HR.** Ca tên trên ảnh thiếu họ/tên đệm nay được **bỏ qua** (mục 5.6) thay vì từ chối oan, nhưng luật `match_name` vẫn giữ nguyên — nới nó là việc riêng, chưa làm |
+| **Cửa sổ thời gian** cho luật nộp trùng | **Chờ HR.** Hiện cứ trùng là từ chối, kể cả người học lại sau hai năm. Dữ liệu: 613 cặp duyệt trùng trong cùng ngày (lọt lưới thật) nhưng 73 cặp cách nhau trên 6 tháng (nhiều khả năng học lại hợp lệ). `ActionDateTime` đã có sẵn nên thêm cửa sổ là dễ |
+| **Bốn ca tên không khớp chưa quyết** | `tienpham89`, `kieuhuuthanh23698` (ảnh in username, không có `@` nên `external_email` không bắt) và hai ca AI không đọc ra tên nào. Hiện vẫn `REJECTED` |
+| Danh sách ca **bỏ qua** chưa vào báo cáo định kỳ | Hiện chỉ có dòng log lúc chạy; tắt job là mất dấu. Trên eLIS chúng trông y hệt chứng chỉ chưa tới lượt xử lý |
+| Đo lại độ chính xác sau khi sửa prompt + khớp song ngữ + hai luật mới | Chưa chạy — cần gọi LLM thật trên cả bộ |
 | **Thu hồi key FPT đã lộ trong lịch sử git** | `.env.example` đã sạch, nhưng **key vẫn phải cấp lại** — xem mục 15 |
+| Thêm `DUPLICATE_CHECK` và `HISTORY_REFRESH_MINUTES` vào `.env` thật | `.env.example` đã có. Thiếu trong `.env` thì vẫn chạy đúng vì mã có giá trị mặc định |
 | Điền `SMTP_USER` / `SMTP_PASSWORD` để cảnh báo gửi được | Không có SMTP thì `alert.py` chỉ ghi lỗi vào log, không ai nhận được thư |
 | Tạo `.alert_state.json` trước khi `docker compose up` | Giống `mooc_log.db`: bind-mount file chưa tồn tại thì Docker tạo một **thư mục** trùng tên |
-| Xóa 3 file thừa còn sót trên máy | `evaluation\compare_tiers.py`, `tests\test_compare_tiers.py`, `tests\test_tier2_only.py` — chưa xóa thì `pytest` lỗi thiếu import |
+| Đổi tên `stage` `skipped_external_email` → `skipped_unverified_identity` | Tên hiện tại hẹp nghĩa hơn thứ nó chứa. Để lại tới lần dọn DB gần nhất — xem mục 12 |
+
+---
+
+## Phụ lục — Số liệu đã đo
+
+Mọi con số trong tài liệu này đều đo được lại, không phải ước lượng.
+
+**Từ `data/information.xlsx`** — 208.426 bản ghi eLIS thật (ảnh chụp 26/08/2026):
+
+| Đo cái gì | Kết quả |
+|---|---|
+| Tên miền email | `fpt.com` 152.990 · `fe.edu.vn` 54.845 · ngoài FPT 583 · **không có gmail/yahoo nào** |
+| Email thiếu, hoặc 1 email ứng 2 mã NV | **0** — email là khóa định danh tin cậy |
+| Số từ trong tên nhân viên | 2 từ: 943 · 3 từ: 138.571 · 4 từ: 68.267 · 5-6 từ: 645 · **không có tên 1 từ** |
+| Cách viết tên khóa học | 6.268 thô → **6.132** sau `normalize()` (gộp 129 nhóm) |
+| Cặp (NV, khóa) nộp từ 2 lần | 4.270, trong đó **3.944** đã có ít nhất một lần duyệt |
+| Cặp được duyệt từ 2 lần | 1.163 — **613 trong cùng một ngày**, 73 cách nhau trên 6 tháng |
+| APPROVED không có tên người duyệt, khóa nội bộ FPT | **80.217** — dấu vết luồng đồng bộ tự động |
+
+**Từ `evaluation/last_run.csv`** — 162 ca đã chạy pipeline thật:
+
+| Đo cái gì | Kết quả |
+|---|---|
+| Ca có email trong tên đọc được | 7 — 6 ca email công ty **đang chạy đúng**, 1 ca gmail cá nhân |
+| Ca từ chối vì `"Tên không khớp"` | 14 — 9 ca thiếu họ/tên đệm, 1 gmail, 2 username, 2 AI không đọc ra tên |
+| Trong 10 ca hai luật bỏ qua bắt được | **6 ca còn sai cả khóa học hoặc ngày** → vẫn `REJECTED`, không bỏ qua |
+
+**Từ API eLIS UAT** (đo bằng script chẩn đoán dùng-một-lần, đã xóa — xem [9.3](#93-kiểm-tra-kết-nối-elis)):
+
+| Đo cái gì | Kết quả |
+|---|---|
+| `status` nhận giá trị nào | WAITING 4 · APPROVED 3.134 · REJECTED 13 · không truyền: 3.151 |
+| `size` trần | **1000** |
+| Lọc theo `employeeId` | **Không** — API bỏ qua tham số |
+| Cặp (NV, khóa) trùng trong lịch sử UAT | 1/3.130 — UAT gần như không có hiện tượng này, **không kiểm chứng được luật ở đây** |
+
+**Chi phí chỉ mục lịch sử** (đo với 194.000 mục, đúng khối lượng production):
+
+| Cách lưu | Bộ nhớ |
+|---|---|
+| `dict[(employeeId, courseId)] -> datetime` | 17,4 MB |
+| `set["email\|khóa"]` | 25,4 MB |
+
+100 lượt tra mỗi vòng poll: **0,004 mili giây**. Tra chỉ mục là một phép băm
+nên chi phí không phụ thuộc chỉ mục có 3.000 hay 200.000 mục — thứ thật sự tốn
+là **lần nạp lại** (~194 request HTTP), không phải bộ nhớ.

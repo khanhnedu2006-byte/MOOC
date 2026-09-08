@@ -108,7 +108,7 @@ def download_certificates(pairs: list[dict]) -> list[dict]:
 
     pairs: list dict {"UserCourseId": ..., "certificate_id": ...}, tối đa 20.
 
-    Trả về list dict: {"userCourseId", "certificate_id", "image_bytes", "ten_file"}
+    Trả về list dict: {"userCourseId", "certificate_id", "anh_bytes", "ten_file"}
     cho các item lấy được file. Item lỗi bị bỏ qua (đã ghi log ở run.py).
 
     Response là JSON, mỗi item có một trường chứa nội dung file dạng base64.
