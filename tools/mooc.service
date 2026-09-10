@@ -1,0 +1,65 @@
+# Dịch vụ systemd cho job MOOC — bản CHẠY THEO NGƯỜI DÙNG (không cần root).
+#
+# Cài:
+#   mkdir -p ~/.config/systemd/user
+#   cp tools/mooc.service ~/.config/systemd/user/
+#   # Sửa hai dòng WorkingDirectory và ExecStart cho đúng đường dẫn thật
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now mooc
+#
+# BẮT BUỘC, ĐỪNG BỎ QUA:
+#   loginctl enable-linger $USER
+# Thiếu dòng này thì systemd giết mọi dịch vụ của bạn NGAY KHI ĐĂNG XUẤT SSH.
+# Job sẽ chạy ngon lúc bạn còn ngồi đó và chết ngay khi bạn đóng terminal —
+# kiểu hỏng làm người ta tưởng code sai.
+#
+# Xem:
+#   systemctl --user status mooc
+#   journalctl --user -u mooc -f          # log trực tiếp
+#   journalctl --user -u mooc --since today | grep -E "APPROVED|REJECTED"
+#
+# Dừng / gỡ:
+#   systemctl --user stop mooc
+#   systemctl --user disable mooc
+
+[Unit]
+Description=MOOC - job xac minh chung chi eLIS bang AI
+# Đợi mạng lên hẳn. eLIS chặn theo IP nên gọi sớm quá chỉ nhận 403 rồi
+# bắn cảnh báo giả cho người vận hành.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# ---- SỬA HAI DÒNG NÀY ----
+WorkingDirectory=%h/MOOC
+ExecStart=%h/MOOC/.venv/bin/python run.py loop
+# --------------------------
+
+# Thiếu dòng này là "OMP: Error #15" trên máy có nhiều bản OpenMP.
+Environment=KMP_DUPLICATE_LIB_OK=TRUE
+# Server công ty thường để UTC. Không đặt thì log lệch 7 tiếng và báo cáo
+# định kỳ gửi sai giờ so với REPORT_TIME trong .env.
+Environment=TZ=Asia/Ho_Chi_Minh
+# In log ra ngay, đừng đệm — thiếu nó thì journalctl trống trơn hàng phút
+# dù job vẫn đang chạy.
+Environment=PYTHONUNBUFFERED=1
+
+# Chết là dựng lại, nghỉ 10 giây. KHÔNG đặt StartLimitBurst mặc định quá
+# chặt: sự cố hạ tầng kéo dài sẽ làm systemd bỏ cuộc hẳn và job nằm im mà
+# không ai biết.
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=0
+
+# Job đọc/ghi trong đúng thư mục dự án, không cần gì thêm.
+NoNewPrivileges=true
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mooc
+
+[Install]
+WantedBy=default.target

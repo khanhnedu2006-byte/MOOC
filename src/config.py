@@ -10,9 +10,30 @@ Cách dùng ở module khác:
 File .env đặt ở thư mục gốc dự án (mooc/.env), KHÔNG commit lên git.
 """
 
+from typing import Any
+
+import vault
 from langchain_openai import ChatOpenAI
 from pydantic import AliasChoices, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (BaseSettings, PydanticBaseSettingsSource,
+                               SettingsConfigDict)
+
+
+class WindowsVaultSource(PydanticBaseSettingsSource):
+    """Nguồn cấu hình đọc bốn khóa bí mật từ Credential Manager của Windows.
+
+    Trả về rỗng ở mọi máy không phải Windows, hoặc chưa cài keyring, hoặc
+    không có backend — nên container Docker chạy y như trước khi có file này.
+    Xem src/vault.py để biết vì sao có ba lớp chặn đó.
+    """
+
+    def get_field_value(self, field, field_name: str):
+        # Lớp cha khai abstract nên bắt buộc phải có, nhưng không dùng: đọc
+        # cả kho một lần trong __call__ rẻ hơn hỏi lại theo từng trường.
+        return None, field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        return vault.read_all()
 
 
 class Settings(BaseSettings):
@@ -26,7 +47,33 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # App desktop sửa cấu hình bằng cách gán thẳng vào object này lúc
+        # đang chạy (src/settings_file.py). Không có validate_assignment thì
+        # pydantic nhận mọi thứ: POLL_INTERVAL_SECONDS = "abc" gán êm ru, rồi
+        # vòng sau nổ TypeError trong luồng nền, cách xa chỗ gây lỗi.
+        validate_assignment=True,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls, settings_cls, init_settings, env_settings,
+        dotenv_settings, file_secret_settings,
+    ):
+        """Thứ tự ưu tiên: tham số > biến môi trường > KHO KHÓA > .env > file.
+
+        Hai vị trí đều có lý do, đặt sai chỗ nào cũng hỏng:
+
+        TRÊN .env — vì nếu .env thắng thì nút "Lưu khóa" trong app thành nút
+        không làm gì cả. Người dùng nhập key mới, app báo đã lưu, chương
+        trình vẫn chạy bằng key cũ trong .env. Hỏng im lặng, rất khó lần ra.
+
+        DƯỚI biến môi trường — vì `set AZURE_KEY=... && python run.py` là
+        cách người ta thử một key khác cho đúng một lần chạy; để kho khóa
+        thắng thì lệnh đó im lặng không có tác dụng. Docker cũng truyền cấu
+        hình bằng biến môi trường, nên quy tắc này giữ nguyên bản server.
+        """
+        return (init_settings, env_settings, WindowsVaultSource(settings_cls),
+                dotenv_settings, file_secret_settings)
 
     # ===== FPT (Gemma) =====
     fpt_api_key: str = Field(description="API key của FPT AI Marketplace")
@@ -180,18 +227,13 @@ class Settings(BaseSettings):
     # đồng bộ tự động của FPT Elearning) nên trùng lặp là chuyện thường xảy ra
     # chứ không phải ca hiếm.
     #
-    # Đối chiếu bằng EMAIL + TÊN KHÓA HỌC (phương án mentor chốt), không phải
-    # employeeId + courseId: getCert không lọc được theo nhân viên nên phải kéo
-    # cả danh sách APPROVED về, mà trong đó email là trường luôn có và luôn duy
-    # nhất — 208.426 dòng dữ liệu thật không có dòng nào thiếu email, cũng
-    # không có email nào ứng với hai mã nhân viên.
+    # Đối chiếu bằng EMAIL + TÊN KHÓA HỌC (phương án mentor chốt). API ① nhận
+    # tham số `employeeEmail` nên hỏi thẳng được từng người, không cần kéo cả
+    # lịch sử về. Email cũng là trường đáng tin nhất để định danh: 208.426 dòng
+    # dữ liệu thật không có dòng nào thiếu email, cũng không có email nào ứng
+    # với hai mã nhân viên.
     duplicate_check: bool = Field(default=True)
 
-    # Bao lâu nạp lại lịch sử đã duyệt một lần.
-    # Nạp lại tốn ~194 request trên production (size trần 1000 bản ghi/trang),
-    # nên đừng đặt quá dày. Chỉ mục cũ KHÔNG gây từ chối oan — nó chỉ làm hệ
-    # thống bỏ sót ca trùng, tức xử lý y như khi chưa có luật này.
-    history_refresh_minutes: int = Field(default=60)
 
     # ===== Email cảnh báo lỗi hệ thống =====
     # Người nhận cảnh báo. KHÁC mail_to (nơi nhận báo cáo định kỳ): cảnh báo

@@ -45,7 +45,6 @@ docker compose logs --tail 100      # xem 100 dòng log cuối
 docker stats mooc-elis-job          # xem CPU/RAM đang dùng
 
 # Chạy lệnh một lần trong container (không đụng job đang chạy nền):
-docker compose run --rm job python test_api.py 1
 docker compose run --rm job python run.py once
 docker compose run --rm job python run.py status   # chỉ XEM hàng đợi, không xử lý
 ```
@@ -101,7 +100,7 @@ không sẽ dính HTTP 403.
 ```bash
 docker compose logs --tail 50        # xem lỗi gần nhất
 docker compose config                # kiểm tra compose file có hợp lệ không
-docker compose run --rm job python test_api.py 1   # chẩn đoán từ TRONG container
+docker compose run --rm job python run.py status   # chẩn đoán từ TRONG container
 ```
 
 Sửa `requirements-job.txt` mà build vẫn dùng bản cũ:

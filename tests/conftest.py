@@ -40,24 +40,3 @@ _GIA = {
 
 for _k, _v in _GIA.items():
     os.environ.setdefault(_k, _v)
-
-
-import pytest                                          # noqa: E402
-
-
-@pytest.fixture(autouse=True)
-def _reset_history():
-    """Xóa chỉ mục lịch sử giữa các test.
-
-    Chỉ mục là biến MỨC MODULE nên nó sống xuyên suốt cả phiên chạy pytest.
-    Không xóa thì một test bật luật chống nộp trùng sẽ để lại dữ liệu cho mọi
-    test chạy sau nó — kiểu rò rỉ chỉ lộ ra khi đổi thứ tự test, và lúc đó rất
-    khó truy.
-    """
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-    import history
-    history.reset()
-    yield
-    history.reset()

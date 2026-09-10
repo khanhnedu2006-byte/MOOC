@@ -29,6 +29,12 @@ tenacity
 # ===== Giao diện demo =====
 gradio
 
+# ===== App desktop trên Windows (main_app.py) =====
+# Chỉ Windows. Trên Linux, keyring kéo theo SecretStorage + jeepney và đi hỏi
+# D-Bus; trong container không có D-Bus nên nó hỏng. Xem src/vault.py.
+keyring; sys_platform == "win32"      # cất 4 khóa bí mật vào Credential Manager
+pystray; sys_platform == "win32"      # biểu tượng khay; thiếu thì app vẫn chạy
+
 # ===== Đọc Excel (chỉ dùng lúc dựng bộ đánh giá, không dùng khi chạy job) =====
 openpyxl
 

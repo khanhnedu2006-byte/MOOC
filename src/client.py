@@ -42,18 +42,9 @@ class ElisError(Exception):
 MAX_PAGE_SIZE = 1000
 
 
-def get_by_status(status: str, page: int = 1, size: int = 100) -> list[dict]:
-    """GET getCert?status=... — trả về list item ở trạng thái đó.
-
-    status nhận WAITING / APPROVED / REJECTED. Đã đo trên UAT: ba giá trị trả
-    về ba con số khác nhau (4 / 3134 / 13) nên API lọc thật, không phớt lờ.
-
-    KHÔNG lọc được theo nhân viên: employeeId, employee_id, employeeCode đều
-    bị API bỏ qua — cả ba đều trả về nguyên 3134 bản ghi. Muốn tra theo người
-    thì phải kéo hết về rồi tự lọc (xem src/history.py).
-    """
+def _get_cert(params: dict) -> list[dict]:
+    """Gọi API ① getCert với bộ tham số tùy ý, trả về data[]."""
     url = f"{settings.elis_base_url}/api/v1/UserCourse/elearning/getCert"
-    params = {"status": status, "page": page, "size": size}
 
     try:
         resp = requests.get(url, headers=_headers(json_body=False),
@@ -69,6 +60,34 @@ def get_by_status(status: str, page: int = 1, size: int = 100) -> list[dict]:
         raise ElisError(f"getCert lỗi: {data.get('message')}")
 
     return data.get("data", [])
+
+
+def get_by_status(status: str, page: int = 1, size: int = 100) -> list[dict]:
+    """GET getCert?status=... — trả về list item ở trạng thái đó.
+
+    status nhận WAITING / APPROVED / REJECTED. Đã đo trên UAT: ba giá trị trả
+    về ba con số khác nhau (4 / 3134 / 13) nên API lọc thật, không phớt lờ.
+    """
+    return _get_cert({"status": status, "page": page, "size": size})
+
+
+def get_by_email(employee_email: str, page: int = 1,
+                 size: int = MAX_PAGE_SIZE) -> list[dict]:
+    """GET getCert?employeeEmail=... — MỌI bản ghi của một nhân viên.
+
+    KHÔNG gửi kèm `status`: bản ghi trả về đã mang sẵn trường `submitStatus`
+    (APPROVED / REJECTED / WAITING), lọc ở phía mình vừa đủ vừa chắc hơn.
+
+    Tên tham số là `employeeEmail` — KHÔNG phải employeeId / employee_id /
+    employeeCode. Ba cái đó đã đo và đều bị API bỏ qua, mỗi lần đều trả về
+    nguyên 3134 bản ghi kèm mã 200 chứ không báo lỗi gì.
+
+    CẢNH BÁO: chính vì API bỏ qua tham số lạ trong IM LẶNG, người gọi PHẢI tự
+    kiểm lại email trong từng bản ghi trả về thay vì tin là đã được lọc. Xem
+    run.py::completed_courses().
+    """
+    return _get_cert({"employeeEmail": employee_email,
+                      "page": page, "size": size})
 
 
 def get_pending_list(page: int = 1, size: int = 100) -> list[dict]:

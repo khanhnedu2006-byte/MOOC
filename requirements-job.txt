@@ -9,6 +9,9 @@
 #   - openai      : langchain-openai đã tự kéo về đúng phiên bản nó cần.
 #   - python-magic-bin : chỉ dành cho Windows; trên Linux dùng libmagic1
 #                   cài qua apt trong Dockerfile.
+#   - keyring, pystray : chỉ app desktop trên Windows dùng. keyring trên
+#                   Linux cần D-Bus, trong container không có. Bỏ ra khỏi
+#                   đây là CỐ Ý — config.py tự rơi về .env.
 
 # ===== Gọi LLM (Gemma qua FPT) =====
 langchain-core

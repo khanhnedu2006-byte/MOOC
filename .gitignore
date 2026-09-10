@@ -38,3 +38,7 @@ eval_images/
 .report_state.json
 # Moc da gui canh bao loi he thong (de chan gui thu trung).
 .alert_state.json
+
+# Sổ ghi ai đổi cấu hình gì, lúc nào (app desktop ghi ra).
+# Không commit: nó là nhật ký của MỘT máy, và có tên tài khoản Windows.
+config_changes.log

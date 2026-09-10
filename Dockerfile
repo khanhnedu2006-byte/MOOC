@@ -36,7 +36,18 @@ RUN pip install --no-cache-dir -r requirements-job.txt
 # ---- Code ----
 COPY src/ ./src/
 COPY database/ ./database/
-COPY run.py test_api.py ./
+
+# Bốn file ở thư mục gốc, KHÔNG PHẢI MỘT.
+#   run.py           điểm vào.
+#   scheduler.py     run.py `import scheduler` ngay ở đầu file — thiếu nó là
+#                    container chết lúc khởi động, ModuleNotFoundError.
+#   send_report.py   scheduler gọi tới khi REPORT_SCHEDULE khác "off".
+#   report_layout.py send_report gọi tới để dựng nội dung thư.
+#
+# CẨN THẬN KHI SỬA DÒNG NÀY: healthcheck bên dưới chỉ `import config`, nên
+# thiếu một trong bốn file thì container chết mà healthcheck vẫn báo khỏe.
+# Kiểm bằng cách chạy thật: docker compose up rồi đọc docker logs.
+COPY run.py scheduler.py send_report.py report_layout.py ./
 
 # ---- Chạy bằng user thường, không phải root ----
 RUN useradd --create-home --shell /bin/bash mooc \

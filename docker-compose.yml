@@ -12,6 +12,23 @@ services:
     image: mooc-elis:latest
     container_name: mooc-elis-job
 
+    # ---- CHẠY TRÊN SERVER LINUX THÌ ĐỌC ĐOẠN NÀY ----
+    # Container chạy bằng user `mooc`, và `useradd` trong image cấp cho nó
+    # uid 1000. File gắn từ ngoài vào (mooc_log.db, .report_state.json,
+    # .alert_state.json) GIỮ NGUYÊN chủ sở hữu của host. Nên nếu tài khoản
+    # Linux của bạn KHÔNG phải uid 1000 — chuyện thường gặp trên server có
+    # nhiều tài khoản — container không ghi được vào chúng, và lỗi hiện ra là
+    # "attempt to write a readonly database", chẳng gợi gì tới quyền file.
+    #
+    # Kiểm:   id -u
+    # Nếu ra 1000 thì bỏ qua. Nếu KHÁC 1000, bỏ dấu # ở dòng dưới rồi chạy:
+    #   UID_HOST=$(id -u) GID_HOST=$(id -g) docker compose up -d
+    #
+    # user: "${UID_HOST:-1000}:${GID_HOST:-1000}"
+    #
+    # Trên Docker Desktop (Windows/macOS) KHÔNG cần và KHÔNG nên bật dòng
+    # này — bind mount ở đó đã tự lo phần quyền.
+
     # Nạp biến trong .env vào container. File nằm ngoài image nên đổi key
     # chỉ cần sửa .env rồi `docker compose restart`, không build lại.
     env_file:

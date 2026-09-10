@@ -35,6 +35,8 @@ tốn một lượt LLM nào**:
 13. [Cấu trúc thư mục](#13-cấu-trúc-thư-mục)
 14. [Test](#14-test)
 15. [Lưu ý bảo mật](#15-lưu-ý-bảo-mật)
+16. [App desktop trên Windows (`main_app.py`)](#16-app-desktop-trên-windows-main_apppy)
+17. [Chạy nền trên server Linux](#17-chạy-nền-trên-server-linux)
 
 ---
 
@@ -334,10 +336,17 @@ trong hai đúng.
 > `employee_code` → **APPROVED**. Đây là lý do `match_name_or_code` có hai
 > nhánh chứ không chỉ một.
 
-> ⚠️ **Luật tên đệm đang chờ HR.** Hiện tại tên rút gọn (`"Anh Le"` cho
-> `"Lê Hoàng Anh"`) bị coi là **không khớp**. Đo trên bộ dữ liệu thật: nới luật
-> này giảm số ca từ chối oan từ 19 xuống 9, nhưng `"Nguyễn Tuấn"` sẽ khớp với
-> nhiều nhân viên khác nhau. **Không sửa cho tới khi có kết luận từ HR.**
+> **Luật tên đệm ĐÃ CHỐT: tên rút gọn thì BỎ QUA, không nới luật khớp.**
+> `match_name` giữ nguyên độ chặt — `"Anh Le"` vẫn **không khớp**
+> `"Lê Hoàng Anh"`. Nhưng thay vì từ chối oan, ca đó rơi vào nhánh bỏ qua
+> (mục [5.6](#56-bỏ-qua--không-xác-minh-được-danh-tính)) và ở lại `WAITING`
+> cho người duyệt xử lý.
+>
+> Đây là lựa chọn có chủ đích chứ không phải chưa làm xong. Nới `match_name`
+> thành so tập con giảm số ca từ chối oan từ 19 xuống 9, nhưng đổi lại
+> `"Nguyễn Tuấn"` sẽ khớp với nhiều nhân viên khác nhau — tức mua 10 ca đúng
+> bằng một lỗ hổng danh tính. Bỏ qua thì không mất ca nào mà cũng không mở
+> lỗ hổng nào; cái giá là người duyệt phải xem 9 ca đó bằng mắt.
 
 ### 4.2. So TÊN KHÓA HỌC — song ngữ
 
@@ -766,14 +775,22 @@ thường sẽ tự rơi khỏi danh sách bỏ qua.
 Đường ra duy nhất là người duyệt vào eLIS bấm duyệt hoặc từ chối; thao tác đó
 đưa bản ghi rời `WAITING` và getCert thôi trả về nó.
 
-> **Giới hạn đã biết:** ảnh in `"NGUYEN THUY LINH minhnt4487@gmail.com"` vẫn bị
-> bỏ qua dù tên đúng nằm ngay đó, vì `match_name` so tập hợp từ tuyệt đối nên
-> ba từ thừa làm phép so trượt. Chữa được, nhưng phải nới `match_name` thành so
-> tập con — mà luật khớp tên **đang chờ HR**. Hướng sai này an toàn (về tay
-> người duyệt, không bị từ chối oan) nên để nguyên và ghi lại ở
-> `tests/test_skip.py`.
+> **Giới hạn đã biết, và CỐ Ý để nguyên:** ảnh in
+> `"NGUYEN THUY LINH minhnt4487@gmail.com"` vẫn bị bỏ qua dù tên đúng nằm ngay
+> đó, vì `match_name` so tập hợp từ tuyệt đối nên ba từ thừa làm phép so trượt.
+> Chữa được — nới `match_name` thành so tập con — nhưng đó chính là thứ đã bị
+> loại ở [4.1](#41-so-tên-người-nhận): nới ra thì `"Nguyễn Tuấn"` khớp với
+> nhiều người. Hướng sai hiện tại an toàn (về tay người duyệt, không bị từ
+> chối oan), nên giữ nguyên và ghi lại ở `tests/test_skip.py`.
 
 ### 5.7. Nộp trùng khóa học
+
+> **LUẬT NGHIỆP VỤ (HR chốt): một khóa học chỉ được học MỘT LẦN.**
+> Đã được duyệt khóa nào thì nộp lại khóa đó là trùng, dù cách nhau một ngày
+> hay ba năm. **Không có cửa sổ thời gian** — luật kiểu "chỉ tính nếu duyệt
+> trong vòng N tháng" trông như phòng xa nhưng chính là lỗ hổng.
+> `tests/test_duplicate.py::test_duyet_TU_LAU_van_tinh_la_trung` chặn việc
+> thêm vào: ai viết cửa sổ thời gian sẽ làm test đỏ và phải quay lại hỏi HR.
 
 Có **hai luồng** cùng đẩy chứng chỉ vào eLIS: hệ thống này (quét bằng AI), và
 luồng đồng bộ tự động của FPT Elearning (đẩy thẳng, không xác minh). Cùng một
@@ -781,9 +798,9 @@ khóa của cùng một người vì thế có thể vào eLIS hai lần, thành
 riêng với hai `user_course_id` khác nhau**.
 
 Đo trên 208.426 dòng dữ liệu thật: **80.217** bản ghi khóa nội bộ FPT được
-duyệt mà không có tên người duyệt nào — đó là luồng tự động. **4.270** cặp
-(nhân viên, khóa học) được nộp từ hai lần trở lên, trong đó **3.944** cặp đã có
-ít nhất một lần được duyệt.
+duyệt mà không có tên người duyệt nào — đó là luồng tự động. **1.163** cặp
+(nhân viên, khóa học) đã được duyệt từ hai lần trở lên; theo luật trên thì cả
+1.163 đều là lọt lưới, không cái nào là ngoại lệ hợp lệ.
 
 **Khóa đối chiếu là EMAIL + TÊN KHÓA HỌC**, không phải `user_course_id`: hai
 lần nộp là hai bản ghi riêng nên id luôn khác nhau, tra theo nó thì không bao
@@ -794,48 +811,73 @@ Tên khóa học đưa qua `normalize()` trước khi so — dữ liệu thật 
 viết tên, sau chuẩn hóa còn 6.132. So thô là bỏ sót 129 nhóm chỉ lệch dấu cách
 thừa hoặc hoa/thường.
 
-**Chỉ mục lịch sử** (`src/history.py`) giữ trong bộ nhớ:
+#### Hỏi thẳng eLIS theo email
 
 ```
-{email chữ thường: {tên khóa đã chuẩn hóa, ...}}
+client.get_by_email(email)          GET getCert?employeeEmail=...
+        │                           KHÔNG gửi kèm status
+        ▼   run.completed_courses() lọc HAI lần trên dữ liệu trả về
+   employeeEmail có khớp không?
+   submitStatus == "APPROVED"?
+        │
+        ▼
+   set(normalize(courseName))       đem so với courseName của ca WAITING
 ```
 
-Dựng bằng `getCert?status=APPROVED`, kéo hết trang với `size=1000` (trần API).
-UAT: 4 request. Production ~194.000 bản ghi: khoảng 194 request. Nạp lại mỗi
-`HISTORY_REFRESH_MINUTES` phút.
+API ① nhận tham số `employeeEmail`, nên mỗi chứng chỉ chỉ tốn **một** request
+và dữ liệu **luôn tươi** — không có chỉ mục để cũ đi, không có nhịp nạp lại để
+chỉnh. Đo trên production: 38 nhân viên trong 9 giây, ~0,24 giây mỗi lần hỏi.
 
-Không lưu xuống DB vì API không có tham số "lấy từ ngày X trở đi" — mỗi lần làm
-mới đều phải kéo lại toàn bộ, nên bảng DB cũng chỉ là xóa sạch ghi lại. Đo thật
-với 194.000 mục: **17 MB** bộ nhớ, và 100 lượt tra mỗi vòng poll hết **0,004
-mili giây** (tra chỉ mục là một phép băm, chi phí không phụ thuộc kích thước).
+Ba tên tham số khác đã thử và đều **bị API bỏ qua**: `employeeId`,
+`employee_id`, `employeeCode` — cả ba trả về 200 kèm nguyên 3.134 bản ghi chứ
+không báo lỗi gì.
 
-**Hai cửa chặn, và cửa thứ hai không thừa:**
+#### Hai phép lọc, và cả hai đều bắt buộc
 
+**Lọc `submitStatus`** là chỗ nguy hiểm nhất của cả luật. Hỏi theo email thì
+eLIS trả về **mọi** bản ghi của người đó — kể cả chính chứng chỉ WAITING đang
+xử lý. Bỏ phép lọc này thì chứng chỉ nào cũng "trùng" với **chính nó**, và cả
+hàng đợi bị từ chối tự động mà không có lỗi nào được ném ra.
+
+Cạm bẫy đi kèm: hai trường nằm sát nhau trong cùng bản ghi.
+
+```json
+"status": "REGISTED",        ← trạng thái ĐĂNG KÝ HỌC, luôn là REGISTED
+"submitStatus": "APPROVED",  ← trạng thái DUYỆT CHỨNG CHỈ, cái cần đọc
 ```
-split_duplicates()        đầu vòng, lọc cả danh sách
-handle_one_certificate()  ngay trước khi tải file
-```
 
-Cửa đầu chạy **một lần** trên cả danh sách, nên hai bản ghi trùng nhau **nằm
-trong cùng một vòng** đều lọt qua nó — lúc đó chưa cái nào được duyệt. Cái đầu
-được quét, duyệt, rồi ghi vào chỉ mục qua `history.remember()`; chỉ cửa thứ hai
-mới chặn được cái sau.
+Đọc nhầm `status` thì phép lọc mất tác dụng hoàn toàn — không bản ghi nào có
+`status == "APPROVED"` nên `completed_courses()` luôn rỗng và luật im lặng
+ngừng hoạt động.
 
-**Hỏng thì MỞ, không đóng.** Kéo lịch sử thất bại thì `refresh()` ghi log rồi
-**giữ nguyên chỉ mục cũ**, không xóa đi — bản cũ vẫn bắt được phần lớn ca trùng
-còn hơn là không có gì. Nếu lỗi ngay từ lần nạp đầu tiên thì chỉ mục rỗng, và
-chỉ mục rỗng nghĩa là không phát hiện được ca trùng nào — chứng chỉ đi tiếp
-theo luồng bình thường.
+**Tự kiểm lại email** vì API bỏ qua tham số lạ trong im lặng. Nếu một ngày nào
+đó `employeeEmail` cũng bị bỏ qua — đổi phiên bản API, đổi gateway, gõ sai tên
+— thì cái trả về là lịch sử của **mọi người**, và mọi chứng chỉ sẽ bị từ chối
+vì "trùng" với khóa của người lạ. Phát hiện bản ghi lạc thì ghi log lỗi rõ ràng
+và trả về rỗng, tức **bỏ qua luật** chứ không kết luận bừa.
 
-Chiều ngược lại mới nguy: coi lỗi mạng là "chưa từng duyệt" rồi từ chối hàng
-loạt thì một sự cố hạ tầng biến thành hàng trăm từ chối oan.
+#### Một cửa chặn, cộng bộ nhớ trong vòng
 
-> **Chưa có cửa sổ thời gian.** Hiện cứ trùng là từ chối, kể cả người học lại
-> sau hai năm. Dữ liệu production cho thấy trong 1.163 cặp từng được duyệt hai
-> lần, **613 cặp duyệt trong cùng một ngày** (gần như chắc chắn là lọt lưới)
-> nhưng **73 cặp cách nhau trên 6 tháng** (nhiều khả năng là học lại hợp lệ).
-> `ActionDateTime` có sẵn trong bản ghi API trả về nên thêm cửa sổ là dễ —
-> đang chờ HR trả lời khóa nào phải học lại định kỳ.
+Kiểm ngay trước khi tải file, trong `handle_one_certificate()` — ca trùng
+không tốn lượt LLM nào. Kèm theo là `_approved_this_round`: hai bản ghi trùng
+nhau **cùng nằm trong một vòng** thì cái đầu vừa được nộp APPROVED nhưng eLIS
+chưa chắc kịp phản ánh khi cái thứ hai hỏi. Bộ nhớ đó được **xóa ở đầu mỗi
+vòng**, vì từ vòng sau eLIS đã có dữ liệu thật; không xóa thì một khóa vừa
+duyệt bị coi là trùng mãi mãi và không ai truy ra vì sao.
+
+#### Hỏng thì MỞ, không đóng
+
+Không tra được lịch sử (eLIS lỗi, API không lọc đúng, thiếu email hoặc tên
+khóa) thì chứng chỉ **đi tiếp theo luồng thường**. Chiều ngược lại mới nguy:
+coi lỗi mạng là "chưa từng duyệt" rồi từ chối hàng loạt thì một sự cố hạ tầng
+biến thành hàng trăm từ chối oan.
+
+> **Đã đo được gì, và chưa đo được gì.** Quét toàn bộ hàng đợi production
+> (59 chứng chỉ, 38 nhân viên): **0 ca bị gắn nhãn trùng** — luật không bắt
+> oan. Nhưng vì hàng đợi không có ca trùng nào, điều đó **chưa chứng minh luật
+> bắt được**: một luật luôn trả `False` cũng cho ra đúng kết quả ấy. Muốn đo
+> tỷ lệ bắt trúng thì chạy luật ngược lên các bản ghi `REJECTED` mà người
+> duyệt đã ghi lý do có chữ "trùng" — khoảng 1.900 ca trong dữ liệu tháng 8.
 
 ---
 
@@ -1100,7 +1142,7 @@ lại tốn công hơn nhiều so với đọc một bảng:
 |---|---|
 | `status` nhận giá trị nào | `WAITING` / `APPROVED` / `REJECTED` — ba con số khác nhau (4 / 3.134 / 13 trên UAT), tức API **lọc thật** chứ không phớt lờ tham số |
 | `size` trần bao nhiêu | **1000** — gửi `size=5000` vẫn chỉ nhận về 1000 |
-| Lọc được theo nhân viên? | **Không** — `employeeId`, `employee_id`, `employeeCode` đều bị bỏ qua, cả ba đều trả về nguyên 3.134 bản ghi |
+| Lọc được theo nhân viên? | **Được, bằng `employeeEmail`.** Ba tên khác — `employeeId`, `employee_id`, `employeeCode` — đều bị bỏ qua, cả ba trả về nguyên 3.134 bản ghi. Chọn sai tên tham số là ca hỏng im lặng, API không báo gì |
 | Bản ghi APPROVED có gì | `courseId`, `ActionDateTime` (lúc ghi comment), `ActionBy`, `comment`, `submitStatus` |
 
 > **Bẫy khi đo API kiểu này:** bỏ qua tham số lạ là hành vi rất thường gặp. Nếu
@@ -1149,7 +1191,15 @@ docker compose run --rm job python run.py status
 ## 11. Cấu hình đầy đủ (`.env`)
 
 Cấu hình đọc bằng `pydantic-settings` từ file `.env` **và** biến môi trường.
-Biến môi trường thắng file. Toàn bộ định nghĩa nằm ở `src/config.py`.
+Toàn bộ định nghĩa nằm ở `src/config.py`. Thứ tự ưu tiên đầy đủ:
+
+```
+tham số  >  biến môi trường  >  kho khóa Windows  >  .env  >  file secrets
+```
+
+Kho khóa chỉ giữ bốn khóa bí mật và chỉ có tác dụng trên Windows — xem mục 16.3.
+Mọi tham số dưới đây (trừ bốn khóa đó) còn **sửa được ngay trong app desktop**,
+có hiệu lực từ vòng sau mà không cần khởi động lại — xem mục 16.2.
 
 ### 11.1. FPT AI Marketplace (Gemma — LLM1 & LLM2)
 
@@ -1236,8 +1286,7 @@ Cảnh báo dùng chung cấu hình SMTP với báo cáo (`SMTP_HOST`, `SMTP_USE
 
 | Biến | Mặc định | Giải thích |
 |---|---|---|
-| `DUPLICATE_CHECK` | `1` | `1` = bật. Chứng chỉ của khóa nhân viên **đã được duyệt** bị từ chối ngay, không tốn lượt LLM nào |
-| `HISTORY_REFRESH_MINUTES` | `60` | Bao lâu nạp lại lịch sử đã duyệt từ eLIS. Nạp lại tốn ~194 request trên production nên đừng đặt quá dày. Chỉ mục cũ **không** gây từ chối oan — nó chỉ làm hệ thống bỏ sót ca trùng, tức xử lý y như khi chưa có luật này |
+| `DUPLICATE_CHECK` | `1` | `1` = bật. Chứng chỉ của khóa nhân viên **đã được duyệt** bị từ chối ngay, không tốn lượt LLM nào. Mỗi chứng chỉ tốn thêm một request hỏi eLIS (~0,24 giây) |
 
 Chi tiết cơ chế ở [5.7](#57-nộp-trùng-khóa-học).
 
@@ -1335,13 +1384,13 @@ MOOC/
 ├── send_report.py            # Dựng + gửi báo cáo email
 ├── scheduler.py              # Kiểm tra tới giờ gửi báo cáo chưa
 ├── report_layout.py          # Bộ dựng HTML báo cáo (DUY NHẤT)
+├── main_app.py               # ★ App desktop Windows: khay + cửa sổ + bộ đếm
 │
 ├── src/
 │   ├── config.py             # ★ Toàn bộ cấu hình (.env) + get_llm()
 │   ├── client.py             # Gọi 3 API eLIS
 │   ├── pipeline.py           # ★ Ba lần so cho MỘT chứng chỉ
 │   ├── compare.py            # ★ Luật so khớp tên / mã / khóa học + nhận diện ca bỏ qua
-│   ├── history.py            # ★ Chỉ mục khóa đã hoàn thành, để chặn nộp trùng
 │   ├── process_data.py       # normalize(), code_from_email(), date_in_range()
 │   ├── llm_vision.py         # Prompt + gọi LLM1 (đọc ảnh)
 │   ├── llm_text.py           # Prompt + gọi LLM2 (đọc text OCR) — giữ ĐỒNG BỘ với llm_vision
@@ -1351,7 +1400,10 @@ MOOC/
 │   ├── schemas.py            # Verdict, InputInfo, ExtractedInfo, ProcessResult
 │   ├── archive.py            # Lưu chứng chỉ vào kho
 │   ├── alert.py              # ★ Email cảnh báo lỗi hệ thống (gộp + chặn trùng)
-│   └── charts.py             # Biểu đồ cho báo cáo
+│   ├── charts.py             # Biểu đồ cho báo cáo
+│   ├── app_runner.py         # ★ Luồng chạy job của app desktop (KHÔNG có Tk)
+│   ├── settings_file.py      # ★ Sửa cấu hình lúc chạy + ghi ngược vào .env
+│   └── vault.py              # ★ Kho khóa Windows (Credential Manager)
 │
 ├── database/
 │   ├── database.py           # SQLite: ghi log, đếm hỏng kỹ thuật, tra ca đã bỏ qua
@@ -1367,10 +1419,16 @@ MOOC/
 │   ├── export_errors.py      # Excel ca lệch cho HR
 │   └── export_compare.py     # Bảng HUMAN vs AI (CSV 6 cột)
 │
+├── tools/
+│   ├── autostart.ps1         # Cài/gỡ tác vụ tự chạy khi đăng nhập Windows
+│   ├── mooc.service          # ★ Dịch vụ systemd — chạy nền trên server Linux
+│   └── preflight.sh          # Kiểm server trước khi bật dịch vụ
+│
 ├── tests/                    # pytest
 ├── data/                     # Dữ liệu thật (gitignored)
 ├── cert_archive/             # Kho chứng chỉ (gitignored)
 ├── mooc_log.db               # Log SQLite (gitignored)
+├── config_changes.log        # Sổ ai đổi cấu hình gì, lúc nào (gitignored)
 ├── Dockerfile · docker-compose.yml · DOCKER.md
 ├── .env                      # Key thật (gitignored)
 ├── .env.example              # Mẫu — ĐƯỢC git theo dõi, xem mục 15
@@ -1390,7 +1448,7 @@ hai bộ luật khác nhau. `tests/test_prompt.py` canh việc này.
 ## 14. Test
 
 ```powershell
-pytest              # toàn bộ — 374 test
+pytest              # toàn bộ — 443 test
 ruff check .        # lint
 ```
 
@@ -1398,12 +1456,12 @@ Test **không** gọi API thật — mọi hàm gọi API được truyền vào
 tham số (dependency injection), nên test thay bằng hàm giả.
 
 `tests/conftest.py` đặt `DUPLICATE_CHECK=0` cho toàn bộ phiên chạy. Không có
-dòng đó thì mọi test đi qua `process_one_round` đều kéo lịch sử từ eLIS thật —
-chậm, phụ thuộc mạng, và bẩn. `tests/test_duplicate.py` tự bật luật cho riêng
-nó. Cùng file cũng có fixture xóa chỉ mục `history` giữa các test, vì chỉ mục
-là biến mức module nên nó sống xuyên suốt cả phiên: không xóa thì một test bật
-luật sẽ để lại dữ liệu cho mọi test chạy sau, kiểu rò rỉ chỉ lộ ra khi đổi thứ
-tự test.
+dòng đó thì mọi test đi qua `process_one_round` đều gọi eLIS thật để hỏi lịch
+sử — chậm, phụ thuộc mạng, và bẩn. `tests/test_duplicate.py` tự bật luật cho
+riêng nó, và fixture của nó xóa `run._approved_this_round` cả trước lẫn sau
+mỗi test: đó là biến mức module nên nó sống xuyên suốt cả phiên, không xóa thì
+một test để lại dữ liệu cho mọi test chạy sau — kiểu rò rỉ chỉ lộ ra khi đổi
+thứ tự test.
 
 Vài test đáng chú ý:
 
@@ -1423,6 +1481,16 @@ Vài test đáng chú ý:
   đánh giá thật**, nên test hỏng nghĩa là hành vi lệch khỏi dữ liệu thật chứ
   không phải lệch khỏi ý tôi. `test_ca_bo_qua_KHONG_BAO_GIO_duoc_nop_ve_elis`
   canh chiều ngược: ai nối ca bỏ qua vào API ③ thì test này đỏ.
+- `test_app_runner.py` — canh chỗ app desktop **tự ghi sổ** cho `alert` sau khi
+  tự gọi API ①. Quên `api_succeeded` thì bộ đếm lỗi không bao giờ về 0: eLIS
+  đã sống lại từ lâu mà hệ thống vẫn gửi thư báo động.
+- `test_settings_file.py` — canh việc ghi ngược `.env` **không làm mất chú
+  thích**, và canh thứ tự ghi-đĩa-trước-gán-bộ-nhớ-sau. Có một test quét AST
+  toàn dự án để chắc không chỗ nào đọc `settings.X` ở mức module — nền tảng
+  của việc sửa cấu hình mà không cần khởi động lại.
+- `test_vault.py` — canh **thứ tự ưu tiên** của nguồn cấu hình: kho khóa phải
+  thắng `.env` (không thì nút "Lưu khóa" là nút giả) nhưng phải thua biến môi
+  trường (không thì Docker và lệnh ghi đè một lần mất tác dụng).
 - `test_duplicate.py::test_nop_cung_khoa_HAI_LAN_trong_MOT_vong` — canh **cửa
   chặn thứ hai**. Chính test này phát hiện thiết kế ban đầu chỉ lọc một lần ở
   đầu vòng nên hai bản ghi trùng nhau trong cùng một vòng đều lọt.
@@ -1430,6 +1498,11 @@ Vài test đáng chú ý:
 **Mỗi luật mới đều được kiểm bằng đột biến**: cố ý làm hỏng từng chốt rồi xem
 test có bắt không. Lần chạy đầu của luật bỏ qua có một chốt lọt lưới (thứ tự
 kiểm tra trong `_unverifiable_identity`), phải viết thêm test mới bắt được.
+
+Luật kho khóa cũng vậy: 8 đột biến, lần đầu lọt một chốt. Bỏ điều kiện
+`sys.platform != "win32"` trong `vault.py` mà test vẫn xanh — vì trên Linux
+`keyring` trả về backend `fail` nên kết quả cuối vẫn là `None`. Xanh ở CI, hỏng
+trên máy thật. Phải sửa test thành **cấm luôn câu import** mới bắt được.
 
 ---
 
@@ -1462,6 +1535,321 @@ match_report.csv  ·  error_review.xlsx
 - Gửi PII nhân viên qua Gmail cá nhân cần được mentor duyệt trước khi dùng thật.
 - Container chạy bằng **user thường**, không phải root; `.env` được **gắn lúc
   chạy**, không nhúng vào image.
+- Trên Windows, bốn khóa bí mật nên để trong Credential Manager thay vì `.env`
+  (xem mục 16.3). Nó bảo vệ **file**, không bảo vệ **máy**: ai đăng nhập được
+  đúng tài khoản Windows đó vẫn đọc ra được.
+
+---
+
+## 16. App desktop trên Windows (`main_app.py`)
+
+Bản Docker ở mục 10 dành cho server. Mục này dành cho cách chạy thứ hai: một
+app chạy trên máy người vận hành, mở lên là job chạy, giống UniKey.
+
+```powershell
+pip install keyring pystray     # chỉ cần một lần
+python main_app.py
+```
+
+App **không** chứa luật nghiệp vụ nào. Mọi phán quyết vẫn do `run.py` đưa ra;
+`main_app.py` gọi `run.process_one_round()` trong một luồng nền và gắn thêm một
+`logging.Handler` để nhật ký chảy vào cửa sổ. `run.py` không sửa một dòng nào —
+chạy `python run.py loop` vẫn cho ra đúng kết quả và đúng nhật ký như trước.
+
+Nhưng app **không chỉ** gọi mỗi `process_one_round`. Nó còn tự làm bốn việc, và
+biết rõ bốn việc đó thì mới sửa được đúng chỗ khi có sự cố:
+
+Cả bốn nằm trong `JobRunner._one_round` — ở `src/app_runner.py`, không phải
+`main_app.py`. Tách ra vì `main_app.py` `import tkinter` mà máy CI Linux thường
+không cài `python3-tk`; để chung thì cả bộ test không import nổi, và đúng phần
+dễ sai nhất này sẽ không có test nào canh (`tests/test_app_runner.py`).
+
+| App tự làm gì | Vì sao |
+|---|---|
+| Gọi `client.get_pending_list` lấy hàng đợi rồi truyền `items` vào `process_one_round` | `RoundResult` không nói hàng đợi dài bao nhiêu, mà đó là con số đầu tiên người ta muốn nhìn |
+| Ghi sổ `alert.api_failed` / `api_succeeded` cho API ① | Hệ quả của việc trên: tự gọi API thì phải tự ghi sổ, y như `run.py` làm. Lệch chỗ này là email cảnh báo sai |
+| Hỏi `database.skipped_ids()` và `count_by_verdict()` | Hai ô số "Bỏ qua" và "Từ chối" không nằm trong `RoundResult` |
+| Gọi `scheduler.check_and_send()` sau mỗi vòng | Đúng như `run_forever` làm. Thiếu nó là báo cáo định kỳ im lặng không gửi |
+
+Chỉ hai trong năm ô số lấy thẳng từ `RoundResult` (eLIS đã nhận, Đang hoãn).
+Ba ô còn lại app tự tính từ ba nguồn ở bảng trên.
+
+### 16.1 Ba tab
+
+| Tab | Có gì |
+|---|---|
+| **Bảng điều khiển** | 5 ô số (hàng đợi · eLIS đã nhận · từ chối · bỏ qua · đang hoãn), nhật ký cuộn theo dòng mới, nút Tạm dừng / Chạy vòng ngay / Thử lại ca đang hoãn / Mở thư mục log |
+| **Ca bỏ qua** | Danh sách chứng chỉ để nguyên WAITING vì không xác minh được danh tính, đọc từ `mooc_log.db` |
+| **Cấu hình** | Bốn ô nhập khóa bí mật (ghi vào kho khóa Windows) + **31 ô sửa được** cho mọi cấu hình còn lại |
+
+### 16.2 Sửa cấu hình ngay trong app
+
+Mọi tham số trong `.env` — trừ bốn khóa bí mật, xem 16.3 — sửa được ở tab Cấu
+hình. Bấm **Lưu thay đổi** là ba việc xảy ra, theo đúng thứ tự này:
+
+1. **Kiểm trước, trên một BẢN SAO.** `POLL_INTERVAL_SECONDS = "abc"` bị chặn
+   ngay ở hộp thoại, không phải đợi vòng sau nổ trong luồng nền. Kiểm trên bản
+   sao chứ không gán thẳng: sửa ba trường mà trường thứ ba sai thì hai trường
+   đầu đã kịp đổi, và hệ thống chạy tiếp bằng một nửa cấu hình mới.
+2. **Ghi xuống `.env`.**
+3. **Gán vào object `settings` đang chạy** — có hiệu lực từ vòng kế tiếp,
+   không phải khởi động lại.
+
+**Thứ tự 2 trước 3 là bắt buộc.** Làm ngược lại thì khi đĩa đầy hoặc file bị
+khóa, hệ thống chạy bằng cấu hình mới trong khi file vẫn giữ cấu hình cũ —
+khởi động lại là im lặng quay về giá trị cũ và không ai hiểu vì sao.
+
+Việc (3) chạy được là nhờ **không chỗ nào trong dự án đọc `settings.X` ở mức
+module** — mọi nơi đều đọc lại trong thân hàm. Điều đó không tự nhiên đúng mãi:
+ai đó viết `NGUONG = settings.technical_alert_after` ở đầu file là từ đó nút Lưu
+im lặng mất tác dụng cho riêng chỗ ấy. `test_settings_file.py` quét bằng AST để
+canh.
+
+**Ghi `.env` không làm mất chú thích.** File `.env` có chú thích giải thích từng
+tham số; dựng lại file từ một dict là xóa sạch. Code sửa đúng chỗ giá trị trên
+từng dòng, giữ nguyên mọi thứ còn lại — kể cả chú thích cuối dòng
+(`RETRY_COUNT=3   # ba lần là đủ`).
+
+**Tên biến phụ được tôn trọng.** `TECHNICAL_ALERT_AFTER` còn ăn tên cũ
+`TECHNICAL_RETRY_MAX`; nếu `.env` đang dùng tên cũ thì code sửa đúng dòng đó chứ
+không thêm dòng thứ hai — hai dòng cho một tham số thì người đọc sau không biết
+dòng nào có tác dụng.
+
+**Đổi lại là một cuốn sổ.** Cho sửa luật nghiệp vụ bằng vài cú bấm chuột thì
+phải có dấu vết: mỗi thay đổi ghi một dòng `thời điểm · tài khoản Windows · tên
+biến · cũ → mới` vào `config_changes.log` (gitignored) và vào nhật ký của app.
+Không có nó, ba tháng sau không ai trả lời được câu "vì sao `COURSE_MATCH_MODE`
+thành `strict`".
+
+Hai trường chỉ nhận vài giá trị (`course_match_mode`, `report_schedule`) hiện
+dạng danh sách chọn chứ không phải ô gõ tự do: gõ `"Strict"` hoa chữ S thì
+pydantic nhận, nhưng `pipeline.py` so bằng `==` nên luật siết im lặng không bật.
+
+### 16.3 Khóa bí mật để trong kho khóa Windows
+
+Bốn giá trị `FPT_API_KEY`, `AZURE_KEY`, `ELIS_API_KEY`, `SMTP_PASSWORD` cất
+được vào Credential Manager thay vì để chữ thường trong `.env`. Windows mã hóa
+bằng DPAPI, khóa gắn với tài khoản đang đăng nhập. Code ở `src/vault.py`.
+
+**Thứ tự ưu tiên khi đọc cấu hình** (`Settings.settings_customise_sources`):
+
+```
+tham số  >  biến môi trường  >  KHO KHÓA  >  .env  >  file secrets
+```
+
+Hai vị trí đều có lý do, đặt sai chỗ nào cũng hỏng im lặng:
+
+- **Trên `.env`** — nếu `.env` thắng thì nút "Lưu" trong app thành nút không làm
+  gì cả: người dùng nhập key mới, app báo đã lưu, chương trình vẫn chạy key cũ.
+- **Dưới biến môi trường** — `set AZURE_KEY=... && python run.py` là cách thử
+  một key khác cho đúng một lần chạy; để kho khóa thắng thì lệnh đó mất tác
+  dụng. Docker cũng truyền cấu hình bằng biến môi trường.
+
+**Nó bảo vệ FILE, không bảo vệ MÁY.** Ai đăng nhập được đúng tài khoản Windows
+đó vẫn đọc ra được bằng chính thư viện `keyring`. Câu mô tả đúng là "khóa không
+còn nằm dạng chữ thường trên đĩa", không phải "đã bảo mật". Hệ quả kèm theo:
+chép thư mục dự án sang máy khác thì khóa **không** đi theo — phải nhập lại.
+
+**Bản Docker không đổi gì.** `src/vault.py` trả về rỗng ở mọi máy không phải
+Windows, và `keyring` cố ý **không** nằm trong `requirements-job.txt` — trên
+Linux nó kéo theo SecretStorage + jeepney rồi đi hỏi D-Bus, mà container không
+có D-Bus. `tests/test_vault.py` cấm luôn câu `import keyring` khi không phải
+Windows, chứ không chỉ kiểm giá trị trả về.
+
+### 16.4 Tự chạy khi mở máy
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\autostart.ps1 install
+powershell -ExecutionPolicy Bypass -File tools\autostart.ps1 status
+powershell -ExecutionPolicy Bypass -File tools\autostart.ps1 uninstall
+```
+
+Không cần quyền admin. Dùng Task Scheduler chứ không dùng khóa Registry `Run`:
+khóa `Run` chỉ chạy chương trình đúng một lần lúc đăng nhập, app chết giữa
+chừng là thôi, sáng hôm sau mới biết. Task Scheduler chạy lại được và nói cho
+biết lần chạy cuối kết thúc ra sao.
+
+Hai mặc định của Windows **sai** với app này, script phải đặt lại:
+
+| Tham số | Mặc định | Vì sao phải đổi |
+|---|---|---|
+| `ExecutionTimeLimit` | 3 ngày | Windows tự giết app vào ngày thứ tư |
+| `*OnBatteries` | dừng khi rút sạc | Máy vận hành là laptop → job chết im lặng |
+
+Script còn đặt `-MultipleInstances IgnoreNew`. Cái này **trùng** với mặc định
+của Windows, viết ra chỉ để nói rõ ý — nó là lớp phòng thủ thứ hai bên cạnh
+khóa socket trong `main_app.py`, vì chạy hai bản là mỗi chứng chỉ tốn hai lượt
+LLM.
+
+Script chạy `pythonw.exe` chứ không phải `python.exe`: `python.exe` để lại một
+cửa sổ console đen trên màn hình mỗi lần đăng nhập, mà cửa sổ đó đóng là job
+chết.
+
+### 16.5 Ba điều phải nói trước với mentor
+
+- **Máy tắt là job dừng.** Khác hẳn Docker trên server. Tắt máy buổi tối thì đêm
+  đó không chứng chỉ nào được xử lý, sáng hôm sau hàng đợi dồn lại.
+- **Chỉ chạy được trên máy đã allowlist.** eLIS chặn theo IP, nên không phát
+  file cài này cho người khác trong công ty được. App dành cho đúng một người.
+- **Chạy hai bản là hỏng.** `main_app.py` giữ một socket ở `127.0.0.1:47615`
+  làm khóa; bản thứ hai mở lên sẽ tự thoát. Dùng socket chứ không dùng file
+  khóa vì file khóa còn nguyên sau khi app bị kill, lần mở sau tưởng đang có
+  bản chạy dù không có.
+
+---
+
+## 17. Chạy nền trên server Linux
+
+Mục 16 là app chạy trên máy người vận hành. Mục này là cách chạy thật: job
+nằm trên server công ty, chạy 24/7, tự bật lại khi chết và khi server khởi
+động lại. HR không vào server — HR vào **eLIS** xem kết quả; việc của server
+chỉ là đẩy phán quyết lên đó đều đặn.
+
+### 17.0 Quyết định trước: CHỈ MỘT chỗ được chạy
+
+Job đọc hàng đợi WAITING rồi nộp kết quả. Hai chỗ cùng chạy nghĩa là mỗi
+chứng chỉ tốn **hai lượt Gemma + Azure**, và cả hai cùng gọi API ③ cho một
+bản ghi.
+
+Khóa socket trong `main_app.py` chỉ chặn hai bản *app desktop* trên cùng một
+máy. Nó **không** biết gì về container Docker, và cũng không biết gì về job
+đang chạy trên server. Trước khi bật trên server, tắt hết những chỗ khác:
+
+```bash
+docker compose down                      # nếu đang chạy Docker ở máy nào đó
+# và đóng hẳn app desktop (Thoát từ khay, không phải bấm X)
+```
+
+### 17.1 Cách nhanh nhất: Docker trên server
+
+Repo đã có sẵn `Dockerfile` và `docker-compose.yml`, và `restart:
+unless-stopped` lo luôn phần tự bật lại khi container chết hoặc khi server
+khởi động lại. Không phải cài Python, không phải cài `libmagic1`, không phải
+đụng tới systemd.
+
+```bash
+# --- Trên MÁY BẠN: .env không nằm trong git nên phải chép riêng ---
+scp .env khanhnn72@<server>:~/MOOC/.env
+
+# --- Trên SERVER ---
+cd ~/MOOC
+chmod 600 .env
+
+# BA FILE NÀY PHẢI TỒN TẠI TRƯỚC KHI `up`. Xem 17.2 để biết vì sao.
+touch mooc_log.db
+echo '{}' > .report_state.json
+echo '{}' > .alert_state.json
+
+# Kiểm IP allowlist TRƯỚC (chỉ ĐỌC, không xử lý, không tốn tiền LLM)
+docker compose run --rm job python run.py status
+
+# Chạy
+docker compose up -d --build
+docker compose logs -f
+```
+
+Log phải ra `Chạy liên tục. Hết việc thì hỏi lại mỗi 5 giây.` rồi tới
+`Có N chứng chỉ chờ duyệt` hoặc `Không còn chứng chỉ chờ duyệt`. Container
+`Up` mà log không có hai dòng đó thì **chưa xong** — healthcheck chỉ làm
+`import config` nên nó báo khỏe cả khi job đang chết.
+
+### 17.2 Bốn thứ hay làm hỏng bước trên
+
+**`touch mooc_log.db` không phải thừa.** File này bị gitignore nên bản clone
+trên server không có nó. `docker-compose.yml` gắn nó theo kiểu bind-mount
+**file**; Docker gặp bind-mount file chưa tồn tại sẽ tạo một **thư mục** trùng
+tên, và SQLite báo một lỗi chẳng liên quan gì tới nguyên nhân. File rỗng 0
+byte là một cơ sở dữ liệu SQLite hợp lệ, `init_db()` tự tạo bảng.
+
+Tương tự với `.alert_state.json`: thiếu nó thì mỗi lần container dựng lại là
+gửi thêm một thư cảnh báo — đúng lúc hệ thống đang hỏng nhất thì hộp thư
+người vận hành ngập thư trùng.
+
+**Quyền ghi file (`uid`).** Container chạy bằng user `mooc` mang uid 1000,
+còn file gắn từ ngoài vào giữ nguyên chủ sở hữu của host. Tài khoản Linux của
+bạn không phải uid 1000 thì container không ghi được, và lỗi hiện ra là
+`attempt to write a readonly database` — không gợi gì tới quyền file. Kiểm
+bằng `id -u`; khác 1000 thì mở dòng `user:` đã ghi sẵn trong
+`docker-compose.yml`.
+
+**Chạy `docker` không cần `sudo`.** Gặp `permission denied ... docker.sock`
+thì `sudo usermod -aG docker $USER` rồi **đăng xuất SSH và vào lại** — nhóm
+mới chỉ có tác dụng từ phiên đăng nhập sau.
+
+**eLIS chặn theo IP.** IP server gần như chắc chắn khác IP máy bạn. Đó là lý
+do bước `docker compose run --rm job python run.py status` đứng TRƯỚC bước
+`up`: nhận `403` ở đó nghĩa là phải xin bên eLIS thêm IP server vào allowlist,
+không có cách nào code vòng qua. Bật `up` khi chưa xong thì container chỉ
+restart vô tận trong nền.
+
+Múi giờ thì không phải lo: `Dockerfile` đã đặt `TZ=Asia/Ho_Chi_Minh`, kể cả
+khi server để UTC.
+
+### 17.3 Vận hành hằng ngày
+
+```bash
+docker compose ps                       # còn chạy không
+docker compose logs --tail 100          # log gần nhất
+docker compose logs --since 24h | grep -E "APPROVED|REJECTED"
+docker compose restart                  # sau khi sửa .env
+docker compose up -d --build            # sau khi git pull
+docker compose down                     # dừng hẳn
+```
+
+Xem hàng đợi mà không đụng job đang chạy nền:
+
+```bash
+docker compose run --rm job python run.py status
+```
+
+Sửa `.env` xong phải `restart`: cấu hình chỉ đọc một lần lúc tiến trình chạy
+lên. (Sửa nóng không cần restart là tính năng của app desktop — mục 16.2 —
+trên server không có.)
+
+### 17.4 Nếu server KHÔNG có Docker
+
+Thì dùng systemd theo người dùng, **không cần quyền root**:
+
+```bash
+sudo apt install -y libmagic1            # python-magic cần thư viện HỆ THỐNG này
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-job.txt
+
+bash tools/preflight.sh                  # kiểm mọi thứ, kể cả IP allowlist
+
+mkdir -p ~/.config/systemd/user
+cp tools/mooc.service ~/.config/systemd/user/
+# sửa WorkingDirectory và ExecStart trong file cho đúng đường dẫn thật
+systemctl --user daemon-reload
+systemctl --user enable --now mooc
+loginctl enable-linger $USER             # BẮT BUỘC
+```
+
+`loginctl enable-linger` là dòng dễ quên nhất và hậu quả khó đoán nhất:
+thiếu nó thì systemd giết mọi dịch vụ của bạn **ngay khi đăng xuất SSH**. Job
+chạy ngon suốt lúc bạn còn ngồi đó rồi chết lúc đóng terminal — kiểu hỏng làm
+người ta đi tìm lỗi trong code.
+
+`nohup python run.py loop &` cũng chạy nền được, nhưng nó không dựng lại khi
+job chết và không tự chạy lại sau khi server reboot — hai thứ chính là lý do
+tồn tại của cả mục này.
+
+Xem log: `journalctl --user -u mooc -f`. Vẫn phải làm 17.1 (chép `.env`, tạo
+ba file) và vẫn dính chuyện IP allowlist ở 17.2.
+
+### 17.5 HR nhìn thấy gì
+
+HR **không** cần vào server. Có hai đường:
+
+| Đường | Cách bật |
+|---|---|
+| **eLIS** — mỗi chứng chỉ đổi từ WAITING sang APPROVED/REJECTED kèm lý do | Tự động, không phải làm gì |
+| **Email báo cáo định kỳ** — số liệu tổng hợp gửi thẳng hộp thư | Đặt `REPORT_SCHEDULE=daily` và `MAIL_TO=<email HR>` trong `.env`, rồi `docker compose restart` |
+
+Ca **bỏ qua** (không xác minh được danh tính) ở lại WAITING và cần người
+duyệt xử lý tay trên eLIS — hiện chưa nằm trong báo cáo định kỳ, xem phụ lục
+việc còn treo. Nếu HR chỉ nhìn báo cáo, họ sẽ không biết những ca đó đang chờ
+mình.
 
 ---
 
@@ -1469,13 +1857,12 @@ match_report.csv  ·  error_review.xlsx
 
 | Việc | Tình trạng |
 |---|---|
-| Luật **tên đệm** (`"Anh Le"` vs `"Lê Hoàng Anh"`) | **Chờ HR.** Ca tên trên ảnh thiếu họ/tên đệm nay được **bỏ qua** (mục 5.6) thay vì từ chối oan, nhưng luật `match_name` vẫn giữ nguyên — nới nó là việc riêng, chưa làm |
-| **Cửa sổ thời gian** cho luật nộp trùng | **Chờ HR.** Hiện cứ trùng là từ chối, kể cả người học lại sau hai năm. Dữ liệu: 613 cặp duyệt trùng trong cùng ngày (lọt lưới thật) nhưng 73 cặp cách nhau trên 6 tháng (nhiều khả năng học lại hợp lệ). `ActionDateTime` đã có sẵn nên thêm cửa sổ là dễ |
+| **Đo tỷ lệ bắt trúng của luật nộp trùng** | Chưa chạy. Hàng đợi production không có ca trùng nào nên kết quả 0/59 chỉ chứng minh luật không bắt oan. Cách đo: chạy luật ngược lên các bản ghi `REJECTED` mà người duyệt ghi lý do có chữ "trùng" |
 | **Bốn ca tên không khớp chưa quyết** | `tienpham89`, `kieuhuuthanh23698` (ảnh in username, không có `@` nên `external_email` không bắt) và hai ca AI không đọc ra tên nào. Hiện vẫn `REJECTED` |
 | Danh sách ca **bỏ qua** chưa vào báo cáo định kỳ | Hiện chỉ có dòng log lúc chạy; tắt job là mất dấu. Trên eLIS chúng trông y hệt chứng chỉ chưa tới lượt xử lý |
 | Đo lại độ chính xác sau khi sửa prompt + khớp song ngữ + hai luật mới | Chưa chạy — cần gọi LLM thật trên cả bộ |
 | **Thu hồi key FPT đã lộ trong lịch sử git** | `.env.example` đã sạch, nhưng **key vẫn phải cấp lại** — xem mục 15 |
-| Thêm `DUPLICATE_CHECK` và `HISTORY_REFRESH_MINUTES` vào `.env` thật | `.env.example` đã có. Thiếu trong `.env` thì vẫn chạy đúng vì mã có giá trị mặc định |
+| Thêm `DUPLICATE_CHECK` vào `.env` thật | `.env.example` đã có. Thiếu trong `.env` thì vẫn chạy đúng vì mã có giá trị mặc định |
 | Điền `SMTP_USER` / `SMTP_PASSWORD` để cảnh báo gửi được | Không có SMTP thì `alert.py` chỉ ghi lỗi vào log, không ai nhận được thư |
 | Tạo `.alert_state.json` trước khi `docker compose up` | Giống `mooc_log.db`: bind-mount file chưa tồn tại thì Docker tạo một **thư mục** trùng tên |
 | Đổi tên `stage` `skipped_external_email` → `skipped_unverified_identity` | Tên hiện tại hẹp nghĩa hơn thứ nó chứa. Để lại tới lần dọn DB gần nhất — xem mục 12 |
@@ -1513,6 +1900,8 @@ Mọi con số trong tài liệu này đều đo được lại, không phải �
 | `status` nhận giá trị nào | WAITING 4 · APPROVED 3.134 · REJECTED 13 · không truyền: 3.151 |
 | `size` trần | **1000** |
 | Lọc theo `employeeId` | **Không** — API bỏ qua tham số |
+| Lọc theo `employeeEmail` | **Được** — đo trên production: 38 nhân viên, 25 người có dữ liệu, 13 người rỗng. Nếu tham số bị bỏ qua thì cả 38 phải cùng rỗng |
+| Hàng đợi production | 59 chứng chỉ WAITING, 38 nhân viên, **0 ca nộp trùng** |
 | Cặp (NV, khóa) trùng trong lịch sử UAT | 1/3.130 — UAT gần như không có hiện tượng này, **không kiểm chứng được luật ở đây** |
 
 **Chi phí chỉ mục lịch sử** (đo với 194.000 mục, đúng khối lượng production):

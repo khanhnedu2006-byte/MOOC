@@ -92,9 +92,10 @@ def test_ten_dung_NHUNG_kem_email_ca_nhan_van_BI_BO_QUA():
     người đọc là xác minh được. Nhưng match_name so TẬP HỢP TỪ tuyệt đối, nên
     ba từ thừa ("minhnt4487", "gmail", "com") làm phép so trượt.
 
-    Không chữa ở đây được: chữa nghĩa là nới match_name thành so "tập con", mà
-    luật khớp tên đang CHỜ HR chốt. Hướng sai này an toàn (ca đó về tay người
-    duyệt, không bị từ chối oan), nên để nguyên và ghi lại.
+    Không chữa ở đây, và đó là lựa chọn CÓ CHỦ ĐÍCH: chữa nghĩa là nới
+    match_name thành so "tập con", mà nới ra thì "Nguyễn Tuấn" khớp với nhiều
+    nhân viên khác nhau — mua vài ca đúng bằng một lỗ hổng danh tính. Hướng sai
+    hiện tại an toàn (ca đó về tay người duyệt, không bị từ chối oan).
 
     Ca email CÔNG TY không dính giới hạn này vì match_code cứu: "LinhNT8" nằm
     trong ảnh dưới dạng một từ trọn vẹn sau normalize.
