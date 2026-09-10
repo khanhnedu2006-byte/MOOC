@@ -70,12 +70,29 @@ def _llms_agree(t1: ExtractedInfo, t2: ExtractedInfo) -> bool:
 #
 # Trả về đuôi email ngoài công ty (để ghi vào lý do), hoặc None nếu vẫn kết
 # luận được như bình thường.
-
+#
+# THỨ TỰ QUAN TRỌNG: chỉ hỏi tới email SAU KHI so tên/mã đã trượt. Chứng chỉ
+# in cả tên lẫn email cá nhân ("NGUYEN THUY LINH abc@gmail.com") mà tên khớp
+# eLIS thì danh tính ĐÃ xác minh xong bằng tên — bỏ qua nó là bỏ phí một ca
+# vốn kết luận được.
 def _unverifiable_identity(extracted: ExtractedInfo, given: InputInfo) -> str | None:
     if compare.match_name_or_code(extracted.recipient_name,
                                   given.employee_name, given.employee_code):
         return None
 
+    # Danh tính chỉ THẮNG khi tên là lý do DUY NHẤT.
+    #
+    # Phép so tên khóa học không cần biết người đó là ai: nó so chuỗi trên ảnh
+    # với khóa nhân viên đã đăng ký trong eLIS, và chứng chỉ ghi khóa khác thì
+    # không thỏa mãn đăng ký đó bất kể chủ nhân là ai. Kết luận ấy đứng vững
+    # trên bằng chứng của chính nó, nên không có lý do bỏ nó đi.
+    #
+    # Bỏ qua ở đây còn TỆ HƠN cho học viên: bị từ chối thì họ đọc được "Tên
+    # khóa học không khớp" và biết đường nộp lại, còn bị bỏ qua thì không nhận
+    # được gì, chứng chỉ nằm im chờ người mở ra xem.
+    #
+    # Đo trên bộ đánh giá: 6/10 ca vướng danh tính CÒN sai cả khóa học hoặc
+    # ngày. Không có cửa này thì 60% khối lượng bỏ qua là ca vốn kết luận được.
     if not compare.match_course_bilingual(
             extracted.certificate_name, extracted.certificate_name_alt,
             given.course_name, settings.course_match_mode):
@@ -96,27 +113,53 @@ def _unverifiable_identity(extracted: ExtractedInfo, given: InputInfo) -> str | 
     return None
 
 
-def _mismatch_reason(extracted: ExtractedInfo, given: InputInfo, stage: str) -> str:
-    """Tạo lý do gọn: chỉ nêu trường nào không khớp (tên / khóa học / thời gian).
+def _field_matches(extracted: ExtractedInfo, given: InputInfo) -> dict[str, bool]:
+    """Từng trường của MỘT bản đọc có khớp dữ liệu eLIS không."""
+    return {
+        "Tên": compare.match_name_or_code(
+            extracted.recipient_name, given.employee_name, given.employee_code),
+        "Tên khóa học": compare.match_course_bilingual(
+            extracted.certificate_name, extracted.certificate_name_alt,
+            given.course_name, settings.course_match_mode),
+        "Ngày": _date_in_range(extracted),
+    }
 
-    Liệt kê MỌI trường sai, nhưng không kèm giá trị hay tầng xử lý.
+
+def _mismatch_reason(extracted: ExtractedInfo, given: InputInfo,
+                     other: ExtractedInfo | None = None) -> str:
+    """Lý do từ chối: nêu trường nào không khớp (tên / khóa học / thời gian).
+
+    Chỉ nêu ĐÚNG trường sai, không thêm chữ nào khác. Người đọc cần biết đi
+    sửa chỗ nào, không cần biết máy đã đọc mấy lần.
+
+    `other` là BẢN ĐỌC CÒN LẠI (thường là LLM1, khi phán quyết tính trên
+    LLM2). Nó KHÔNG tham gia phán quyết, chỉ dùng để LỌC BỚT: trường nào bản
+    kia đọc khớp thì không nêu.
+
+    VÌ SAO PHẢI LỌC. Phán quyết luôn tính trên bản đọc CUỐI CÙNG. Khi LLM1
+    đọc đúng tên khóa nhưng sai mỗi tên người, pipeline rơi xuống tầng 2; nếu
+    ở đó LLM2 tách tên khóa song ngữ kém hơn thì lý do ghi "Tên khóa học
+    không khớp" cho một tên khóa vốn ĐÚNG. Học viên đọc xong đi sửa nhầm chỗ,
+    nộp lại vẫn trượt — sai một trường mà bị báo sai hai trường. Đã xảy ra
+    thật trên bản demo 10/09/2026.
+
+    Nêu một trường CHỈ KHI cả hai bản đọc đều trượt nó. Hai bản đọc mâu thuẫn
+    nhau ở trường nào thì im về trường đó: chưa đủ chắc để bảo người ta đi sửa.
+
+    KHÔNG đổi phán quyết. Hàm này chỉ sinh chuỗi lý do; APPROVED/REJECTED vẫn
+    do _both_fields_match quyết, và nó không gọi tới đây.
     """
-    name_matches = compare.match_name_or_code(
-        extracted.recipient_name, given.employee_name, given.employee_code
-    )
-    course_matches = compare.match_course_bilingual(
-        extracted.certificate_name, extracted.certificate_name_alt, given.course_name,
-        settings.course_match_mode,
-    )
-    date_valid = _date_in_range(extracted)
+    primary = _field_matches(extracted, given)
+    backup = _field_matches(other, given) if other is not None else None
 
     errors = []
-    if not name_matches:
-        errors.append("Tên không khớp")
-    if not course_matches:
-        errors.append("Tên khóa học không khớp")
-    if not date_valid:
-        errors.append("Ngày không hợp lệ")
+    for field, matched in primary.items():
+        if matched:
+            continue
+        if backup is not None and backup[field]:
+            continue        # bản kia đọc khớp -> chưa chắc sai, không nêu
+        errors.append("Ngày không hợp lệ" if field == "Ngày"
+                      else f"{field} không khớp")
     return "; ".join(errors) if errors else "Không khớp"
 
 
@@ -155,7 +198,7 @@ def process(
     if _both_fields_match(llm1, given):
         if not _date_in_range(llm1):
             return verdict(Verdict.REJECTED,
-                           _mismatch_reason(llm1, given, "LLM1"), "llm1", llm1)
+                           _mismatch_reason(llm1, given), "llm1", llm1)
         return verdict(Verdict.APPROVED, "Tên, khóa học và thời gian đều khớp (LLM1)", "llm1", llm1)
 
     # ===== Tầng 2: Azure OCR + LLM2 =====
@@ -189,18 +232,18 @@ def process(
         skip = _unverifiable_identity(llm2, given)
         if skip:
             return verdict(Verdict.WAITING, skip, SKIP_STAGE, llm2)
-        return verdict(Verdict.REJECTED, _mismatch_reason(llm2, given, "đồng thuận"),
+        return verdict(Verdict.REJECTED, _mismatch_reason(llm2, given, llm1),
                        "llm1_vs_llm2", llm2)
 
     # ===== So LLM2 với input =====
     if _both_fields_match(llm2, given):
         if not _date_in_range(llm2):
             return verdict(Verdict.REJECTED,
-                           _mismatch_reason(llm2, given, "LLM2"), "llm2", llm2)
+                           _mismatch_reason(llm2, given, llm1), "llm2", llm2)
         return verdict(Verdict.APPROVED,
                        "Khớp ở LLM2 (Azure đọc lại, LLM1 đọc sai)", "llm2", llm2)
 
     skip = _unverifiable_identity(llm2, given)
     if skip:
         return verdict(Verdict.WAITING, skip, SKIP_STAGE, llm2)
-    return verdict(Verdict.REJECTED, _mismatch_reason(llm2, given, "LLM2"), "llm2", llm2)
+    return verdict(Verdict.REJECTED, _mismatch_reason(llm2, given, llm1), "llm2", llm2)

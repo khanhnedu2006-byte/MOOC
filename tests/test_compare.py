@@ -199,6 +199,35 @@ def test_ghep_hai_nua_KHONG_lam_khop_khi_eLIS_dai_hon():
         "An toàn thông tin nâng cao", "loose")
 
 
+def test_song_ngu_noi_bang_DAU_GACH_DUOI():
+    """Ca thật gặp trên bản demo 10/09: eLIS lưu "AI CƠ BẢN_AI FOR EVERYONE"
+    — hai ngôn ngữ nối bằng dấu GẠCH DƯỚI, không phải " - " như mọi test cũ.
+
+    Đáng test riêng vì dấu phân cách ở đây do normalize() lo (nó biến mọi ký
+    tự không phải chữ/số thành khoảng trắng). Ai đó siết normalize lại — chẳng
+    hạn giữ "_" cho tên file — là ca này gãy ngay, mà gãy im lặng: chứng chỉ
+    đọc đúng vẫn bị ghi "Tên khóa học không khớp".
+    """
+    assert match_course_bilingual(
+        "AI co ban", "AI for Everyone", "AI CƠ BẢN_AI FOR EVERYONE", "loose")
+    assert match_course_bilingual(
+        "AI co ban", "AI for Everyone", "AI CƠ BẢN_AI FOR EVERYONE", "strict")
+
+
+def test_LLM_khong_tach_duoc_song_ngu_thi_TRUOT():
+    """Ghi lại một GIỚI HẠN ĐANG CÓ, không phải hành vi mong muốn.
+
+    Khi model chỉ đọc ra MỘT nửa và bỏ trống nửa kia, trong khi eLIS lưu cả
+    hai, hệ thống từ chối. Đúng luật hiện hành ("người nhập không được thừa
+    từ so với ảnh") nhưng có thể là từ chối oan.
+
+    Để test này ở đây để nếu ai đó nới luật thì phải sửa nó một cách CÓ Ý
+    THỨC, chứ không nới nhầm rồi không ai biết.
+    """
+    assert not match_course_bilingual(
+        "AI co ban", None, "AI CƠ BẢN_AI FOR EVERYONE", "loose")
+
+
 def test_chi_mot_ngon_ngu_thi_khong_ghep_bua():
     """Nửa thứ hai rỗng -> không được ghép, tránh so với chuỗi cụt."""
     assert match_course_bilingual("Python cơ bản", None,

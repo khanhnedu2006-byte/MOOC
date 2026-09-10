@@ -35,13 +35,56 @@ def test_chuoi_ly_do_khop_giua_pipeline_va_report():
                           issue_date="01/01/1999")
     nhap = InputInfo(employee_name="Bui Duc Hoa",
                      course_name="ISO 27001", employee_code="hoabd3")
-    reason = pipeline._mismatch_reason(trich, nhap, "test")
+    # Tham số thứ ba là BẢN ĐỌC CÒN LẠI, không phải tên tầng. Truyền
+    # chính `trich` vào: cả hai bản đọc cùng trượt -> lý do nói chắc,
+    # đúng dạng chuỗi mà report.py đi tìm.
+    reason = pipeline._mismatch_reason(trich, nhap, trich)
+
 
     for text, _nhan in report.REJECTION_CAUSES:
         assert text in reason, (
             f"report.REJECTION_CAUSES tìm chuỗi {text!r} nhưng "
             f"pipeline._mismatch_reason() sinh ra {reason!r}. "
             f"Đổi chuỗi ở một bên thì phải đổi cả hai."
+        )
+
+
+def test_moi_ly_do_pipeline_sinh_ra_deu_duoc_report_phan_loai():
+    """Chiều NGƯỢC LẠI của test trên, và là chiều dễ hỏng hơn.
+
+    Test kia canh "chuỗi report đi tìm phải có thật". Test này canh "chuỗi
+    pipeline đẻ ra phải có người nhận": thêm một dạng lý do mới ở pipeline mà
+    quên khai ở report thì mọi ca kiểu đó rơi vào nhãn "Không rõ nguyên nhân"
+    — báo cáo ghi là không rõ trong khi ta biết rõ. Không lỗi nào được ném,
+    chỉ có một con số lặng lẽ sai.
+
+    Đã suýt xảy ra thật khi thêm dạng "hai lần đọc lệch nhau".
+    """
+    nhap = InputInfo(employee_name="Bui Duc Hoa",
+                     course_name="ISO 27001", employee_code="hoabd3")
+    dung = ExtractedInfo(recipient_name="Bui Duc Hoa",
+                         certificate_name="ISO 27001", issue_date="15/03/2026")
+    sai_ten = dung.model_copy(update={"recipient_name": "Nguyen Van B"})
+    sai_khoa = dung.model_copy(update={"certificate_name": "Khóa khác"})
+    sai_ngay = dung.model_copy(update={"issue_date": "01/01/1999"})
+
+    cac_ly_do = [
+        pipeline._mismatch_reason(sai_ten, nhap),               # tầng 1
+        pipeline._mismatch_reason(sai_ten, nhap, sai_ten),      # hai bản cùng trượt
+        pipeline._mismatch_reason(sai_khoa, nhap, sai_khoa),
+        pipeline._mismatch_reason(sai_ngay, nhap, sai_ngay),
+        # Hai bản đọc mâu thuẫn -> lý do rỗng -> rơi về câu chung.
+        pipeline._mismatch_reason(sai_ten, nhap, dung),
+        pipeline._mismatch_reason(sai_khoa, nhap, dung),
+    ]
+    # Ca mâu thuẫn không nêu trường nào, nên nó KHÔNG thuộc ba nguyên nhân —
+    # đó là chủ ý. Bỏ ra khỏi phép kiểm phân loại bên dưới.
+    cac_ly_do = [ly for ly in cac_ly_do if ly != "Không khớp"]
+    for ly_do in cac_ly_do:
+        assert any(text in ly_do for text, _ in report.REJECTION_CAUSES), (
+            f"pipeline sinh lý do {ly_do!r} nhưng report.REJECTION_CAUSES "
+            f"không có chuỗi nào khớp -> ca này sẽ bị đếm vào "
+            f"'Không rõ nguyên nhân'."
         )
 
 
@@ -58,8 +101,8 @@ def test_moi_tieu_che_sai_deu_sinh_dung_mot_chuoi():
         "Ngày không hợp lệ": {**dung, "issue_date": "01/01/1999"},
     }
     for mong_doi, truong in ca.items():
-        reason = pipeline._mismatch_reason(
-            ExtractedInfo(**truong), nhap, "test")
+        doc = ExtractedInfo(**truong)
+        reason = pipeline._mismatch_reason(doc, nhap, doc)
         assert mong_doi in reason
         khac = [c for c, _ in report.REJECTION_CAUSES if c != mong_doi]
         for c in khac:
