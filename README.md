@@ -1765,12 +1765,35 @@ Tương tự với `.alert_state.json`: thiếu nó thì mỗi lần container d
 gửi thêm một thư cảnh báo — đúng lúc hệ thống đang hỏng nhất thì hộp thư
 người vận hành ngập thư trùng.
 
-**Quyền ghi file (`uid`).** Container chạy bằng user `mooc` mang uid 1000,
-còn file gắn từ ngoài vào giữ nguyên chủ sở hữu của host. Tài khoản Linux của
-bạn không phải uid 1000 thì container không ghi được, và lỗi hiện ra là
-`attempt to write a readonly database` — không gợi gì tới quyền file. Kiểm
-bằng `id -u`; khác 1000 thì mở dòng `user:` đã ghi sẵn trong
-`docker-compose.yml`.
+**Quyền ghi file (`uid`) — chỗ tốn thời gian nhất.** User trong image mang uid
+1000, còn file gắn từ ngoài vào giữ nguyên chủ sở hữu của host. Tài khoản của
+bạn không phải uid 1000 (thường gặp trên server nhiều tài khoản) thì hỏng, bằng
+hai lỗi chẳng gợi gì tới quyền file:
+
+```
+PermissionError: [Errno 13] Permission denied: '.env'
+sqlite3.OperationalError: attempt to write a readonly database
+```
+
+Câu thứ hai đặc biệt dễ lạc hướng: `mooc_log.db` ghi được, nhưng SQLite còn
+phải tạo file `-journal` **cùng thư mục**, mà `/app` thuộc về user trong image.
+
+Kiểm bằng `id -u`. Khác 1000 thì:
+
+```bash
+printf 'services:\n  job:\n    build:\n      args:\n' > docker-compose.override.yml
+printf '        APP_UID: "%s"\n        APP_GID: "%s"\n' "$(id -u)" "$(id -g)" \
+    >> docker-compose.override.yml
+docker compose build
+```
+
+Compose tự nạp `docker-compose.override.yml`, và file đó đã gitignore nên mỗi
+máy giữ một bản riêng — `git pull` không xung đột, Docker Desktop trên Windows
+không dính.
+
+**Đừng dùng `user:` trong compose.** Nó đổi uid của *tiến trình* nhưng không đổi
+chủ sở hữu `/app` trong image: `.env` đọc được, rồi SQLite vẫn báo đúng câu
+`readonly database`. Phải sửa từ lúc **build**, bằng `APP_UID`/`APP_GID`.
 
 **Chạy `docker` không cần `sudo`.** Gặp `permission denied ... docker.sock`
 thì `sudo usermod -aG docker $USER` rồi **đăng xuất SSH và vào lại** — nhóm

@@ -42,3 +42,8 @@ eval_images/
 # Sổ ghi ai đổi cấu hình gì, lúc nào (app desktop ghi ra).
 # Không commit: nó là nhật ký của MỘT máy, và có tên tài khoản Windows.
 config_changes.log
+
+# Cấu hình Docker riêng cho TỪNG máy (vd `user:` cho đúng uid trên
+# server Linux). Compose tự nạp file này nếu có. Không commit: mỗi
+# máy một uid khác nhau.
+docker-compose.override.yml

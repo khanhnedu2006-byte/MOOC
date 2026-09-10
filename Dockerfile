@@ -50,9 +50,29 @@ COPY database/ ./database/
 COPY run.py scheduler.py send_report.py report_layout.py ./
 
 # ---- Chạy bằng user thường, không phải root ----
-RUN useradd --create-home --shell /bin/bash mooc \
-    && chown -R mooc:mooc /app
-USER mooc
+#
+# uid/gid PHẢI KHỚP với tài khoản chủ sở hữu các file gắn từ ngoài vào
+# (.env, mooc_log.db, .report_state.json, .alert_state.json). Mặc định 1000
+# đúng với Docker Desktop và với server mà tài khoản đầu tiên là 1000; server
+# có nhiều tài khoản thì thường không phải.
+#
+# LỆCH uid RA LỖI KHÔNG GIỐNG LỖI QUYỀN CHÚT NÀO:
+#   - đọc .env  ->  PermissionError: [Errno 13] Permission denied: '.env'
+#   - ghi DB    ->  sqlite3.OperationalError: attempt to write a readonly
+#                   database   (kể cả khi CHÍNH FILE mooc_log.db ghi được:
+#                   SQLite còn cần tạo file -journal trong CÙNG THƯ MỤC, mà
+#                   /app thuộc về user trong image chứ không phải của bạn)
+#
+# Đổi bằng build arg, ĐỪNG dùng `user:` trong compose — `user:` chỉ đổi tiến
+# trình chứ không đổi chủ sở hữu /app, nên vẫn dính đúng lỗi SQLite ở trên:
+#   docker compose build --build-arg APP_UID=$(id -u) --build-arg APP_GID=$(id -g)
+# hoặc khai sẵn trong docker-compose.override.yml (xem README mục 17.2).
+ARG APP_UID=1000
+ARG APP_GID=1000
+RUN if ! getent group ${APP_GID} >/dev/null; then groupadd -g ${APP_GID} mooc; fi \
+    && useradd -u ${APP_UID} -g ${APP_GID} --create-home --shell /bin/bash mooc \
+    && chown -R ${APP_UID}:${APP_GID} /app
+USER ${APP_UID}:${APP_GID}
 
 # Đọc được config = .env đã gắn đúng và thư viện nạp được.
 # Không gọi API ELIS để khỏi tốn request vô ích.
