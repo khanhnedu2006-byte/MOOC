@@ -80,19 +80,6 @@ def _unverifiable_identity(extracted: ExtractedInfo, given: InputInfo) -> str | 
                                   given.employee_name, given.employee_code):
         return None
 
-    # Danh tính chỉ THẮNG khi tên là lý do DUY NHẤT.
-    #
-    # Phép so tên khóa học không cần biết người đó là ai: nó so chuỗi trên ảnh
-    # với khóa nhân viên đã đăng ký trong eLIS, và chứng chỉ ghi khóa khác thì
-    # không thỏa mãn đăng ký đó bất kể chủ nhân là ai. Kết luận ấy đứng vững
-    # trên bằng chứng của chính nó, nên không có lý do bỏ nó đi.
-    #
-    # Bỏ qua ở đây còn TỆ HƠN cho học viên: bị từ chối thì họ đọc được "Tên
-    # khóa học không khớp" và biết đường nộp lại, còn bị bỏ qua thì không nhận
-    # được gì, chứng chỉ nằm im chờ người mở ra xem.
-    #
-    # Đo trên bộ đánh giá: 6/10 ca vướng danh tính CÒN sai cả khóa học hoặc
-    # ngày. Không có cửa này thì 60% khối lượng bỏ qua là ca vốn kết luận được.
     if not compare.match_course_bilingual(
             extracted.certificate_name, extracted.certificate_name_alt,
             given.course_name, settings.course_match_mode):
@@ -128,20 +115,6 @@ def _field_matches(extracted: ExtractedInfo, given: InputInfo) -> dict[str, bool
 def _mismatch_reason(extracted: ExtractedInfo, given: InputInfo,
                      other: ExtractedInfo | None = None) -> str:
     """Lý do từ chối: nêu trường nào không khớp (tên / khóa học / thời gian).
-
-    Chỉ liệt kê tên trường sai, không thêm chữ nào khác.
-
-    `other` là bản đọc còn lại (LLM1, khi phán quyết tính trên LLM2). Nó
-    KHÔNG tham gia phán quyết, chỉ để lọc: trường nào bản kia đọc khớp thì
-    không nêu.
-
-    Lọc vì phán quyết luôn tính trên bản đọc CUỐI CÙNG. LLM2 tách tên khóa
-    song ngữ kém hơn LLM1 thì lý do đổ oan cho một tên khóa vốn đúng, và
-    người nộp đi sửa nhầm chỗ.
-
-    Nêu một trường chỉ khi CẢ HAI bản đọc đều trượt nó. Hai bản mâu thuẫn ở
-    trường nào thì im về trường đó — chưa đủ chắc để bảo người ta đi sửa.
-
     Không đổi phán quyết: APPROVED/REJECTED do _both_fields_match quyết, và
     nó không gọi tới đây.
     """
@@ -198,15 +171,6 @@ def process(
         return verdict(Verdict.APPROVED, "Tên, khóa học và thời gian đều khớp (LLM1)", "llm1", llm1)
 
     # ===== Tầng 2: Azure OCR + LLM2 =====
-    #
-    # Ghi lại LLM1 đọc được gì so với dữ liệu eLIS. Đây là thông tin để chẩn
-    # đoán, KHÔNG phải để tiếc tiền: tầng 2 chạy đúng lúc nó cần chạy.
-    #
-    # Đừng nhìn một tên khóa học dài và mạch lạc rồi kết luận "LLM1 đọc đúng
-    # rồi, khỏi cần kiểm tra lại". Model thị giác đọc sai vẫn sinh ra chữ
-    # trôi chảy — văn bản mạch lạc là thứ nó luôn tạo ra được, nên độ mạch
-    # lạc KHÔNG phải bằng chứng của độ chính xác. Chính ca "đọc sai nhưng
-    # nghe rất hợp lý" mới là ca tầng 2 sinh ra để bắt.
     logger.info(
         "LLM1 không khớp -> kiểm tra lại bằng OCR + LLM2. "
         "LLM1 đọc: tên=%r khóa=%r ngày=%r | eLIS gửi: tên=%r khóa=%r",
