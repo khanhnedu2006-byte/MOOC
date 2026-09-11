@@ -90,9 +90,6 @@ def call_with_retry(func, *args, **kwargs):
 # Hỏi eLIS theo email: API ① nhận `employeeEmail` nên mỗi chứng chỉ chỉ tốn
 # một request và dữ liệu luôn tươi. API trả về mọi bản ghi của người đó ở mọi
 # trạng thái, nên lọc lại tại đây: đúng email và `submitStatus == "APPROVED"`.
-#
-# Phải tự kiểm email vì API bỏ qua tham số lạ trong im lặng (trả 200 kèm toàn
-# bộ bản ghi). Phát hiện API không lọc thì trả set rỗng.
 def completed_courses(email: str) -> set[str]:
     wanted = str(email or "").strip().lower()
     if not wanted:
@@ -123,17 +120,8 @@ def completed_courses(email: str) -> set[str]:
 
     return courses
 
-
-# LUẬT NGHIỆP VỤ (HR chốt): MỘT KHÓA HỌC CHỈ ĐƯỢC HỌC MỘT LẦN.
-# Không có cửa sổ thời gian, không thêm luật kiểu "chỉ tính nếu duyệt trong
-# vòng N tháng".
-
-
-# Nhớ những khóa vừa được DUYỆT TRONG VÒNG NÀY, bịt khe hở khi hai bản ghi
-# trùng nhau cùng nằm một vòng: eLIS chưa chắc kịp phản ánh cái đầu khi cái
-# thứ hai hỏi. Xóa ở đầu mỗi vòng.
+# Nhớ những khóa vừa được DUYỆT TRONG VÒNG NÀY
 _approved_this_round: set[tuple[str, str]] = set()
-
 
 # Chứng chỉ này có phải nộp trùng không?
 def is_duplicate(info: dict) -> bool:
@@ -157,9 +145,7 @@ def is_duplicate(info: dict) -> bool:
                        "chống nộp trùng cho chứng chỉ này.", email, e)
         return False
 
-
-# Nộp REJECTED cho ca nộp trùng: KHÔNG tải file, KHÔNG gọi LLM. Là kết luận
-# nghiệp vụ nên vẫn gọi API ③, khác ca bỏ qua vốn để nguyên WAITING.
+# Nộp REJECTED cho ca nộp trùng
 def reject_duplicate(info: dict) -> bool:
     result = ProcessResult(verdict=Verdict.REJECTED,
                            reason="Cán bộ nộp trùng khóa học",
@@ -186,8 +172,6 @@ def reject_duplicate(info: dict) -> bool:
 #   needs_alert - đã hỏng tới ngưỡng, cần gửi email (vẫn ở lại hàng đợi)
 def filter_queue(items: list[dict],
                  ignore_cooldown: bool = False) -> tuple[list, list, list]:
-    # Loại ca BỎ QUA trước cả API ② tải file: chúng đã chạy hết pipeline một
-    # lần và kết quả không đổi, quét lại chỉ tốn tiền LLM.
     skipped = database.skipped_ids([i["id"] for i in items])
     if skipped:
         report_skipped(items, skipped)
@@ -226,10 +210,7 @@ def filter_queue(items: list[dict],
 
 _last_skipped_ids: frozenset = frozenset()
 
-
-# In danh sách chứng chỉ đang bị BỎ QUA — CHỈ khi tập id thay đổi.
-# Trên eLIS chúng trông y hệt ca chưa tới lượt (cùng WAITING, comment rỗng),
-# nên log này là chỗ duy nhất người vận hành thấy chúng.
+# In danh sách chứng chỉ đang bị BỎ QUA 
 def report_skipped(items: list[dict], skipped: set) -> None:
     global _last_skipped_ids
     if frozenset(skipped) == _last_skipped_ids:
@@ -246,7 +227,6 @@ def report_skipped(items: list[dict], skipped: set) -> None:
 
 
 _last_deferred_ids: frozenset = frozenset()
-
 
 # In danh sách chứng chỉ đang chờ tới lượt — CHỈ khi tập id thay đổi.
 def report_deferred(deferred: list[tuple]) -> None:
@@ -300,7 +280,6 @@ def alert_operator(needs_alert: list[tuple]) -> None:
 
 # Xử lý hàng đợi MỘT vòng: API ① lấy hàng đợi -> lọc giãn cách -> chạy tuần tự.
 # Gặp ca hỏng kỹ thuật là DỪNG cả vòng (chặn đầu hàng).
-# ignore_cooldown=True dành cho lệnh tay `python run.py retry`.
 def process_one_round(azure_client, items: list[dict] | None = None,
                       ignore_cooldown: bool = False) -> RoundResult:
     # ---- API 1: fetch the queue ----
@@ -431,12 +410,9 @@ def handle_one_certificate(info: dict, azure_client,
             normalize(info.get("courseName"))))
     return CertOutcome(False, accepted)
 
-
 #4. Nộp kết quả, ghi log, gọi pipeline
 
 # Gọi API ③ nộp kết quả MỘT chứng chỉ. True = eLIS đã nhận.
-# API ③ hỏng là mất kết quả đã trả phí Gemma + Azure, vòng sau quét lại từ
-# đầu, nên phải đếm để cảnh báo.
 def submit_result(dto: dict) -> bool:
     try:
         data = call_with_retry(client.update_status, [dto])
@@ -462,7 +438,6 @@ def submit_result(dto: dict) -> bool:
 
     return bool(succeeded)
 
-
 # Ghi log ca hỏng kỹ thuật với verdict WAITING, KHÔNG phải REJECTED.
 def log_technical_failure(info: dict, reason: str,
                           stage: str = "download_error") -> None:
@@ -483,7 +458,6 @@ def log_technical_failure(info: dict, reason: str,
         )
     except Exception as e:
         logger.warning("Ghi log thất bại lỗi: %s", e)
-
 
 # Đánh dấu eLIS có nhận kết quả không (elis_sent_ok).
 # Lỗi ghi DB chỉ log cảnh báo, không chặn luồng.
@@ -554,7 +528,6 @@ def build_result_dto(result: ProcessResult, info: dict) -> dict:
         "employeeId": info["employeeId"],
         "comment": learner_comment(result),
     }
-
 
 #6. chạy chương trình
 def run_forever(azure_client) -> None:

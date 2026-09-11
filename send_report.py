@@ -28,11 +28,8 @@ from database import report
 
 
 class MailSendError(Exception):
-    """Không gửi được báo cáo.
-
-    Lỗi RIÊNG chứ không dùng Exception chung: scheduler bắt nó để biết "gửi
-    hỏng, thử lại vòng sau" thay vì coi như lỗi lập trình. Thông điệp viết cho
-    người vận hành, nên có kèm nguyên nhân thường gặp và cách xử lý.
+    """
+    Không gửi được báo cáo.
     """
 
 def _send_smtp(title: str, html_body: str, text_body: str,
@@ -48,10 +45,6 @@ def _send_smtp(title: str, html_body: str, text_body: str,
     mail_to: người nhận, rỗng = settings.mail_to. Có tham số này vì alert.py gửi
     cảnh báo tới địa chỉ KHÁC; tách hàm gửi thứ hai thì phần chẩn đoán lỗi SMTP
     bên dưới phải nhân đôi.
-
-    HẠN SỬ DỤNG: Microsoft đang khai tử Basic Auth cho SMTP AUTH trên Exchange
-    Online, mốc hiện tại 31/12/2026 — sau đó phải chuyển sang Microsoft Graph
-    API hoặc SMTP relay nội bộ.
     """
     import smtplib
     from email.message import EmailMessage
@@ -159,14 +152,6 @@ def send_period_report(from_day: str, to_day: str, bucket: str = "day") -> None:
 
 
 def _parse_day(text: str, flag_name: str) -> str:
-    """Đọc ngày từ dòng lệnh, chuẩn hóa về YYYY-MM-DD.
-
-    CHẤP NHẬN thiếu số 0 ("2026-8-5") và dấu gạch chéo ("2026/08/05").
-
-    NHƯNG PHẢI CHUẨN HÓA chứ không chỉ chấp nhận: truy vấn so ngày bằng CHUỖI
-    (substr(created_at,1,10) BETWEEN ...), nên '2026-8-25' không khớp
-    '2026-08-25' trong DB — báo cáo ra rỗng mà không có lỗi nào.
-    """
     raw = (text or "").strip().replace("/", "-").replace(".", "-")
     part = raw.split("-")
     if len(part) == 3 and all(x.isdigit() for x in part):
@@ -186,14 +171,6 @@ def _parse_day(text: str, flag_name: str) -> str:
 
 
 def _default_period() -> tuple[str, str]:
-    """7 ngày gần nhất, kết thúc HÔM QUA.
-
-    Bảy ngày vì biểu đồ đường một điểm thì vô nghĩa, và con số một ngày không
-    cho biết nó cao hay thấp so với bình thường.
-
-    Kết thúc hôm qua vì hôm nay chưa chạy hết: số liệu ngày đang dở luôn thấp
-    hơn thực tế, làm người đọc tưởng khối lượng đang giảm.
-    """
     end = date.today() - timedelta(days=1)
     return (end - timedelta(days=6)).isoformat(), end.isoformat()
 
