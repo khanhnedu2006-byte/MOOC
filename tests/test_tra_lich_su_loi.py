@@ -131,12 +131,15 @@ def test_ha_tang_hong_thi_NEM_RA_chu_khong_doan(bat_luat):
                               "courseName": "Python"})
 
 
-def test_loi_du_lieu_thi_BO_QUA_luat_cho_rieng_ca_nay(bat_luat):
-    """Ném ra thì bản ghi này chặn đầu hàng mãi mãi mà thử lại không bao giờ
-    khỏi. Thà lọt một ca trùng còn hơn kẹt cả hàng đợi."""
+def test_loi_du_lieu_cung_NEM_RA_chu_khong_tu_quyet(bat_luat):
+    """is_duplicate chỉ biết email và tên khóa học, không biết gì về hàng đợi,
+    nên không phải chỗ quyết định hoãn hay đi tiếp. Nó nói "không tra được",
+    người gọi mới chọn cách xử (xem test_loi_du_lieu_thi_KHONG_chan_hang_doi).
+    """
     with patch.object(client, "get_by_email", side_effect=_loi(400)):
-        assert run.is_duplicate({"employeeEmail": "a@fpt.com",
-                                 "courseName": "Python"}) is False
+        with pytest.raises(client.ElisError):
+            run.is_duplicate({"employeeEmail": "a@fpt.com",
+                              "courseName": "Python"})
 
 
 # ===== Chạy cả vòng =====

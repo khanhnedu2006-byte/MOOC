@@ -150,15 +150,10 @@ def is_duplicate(info: dict) -> bool:
 
     try:
         return course in completed_courses(email)
+    # nếu elis hỏng thì đưa về hàng đợi chứ không dùng pipepline như trước
     except client.ElisError as e:
         if client.is_infrastructure(e):
-            # Không tra được vì hạ tầng -> KHÔNG đoán: ném ra cho
-            # handle_one_certificate quy về hỏng kỹ thuật. Nuốt ở đây là luật
-            # chống trùng tắt trong im lặng và chứng chỉ trùng được duyệt lần hai.
             raise
-        # Lỗi 4xx là chuyện của riêng bản ghi này (vd email dị dạng), thử lại
-        # vẫn hỏng y vậy. Coi là hỏng kỹ thuật thì nó chặn đầu hàng vĩnh viễn,
-        # nên bỏ qua luật cho MỘT ca này còn hơn kẹt cả hàng đợi.
         logger.warning("Không tra được lịch sử của %s (%s) — bỏ qua luật "
                        "chống nộp trùng cho chứng chỉ này.", email, e)
         return False
@@ -183,7 +178,6 @@ def reject_duplicate(info: dict) -> bool:
         logger.exception("Không ghi được log ca nộp trùng: %s", e)
 
     return submit_result(build_result_dto(result, info))
-
 
 # Cắt hàng đợi tại chứng chỉ ĐẦU TIÊN chưa tới lượt thử lại.
 # Trả về (ready, deferred, needs_alert):
@@ -232,10 +226,7 @@ def filter_queue(items: list[dict],
 
 _last_skipped_ids: frozenset = frozenset()
 
-
 # In danh sách chứng chỉ đang bị BỎ QUA — CHỈ khi tập id thay đổi.
-# Trên eLIS chúng trông y hệt ca chưa tới lượt (cùng WAITING, comment rỗng),
-# nên log này là chỗ duy nhất người vận hành thấy chúng.
 def report_skipped(items: list[dict], skipped: set) -> None:
     global _last_skipped_ids
     if frozenset(skipped) == _last_skipped_ids:
@@ -252,7 +243,6 @@ def report_skipped(items: list[dict], skipped: set) -> None:
 
 
 _last_deferred_ids: frozenset = frozenset()
-
 
 # In danh sách chứng chỉ đang chờ tới lượt — CHỈ khi tập id thay đổi.
 def report_deferred(deferred: list[tuple]) -> None:
@@ -274,7 +264,6 @@ def report_deferred(deferred: list[tuple]) -> None:
                     (item.get("courseName") or "?")[:45], failure_count,
                     " (ĐÃ CẢNH BÁO)" if failure_count >= threshold else "",
                     time_left.total_seconds() / 60)
-
 
 # Gửi email cho người vận hành khi có ca hỏng tới ngưỡng.
 def alert_operator(needs_alert: list[tuple]) -> None:
