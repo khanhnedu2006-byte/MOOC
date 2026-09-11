@@ -161,3 +161,91 @@ def test_render_pdf_khong_dua_duong_dan_cho_pdfium(tmp_path, monkeypatch):
         file_utils._render_pdf(p)          # 0 trang -> báo lỗi, đúng thiết kế
 
     assert da_nhan["kieu"] is bytes, "đã truyền đường dẫn thay vì byte cho pdfium"
+
+
+# ===== PDF hỏng phải báo bằng ĐÚNG mẫu lỗi hệ thống hiểu =====
+#
+# scan_certificate chỉ bắt InvalidFileError. pypdfium2 ném PdfiumError của
+# riêng nó, nên lỗi đi xuyên qua và giết cả vòng xử lý TRƯỚC KHI kịp ghi log.
+# Không có dòng log thì không đếm số lần hỏng, không có cooldown: vòng sau
+# gặp lại đúng file đó, vỡ đúng chỗ đó, mỗi 5 giây, và cả hàng đợi đứng theo
+# trong im lặng vì email cảnh báo không bao giờ đủ ngưỡng.
+
+def test_pdf_hong_bao_bang_InvalidFileError(tmp_path):
+    """PDF có mật khẩu hoặc tải dở dang: check_mime vẫn cho qua vì phần đầu
+    file đúng là PDF, chỉ tới lúc mở mới vỡ."""
+    p = tmp_path / "chung_chi_tai_do_dang.pdf"
+    p.write_bytes(PDF_HEADER + b"0" * 200)
+
+    with pytest.raises(file_utils.InvalidFileError):
+        file_utils._render_pdf(p)
+
+
+def test_ca_duong_read_as_images_cung_bao_dung_mau(tmp_path):
+    """Đường mà scan_certificate thật sự gọi, không phải hàm nội bộ."""
+    p = tmp_path / "hong.pdf"
+    p.write_bytes(PDF_HEADER + b"0" * 200)
+
+    with pytest.raises(file_utils.InvalidFileError):
+        file_utils.read_as_images(p)
+
+
+def test_vo_o_GIUA_CHUNG_cung_bao_dung_mau(tmp_path, monkeypatch):
+    """Mở được nhưng trang thứ n hỏng — lỗi nằm ở vòng lặp render, không phải
+    lúc mở, nên phải bọc cả hai chỗ."""
+    p = tmp_path / "trang_hong.pdf"
+    p.write_bytes(PDF_HEADER + b"0" * 200)
+
+    class PdfGia:
+        def __init__(self, nguon):
+            pass
+        def __len__(self):
+            return 2
+        def __getitem__(self, i):
+            raise RuntimeError("trang hỏng")
+        def close(self):
+            pass
+
+    monkeypatch.setattr(file_utils.pdfium, "PdfDocument", PdfGia)
+    with pytest.raises(file_utils.InvalidFileError):
+        file_utils._render_pdf(p)
+
+
+def test_van_dong_pdf_khi_vo_giua_chung(tmp_path, monkeypatch):
+    """Thư viện C giữ handle file; không đóng thì rò rỉ mỗi vòng poll."""
+    p = tmp_path / "trang_hong.pdf"
+    p.write_bytes(PDF_HEADER + b"0" * 200)
+
+    da_dong = []
+
+    class PdfGia:
+        def __init__(self, nguon):
+            pass
+        def __len__(self):
+            return 1
+        def __getitem__(self, i):
+            raise RuntimeError("trang hỏng")
+        def close(self):
+            da_dong.append(True)
+
+    monkeypatch.setattr(file_utils.pdfium, "PdfDocument", PdfGia)
+    with pytest.raises(file_utils.InvalidFileError):
+        file_utils._render_pdf(p)
+
+    assert da_dong == [True]
+
+
+def test_PDF_hong_thanh_file_error_chu_KHONG_giet_ca_vong(tmp_path):
+    """Đích thật sự của bản sửa: chứng chỉ hỏng phải rơi vào đường xử lý có
+    sẵn (WAITING + cooldown + cảnh báo), chứ không bay lên vòng ngoài cùng."""
+    import run
+
+    result = run.scan_certificate(PDF_HEADER + b"0" * 200,
+                                  {"employeeId": "nv1",
+                                   "employeeEmail": "nv1@fpt.com",
+                                   "employeeName": "Nguyễn Văn A",
+                                   "courseName": "Python"},
+                                  azure_client=None)
+
+    assert result.stage == "file_error"
+    assert run.is_technical_failure(result)

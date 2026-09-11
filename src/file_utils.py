@@ -100,7 +100,19 @@ def _render_pdf(path: Path) -> list[bytes]:
     import io
 
     images: list[bytes] = []
-    pdf = pdfium.PdfDocument(path.read_bytes())
+
+    # pypdfium2 ném lỗi của RIÊNG nó (PdfiumError), không phải InvalidFileError.
+    # Không đổi sang mẫu này thì lỗi đi xuyên qua scan_certificate và giết cả
+    # vòng TRƯỚC KHI kịp ghi log — mà không có dòng log thì không đếm, không
+    # cooldown, nên nó lặp lại mỗi 5 giây và khóa cả hàng đợi, im lặng.
+    #
+    # Ca thật: PDF có mật khẩu, hoặc tải về dở dang. check_mime vẫn cho qua vì
+    # phần đầu file đúng là PDF.
+    try:
+        pdf = pdfium.PdfDocument(path.read_bytes())
+    except Exception as e:
+        raise InvalidFileError(f"Không mở được PDF: {e}") from e
+
     try:
         for i in range(len(pdf)):
             page = pdf[i]
@@ -109,6 +121,9 @@ def _render_pdf(path: Path) -> list[bytes]:
             buf = io.BytesIO()
             pil_image.save(buf, format="PNG")
             images.append(compress_to_fit(buf.getvalue()))
+    except Exception as e:
+        # Mở được nhưng vỡ ở giữa: hỏng từ trang thứ n trở đi.
+        raise InvalidFileError(f"Không đọc được trang PDF: {e}") from e
     finally:
         pdf.close()
 
