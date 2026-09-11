@@ -133,15 +133,17 @@ def test_thieu_email_hoac_ten_khoa_thi_KHONG_doan(bat_luat):
     assert run.is_duplicate({"employeeEmail": "a@fpt.com", "courseName": ""}) is False
 
 
-def test_eLIS_LOI_thi_MO_chu_khong_dong(bat_luat):
-    """Không tra được lịch sử thì chứng chỉ đi tiếp theo luồng thường.
+def test_eLIS_LOI_thi_KHONG_BAO_GIO_tu_choi_bua(bat_luat):
+    """Coi lỗi mạng là "đã từng duyệt" thì thành hàng trăm từ chối oan.
 
-    Coi lỗi mạng là "đã từng duyệt" thì thành hàng trăm từ chối oan.
+    Cách xử lý tùy loại lỗi (xem test_tra_lich_su_loi.py), nhưng KHÔNG đường
+    nào được trả True.
     """
     with patch.object(client, "get_by_email",
                       side_effect=client.ElisError("eLIS sập")):
-        assert run.is_duplicate({"employeeEmail": "a@fpt.com",
-                                 "courseName": "Python"}) is False
+        with pytest.raises(client.ElisError):
+            run.is_duplicate({"employeeEmail": "a@fpt.com",
+                              "courseName": "Python"})
 
 
 def test_khac_khoa_thi_KHONG_tinh_la_trung(bat_luat):

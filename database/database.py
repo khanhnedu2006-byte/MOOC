@@ -204,7 +204,8 @@ def read_recent_logs(row_count=20, db_path=None):
 # Các stage nghĩa là "hỏng kỹ thuật", không phải kết luận nghiệp vụ.
 # Trùng với report.FAILURE_GROUPS — có test canh hai bên không lệch nhau.
 TECHNICAL_STAGES = ("llm1_error", "stage2_error", "system_error",
-                    "file_error", "download_error", "no_file", "soft_fail_zip")
+                    "file_error", "download_error", "no_file", "soft_fail_zip",
+                    "duplicate_check_error")
 
 # Ca BỎ QUA — CỐ Ý KHÔNG nằm trong TECHNICAL_STAGES. Thêm vào đó thì
 # technical_retry_state() đếm nó như hỏng kỹ thuật và với chu kỳ poll 5 giây,

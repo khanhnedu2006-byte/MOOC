@@ -27,7 +27,34 @@ def _headers(json_body: bool = True) -> dict:
 
 
 class ElisError(Exception):
-    """Lỗi khi gọi API ELIS."""
+    """Lỗi khi gọi API ELIS.
+
+    status_code: mã HTTP eLIS trả về, None khi chưa nối được (timeout, DNS,
+    đứt mạng). Người gọi cần nó để phân biệt sự cố hạ tầng với lỗi dữ liệu
+    của riêng một bản ghi — xem is_infrastructure().
+    """
+
+    def __init__(self, message, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+# 408/429 tuy là 4xx nhưng nghĩa là "bận, thử lại sau", không phải sai dữ liệu.
+RETRYABLE_HTTP = (408, 429)
+
+
+def is_infrastructure(error: Exception) -> bool:
+    """Lỗi hạ tầng (thử lại có ích) hay lỗi dữ liệu của riêng bản ghi này?
+
+    Chỉ ca hạ tầng mới được coi là hỏng kỹ thuật. Hỏng kỹ thuật CHẶN ĐẦU HÀNG,
+    nên gán nhầm cho lỗi vĩnh viễn (vd HTTP 400 vì email dị dạng) là cả hàng
+    đợi đứng im mãi mãi vì một bản ghi.
+
+    HTTP 200 kèm isError tính là lỗi dữ liệu: eLIS trả lời được, nó chỉ không
+    đồng ý với yêu cầu.
+    """
+    code = getattr(error, "status_code", None)
+    return code is None or code >= 500 or code in RETRYABLE_HTTP
 
 
 # ===== API ① — Lấy danh sách chờ duyệt =====
@@ -43,16 +70,17 @@ def _get_cert(params: dict) -> list[dict]:
 
     try:
         resp = requests.get(url, headers=_headers(json_body=False),
-                            params=params, timeout=30)
+                            params=params, timeout=settings.timeout_seconds)
     except requests.RequestException as e:
         raise ElisError(f"Lỗi kết nối getCert: {e}") from e
 
     if resp.status_code != 200:
-        raise ElisError(f"getCert HTTP {resp.status_code}: {resp.text[:200]}")
+        raise ElisError(f"getCert HTTP {resp.status_code}: {resp.text[:200]}",
+                        resp.status_code)
 
     data = resp.json()
     if data.get("isError"):
-        raise ElisError(f"getCert lỗi: {data.get('message')}")
+        raise ElisError(f"getCert lỗi: {data.get('message')}", resp.status_code)
 
     return data.get("data", [])
 
@@ -123,14 +151,15 @@ def download_certificates(pairs: list[dict]) -> list[dict]:
             url,
             headers=_headers(),
             json=pairs,
-            timeout=60,
+            timeout=settings.timeout_seconds,
         )
     except requests.RequestException as e:
         raise ElisError(f"Lỗi kết nối download: {e}") from e
 
     if resp.status_code != 200:
         raise ElisError(
-            f"Download HTTP {resp.status_code}: {_escape_html(resp.text)}")
+            f"Download HTTP {resp.status_code}: {_escape_html(resp.text)}",
+            resp.status_code)
 
     try:
         body = resp.json()
@@ -415,15 +444,19 @@ def update_status(results: list[dict]) -> dict:
     url = f"{settings.elis_base_url}/api/v1/UserCourse/ProcessUserCourseStatus"
 
     try:
-        resp = requests.post(url, headers=_headers(), json=results, timeout=60)
+        resp = requests.post(url, headers=_headers(), json=results,
+                             timeout=settings.timeout_seconds)
     except requests.RequestException as e:
         raise ElisError(f"Lỗi kết nối ProcessStatus: {e}") from e
 
     if resp.status_code != 200:
-        raise ElisError(f"ProcessStatus HTTP {resp.status_code}: {resp.text[:200]}")
+        raise ElisError(
+            f"ProcessStatus HTTP {resp.status_code}: {resp.text[:200]}",
+            resp.status_code)
 
     data = resp.json()
     if data.get("isError"):
-        raise ElisError(f"ProcessStatus lỗi: {data.get('message')}")
+        raise ElisError(f"ProcessStatus lỗi: {data.get('message')}",
+                        resp.status_code)
 
     return data.get("data", {})

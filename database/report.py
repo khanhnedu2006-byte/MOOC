@@ -80,6 +80,7 @@ FAILURE_GROUPS = {
     "download_error": "Không tải được file từ eLIS",
     "no_file":        "eLIS không trả về file",
     "file_error":     "File hỏng hoặc sai định dạng",
+    "duplicate_check_error": "Không tra được lịch sử để kiểm nộp trùng",
     # AI/hạ tầng phía mình.
     "llm1_error":     "Lỗi gọi AI",
     "stage2_error":   "Lỗi OCR / AI tầng 2",

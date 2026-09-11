@@ -30,6 +30,9 @@ STAGE_DESCRIPTION = {
     "file_error": "File tải về không phải ảnh/PDF đọc được",
     "download_error": "Gọi API tải file của eLIS thất bại",
     "no_file": "eLIS không trả về file cho chứng chỉ này",
+    "duplicate_check_error": "Không tra được lịch sử học của nhân viên nên "
+                             "chưa kiểm được nộp trùng — chứng chỉ chờ tới "
+                             "khi eLIS trả lời lại",
     "soft_fail_zip": "Gói file eLIS trả về bị hỏng",
     "system_error": "Lỗi hệ thống chưa phân loại",
 }

@@ -125,6 +125,9 @@ class Settings(BaseSettings):
     # Số lần thử lại khi gọi API gặp lỗi tạm thời (vd 502, timeout).
     retry_count: int = Field(default=3)
     retry_delay_seconds: int = Field(default=5)
+
+    # Số giây chờ mỗi lời gọi eLIS. Dùng chung cho cả ba API; nặng nhất là
+    # getCert theo email (kéo cả lịch sử một người, size=1000).
     timeout_seconds: int = Field(default=60)
 
     # ===== Kho lưu chứng chỉ (phục vụ đánh giá lại) =====
