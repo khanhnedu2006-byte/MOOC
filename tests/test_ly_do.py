@@ -1,25 +1,14 @@
-"""Test câu LÝ DO từ chối không đổ oan (test_ly_do).
+"""Test câu lý do từ chối không đổ oan (test_ly_do).
 
-LỖI ĐÃ XẢY RA THẬT (demo 10/09/2026). Chứng chỉ "AI cơ bản_AI for Everyone",
-người nộp gõ SAI mỗi tên nhân viên. Màn hình trả về:
+Phán quyết luôn tính trên bản đọc CUỐI CÙNG. Tên sai làm LLM1 trượt,
+pipeline rơi xuống tầng 2; LLM2 tách tên khóa song ngữ kém hơn LLM1 thì lý
+do đổ luôn cho tên khóa học, và người nộp đi sửa nhầm chỗ.
 
-    Tên không khớp; Tên khóa học không khớp
+Luật: một trường chỉ bị nêu tên khi CẢ HAI bản đọc đều trượt nó. Hai bản mâu
+thuẫn ở trường nào thì im về trường đó.
 
-Tên khóa học thì đúng — sửa lại tên người là chứng chỉ được APPROVED ngay.
-
-VÌ SAO XẢY RA: phán quyết luôn tính trên bản đọc CUỐI CÙNG. Tên sai làm LLM1
-trượt, pipeline rơi xuống tầng 2; LLM2 tách tên khóa song ngữ kém hơn LLM1
-nên lý do đổ luôn cho tên khóa học.
-
-HẬU QUẢ không chỉ là xấu mặt: học viên đọc lý do rồi đi sửa nhầm chỗ, nộp
-lại vẫn trượt. Sai một trường mà bị báo sai hai trường.
-
-CÁCH SỬA: một trường chỉ bị nêu tên khi CẢ HAI bản đọc đều trượt nó. Hai
-bản đọc mâu thuẫn nhau ở trường nào thì im về trường đó — chưa đủ chắc để
-bảo người ta đi sửa.
-
-Test ở đây canh phần SINH CHUỖI LÝ DO. Phần phán quyết (APPROVED/REJECTED)
-không đổi và có test riêng — xem test cuối file.
+Test ở đây canh phần sinh chuỗi lý do. Phần phán quyết có test riêng ở cuối
+file.
 """
 
 import pipeline
@@ -53,28 +42,25 @@ def khoang_ngay_hop_le(monkeypatch):
 
 
 def test_ban_doc_kem_MOT_MINH_van_do_oan():
-    """Đối chứng: đây là hành vi CŨ, và nó sai."""
+    """Đối chứng: một bản đọc thì không lọc được gì."""
     assert pipeline._mismatch_reason(DOC_KEM, NHAP) == (
         "Tên không khớp; Tên khóa học không khớp")
 
 
 def test_co_ban_doi_chieu_thi_KHONG_do_oan_ten_khoa_hoc():
-    """Bản kia đọc được tên khóa -> không nói chắc là tên khóa sai."""
+    """Bản kia đọc được tên khóa nên không nói chắc là tên khóa sai."""
     ly_do = pipeline._mismatch_reason(DOC_KEM, NHAP, DOC_TOT)
     assert "Tên không khớp" in ly_do
     assert "khóa học" not in ly_do
 
 
 def test_ly_do_chi_gom_ten_truong_KHONG_them_chu_nao():
-    """Người đọc cần biết đi sửa chỗ nào, không cần biết máy đọc mấy lần.
-
-    Lý do phải là danh sách tên trường, hết. Thêm chữ giải thích vào đây là
-    bắt học viên đọc chuyện nội bộ của hệ thống."""
+    """Lý do là danh sách tên trường, hết. Không thêm chữ giải thích."""
     assert pipeline._mismatch_reason(DOC_KEM, NHAP, DOC_TOT) == "Tên không khớp"
 
 
 def test_ca_HAI_ban_doc_deu_truot_thi_van_noi_chac():
-    """Nới lý do không được biến ca sai thật thành mơ hồ."""
+    """Lọc bớt không được biến ca sai thật thành mơ hồ."""
     sai_that = DOC_TOT.model_copy(update={"certificate_name": "Java nâng cao",
                                           "certificate_name_alt": None})
     ly_do = pipeline._mismatch_reason(sai_that, NHAP, sai_that)
@@ -82,7 +68,7 @@ def test_ca_HAI_ban_doc_deu_truot_thi_van_noi_chac():
 
 
 def test_khong_co_ban_doi_chieu_thi_giu_nguyen_cach_ghi_cu():
-    """Tầng 1 chưa có bản thứ hai — lý do phải y như trước."""
+    """Tầng 1 chưa có bản thứ hai để đối chiếu."""
     sai_that = DOC_TOT.model_copy(update={"certificate_name": "Java nâng cao",
                                           "certificate_name_alt": None})
     assert pipeline._mismatch_reason(sai_that, NHAP) == (
@@ -96,15 +82,13 @@ def test_ngay_ngoai_khoang_van_ghi_dung_cau_cu():
 
 
 def test_chi_sai_ten_thi_chi_ghi_moi_ten():
-    """Ca của bản demo, sau khi sửa: đúng một dòng, đúng một trường."""
+    """Sai một trường thì lý do đúng một dòng."""
     assert pipeline._mismatch_reason(DOC_TOT, NHAP, DOC_TOT) == "Tên không khớp"
 
 
 def test_LY_DO_KHONG_DUOC_DOI_PHAN_QUYET():
-    """Chốt quan trọng nhất: nới câu chữ không được nới cả kết luận.
-
-    `_mismatch_reason` chỉ sinh chuỗi. Cái quyết định APPROVED/REJECTED là
-    `_both_fields_match`, và nó KHÔNG nhìn sang bản đọc còn lại."""
+    """`_mismatch_reason` chỉ sinh chuỗi. Quyết định APPROVED/REJECTED là
+    `_both_fields_match`, và nó không nhìn sang bản đọc còn lại."""
     assert pipeline._both_fields_match(DOC_KEM, NHAP) is False
     assert pipeline._both_fields_match(DOC_TOT, NHAP) is False
 

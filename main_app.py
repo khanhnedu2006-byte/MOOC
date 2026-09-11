@@ -2,21 +2,18 @@
 
 Chạy: python main_app.py
 
-App này KHÔNG chứa luật nghiệp vụ nào. Mọi phán quyết vẫn do run.py đưa ra;
-ở đây chỉ có ba việc:
-    1. Chạy vòng xử lý trong một luồng nền (thay cho `python run.py loop`).
+App không chứa luật nghiệp vụ nào. Mọi phán quyết do run.py đưa ra; ở đây
+có ba việc:
+    1. Chạy vòng xử lý trong luồng nền (thay cho `python run.py loop`).
     2. Bày ra các con số của mỗi vòng.
-    3. Thu nhật ký logging vào cửa sổ, và thu nhỏ xuống khay thay vì thoát.
+    3. Thu nhật ký logging vào cửa sổ, thu nhỏ xuống khay thay vì thoát.
 
-Việc 2 KHÔNG phải chỉ đọc lại RoundResult. Chỉ hai ô số lấy được từ đó
-(eLIS nhận, đang hoãn); ba ô còn lại app tự đi hỏi — xem _one_round(). Hệ quả
-là app tự gọi API ① và do đó phải tự ghi sổ alert.api_failed/api_succeeded.
-Sửa phần đó mà quên ghi sổ thì email cảnh báo sẽ sai.
+Việc 2 không phải chỉ đọc lại RoundResult: chỉ hai ô số lấy được từ đó (eLIS
+nhận, đang hoãn), ba ô còn lại app tự hỏi — xem app_runner._one_round().
 
-Nguyên tắc bắt buộc khi sửa file này: MỌI thao tác chạm vào widget Tk đều
-phải xảy ra trong luồng chính. Luồng nền chỉ được ghi vào `SharedState` và
-`queue.Queue`; luồng chính đọc lại mỗi 250ms trong `_tick`. Gọi widget từ
-luồng nền là kiểu lỗi treo cứng không có traceback, rất khó lần ra.
+MỌI thao tác chạm widget Tk phải xảy ra trong luồng chính. Luồng nền chỉ ghi
+vào `SharedState` và `queue.Queue`; luồng chính đọc lại mỗi 250ms trong
+`_tick`. Gọi widget từ luồng nền treo cứng, không traceback.
 """
 
 import os
@@ -57,12 +54,11 @@ LOG_LINES_KEPT = 600
 def acquire_single_instance_lock() -> socket.socket | None:
     """Giữ chỗ để bản thứ hai không chạy được. None = đã có bản đang chạy.
 
-    Hai bản cùng poll một hàng đợi nghĩa là mỗi chứng chỉ tốn hai lượt LLM, và
-    tệ hơn: hai bản cùng nộp kết quả cho một bản ghi eLIS.
+    Hai bản cùng poll một hàng đợi thì mỗi chứng chỉ tốn hai lượt LLM, và cả
+    hai cùng nộp kết quả cho một bản ghi eLIS.
 
-    Dùng socket chứ không dùng file khóa vì file khóa còn nguyên sau khi app
-    bị kill — lần mở sau tưởng có bản đang chạy dù không có. Socket thì hệ
-    điều hành tự thu khi tiến trình chết. Cố ý KHÔNG đặt SO_REUSEADDR.
+    Socket chứ không phải file khóa: file khóa còn nguyên sau khi app bị
+    kill. Socket thì hệ điều hành tự thu. Cố ý không đặt SO_REUSEADDR.
     """
     holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -79,8 +75,7 @@ def acquire_single_instance_lock() -> socket.socket | None:
 class QueueLogHandler(logging.Handler):
     """Đẩy mỗi dòng log vào hàng đợi để luồng chính vẽ ra.
 
-    Không đổi một dòng logger nào trong run.py: gắn thêm handler ở đây là đủ,
-    nên chạy bằng `python run.py loop` vẫn cho ra đúng nhật ký như cũ.
+    Chỉ gắn thêm handler, không đổi logger nào trong run.py.
     """
 
     def __init__(self, sink: queue.Queue):
@@ -126,9 +121,8 @@ def _scrollable(parent):
     # bị nén về bên trái dù cửa sổ đã kéo rộng.
     canvas.bind("<Configure>",
                 lambda e: canvas.itemconfigure(window, width=e.width))
-    # Chỉ bắt con lăn KHI CHUỘT ĐANG Ở TRONG vùng này. bind_all vô điều kiện
-    # sẽ cướp con lăn của cả tab Nhật ký và tab Ca bỏ qua — cuộn ở đó lại làm
-    # nhảy trang cấu hình.
+    # Chỉ bắt con lăn khi chuột đang trong vùng này. bind_all vô điều kiện
+    # cướp con lăn của cả tab Nhật ký và tab Ca bỏ qua.
     def _wheel(event):
         canvas.yview_scroll(-event.delta // 120, "units")
 
@@ -163,10 +157,9 @@ class ConsoleWindow(tk.Tk):
         self.tray_icon = None
         self.alive = True
 
-        # Lệnh từ luồng khay gửi sang. KHÔNG dùng window.after() cho việc này:
-        # Tcl/Tk không an toàn đa luồng, gọi after() từ luồng pystray có lúc
-        # chạy êm, có lúc làm sập tiến trình mà không để lại traceback. Đẩy
-        # hàm vào hàng đợi rồi để _tick (đang ở luồng chính) gọi hộ.
+        # Lệnh từ luồng khay. Không dùng window.after(): Tcl/Tk không an
+        # toàn đa luồng, gọi after() từ luồng pystray có lúc làm sập tiến
+        # trình mà không để lại traceback.
         self.ui_queue: queue.Queue = queue.Queue()
 
         self.title(APP_NAME)
@@ -208,9 +201,8 @@ class ConsoleWindow(tk.Tk):
         kpis = ttk.Frame(page)
         kpis.pack(fill="x")
         self.kpi_values = {}
-        # Dòng phụ dưới mỗi số là BẮT BUỘC, không phải trang trí: năm ô này có
-        # ba mốc thời gian khác nhau (đang có / từ khi mở app / vòng vừa rồi).
-        # Bỏ dòng phụ đi là mời người đọc cộng trừ hai số không cùng mốc.
+        # Dòng phụ dưới mỗi số là bắt buộc: năm ô này có ba mốc thời gian
+        # khác nhau (đang có / từ khi mở app / vòng vừa rồi).
         spec = [
             ("queue", "Hàng đợi", "đang chờ ở eLIS"),
             ("accepted", "eLIS đã nhận", "từ khi mở app"),
@@ -280,9 +272,8 @@ class ConsoleWindow(tk.Tk):
     def _build_config_tab(self, parent) -> ttk.Frame:
         page = ttk.Frame(parent, padding=(10, 10, 10, 0))
 
-        # Thanh nút dựng và pack TRƯỚC vùng cuộn. Đây không phải chuyện thẩm
-        # mỹ: pack cấp chỗ theo thứ tự gọi, nên nếu vùng cuộn (expand=True)
-        # đi trước, nó ăn hết chiều cao và thanh nút bị đẩy ra khỏi cửa sổ.
+        # Thanh nút pack TRƯỚC vùng cuộn: pack cấp chỗ theo thứ tự gọi, vùng
+        # cuộn (expand=True) đi trước sẽ ăn hết chiều cao.
         bar = ttk.Frame(page)
         bar.pack(fill="x", side="bottom", pady=(8, 10))
         ttk.Button(bar, text="Lưu thay đổi", command=self.save_config).pack(
@@ -298,12 +289,10 @@ class ConsoleWindow(tk.Tk):
         return page
 
     def _build_editors(self, body) -> None:
-        """Dựng ô sửa cho mọi cấu hình không phải khóa bí mật.
+        """Ô sửa cho mọi cấu hình không phải khóa bí mật.
 
-        Nhãn tiếng Việt để đọc, TÊN BIẾN .env in bên dưới để tra: người vận
-        hành đọc nhãn, còn khi hỏi nhau qua chat thì ai cũng gọi tên biến.
-        Chú thích lấy thẳng từ `description` trong config.py — một nguồn duy
-        nhất, không có bản mô tả thứ hai để lệch nhau.
+        Nhãn tiếng Việt để đọc, tên biến .env in bên dưới để tra. Chú thích
+        lấy thẳng từ `description` trong config.py, một nguồn duy nhất.
         """
         self.config_vars = {}
         for title, fields in settings_file.CONFIG_GROUPS:
@@ -416,8 +405,8 @@ class ConsoleWindow(tk.Tk):
         try:
             vault.set_secret(name, entry.get())
         except vault.VaultError as e:
-            # Không nuốt lỗi: báo "đã lưu" trong khi chưa lưu được là kiểu
-            # hỏng tốn cả buổi chiều đi tìm vì sao key vẫn sai.
+            # Không nuốt lỗi: báo "đã lưu" khi chưa lưu được là kiểu hỏng
+            # khó lần nhất.
             messagebox.showerror(APP_NAME, str(e), parent=self)
             return
         entry.delete(0, "end")
@@ -533,8 +522,8 @@ class ConsoleWindow(tk.Tk):
     def reload_skipped(self) -> None:
         """Đọc lại danh sách bỏ qua từ mooc_log.db.
 
-        Lấy 400 dòng gần nhất rồi lọc, thay vì thêm câu SQL mới: giữ mọi truy
-        vấn ở database.py, app này chỉ đọc.
+        Lấy 400 dòng gần nhất rồi lọc thay vì thêm câu SQL mới: mọi truy vấn
+        giữ ở database.py.
         """
         self.skip_view.delete(*self.skip_view.get_children())
         try:
@@ -570,8 +559,8 @@ class ConsoleWindow(tk.Tk):
     def hide_to_tray(self) -> None:
         """Nút X thu nhỏ xuống khay chứ không thoát — job phải chạy tiếp.
 
-        Không có khay (chưa cài pystray) thì X thoát hẳn, vì thu nhỏ vào chỗ
-        không nhìn thấy được là cách chắc chắn làm người dùng mất app.
+        Chưa cài pystray thì X thoát hẳn: thu nhỏ vào chỗ không nhìn thấy
+        được là cách chắc chắn làm mất app.
         """
         if self.tray_icon is None:
             self.quit_app()
@@ -585,10 +574,9 @@ class ConsoleWindow(tk.Tk):
         self.focus_force()
 
     def quit_app(self) -> None:
-        # Luồng chạy job là daemon: thoát là nó bị cắt ngang, không kịp dọn.
-        # Cắt ngang giữa lúc đang quét thì lượt Gemma + Azure của chứng chỉ đó
-        # coi như mất tiền — bản ghi vẫn WAITING nên vòng sau quét lại từ đầu.
-        # Không nguy hiểm, nhưng đáng hỏi một câu trước khi đốt.
+        # Luồng job là daemon: thoát là bị cắt ngang. Cắt giữa lúc đang quét
+        # thì mất lượt Gemma + Azure của chứng chỉ đó; bản ghi vẫn WAITING
+        # nên vòng sau quét lại.
         if (self.runner is not None
                 and self.state_store.snapshot()["phase"] == "running"
                 and not messagebox.askyesno(
@@ -610,11 +598,9 @@ class ConsoleWindow(tk.Tk):
 
 
 def _origin_text(name: str, in_vault: bool | None) -> str:
-    """Khóa này đang thật sự lấy từ đâu — theo đúng thứ tự trong config.py.
+    """Khóa này đang thật sự lấy từ đâu, theo thứ tự ưu tiên trong config.py.
 
-    Quan trọng hơn vẻ ngoài: nếu ai đó lỡ để FPT_API_KEY trong biến môi
-    trường của máy, khóa lưu trong kho sẽ KHÔNG được dùng. Dòng này nói ra
-    điều đó thay vì để người dùng ngồi đoán vì sao đổi key không ăn.
+    Có FPT_API_KEY trong biến môi trường thì khóa trong kho không được dùng.
     """
     if os.environ.get(name):
         return "← đang dùng biến môi trường"
@@ -639,7 +625,7 @@ def start_tray(window: ConsoleWindow) -> None:
     ImageDraw.Draw(image).text((20, 18), "M", fill="white")
 
     # Menu chạy trong luồng riêng của pystray. Mọi việc chạm Tk phải đẩy về
-    # luồng chính qua hàng đợi — xem giải thích ở ConsoleWindow.__init__.
+    # luồng chính qua hàng đợi.
     def post(action):
         return lambda *_: window.post_to_ui(action)
 
@@ -683,9 +669,8 @@ def main() -> int:
     window.reload_skipped()
 
     if self_test:
-        # Dựng cửa sổ rồi bơm vòng sự kiện ~1 giây để _tick chạy thật vài
-        # lượt — vẽ log, đổi số, đếm ngược. Dựng được mà _tick lỗi thì vẫn
-        # là hỏng, nên không dừng ở bước dựng.
+        # Dựng cửa sổ rồi bơm vòng sự kiện ~1 giây để _tick chạy thật: vẽ
+        # log, đổi số, đếm ngược.
         logger.info("self-test: dòng log thường")
         logger.warning("self-test: dòng cảnh báo")
         logger.error("self-test: dòng lỗi")

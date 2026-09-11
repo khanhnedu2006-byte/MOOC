@@ -3,11 +3,10 @@
 #
 #   bash tools/preflight.sh
 #
-# Vì sao cần: bật systemd rồi mới phát hiện thiếu .env hoặc IP chưa được
-# allowlist thì job sẽ restart vô tận trong nền, và cách duy nhất để biết là
-# đi đọc journalctl. Chạy cái này trước, mọi lỗi hiện ngay trên màn hình.
+# Bật systemd rồi mới phát hiện thiếu .env hoặc IP chưa allowlist thì job
+# restart vô tận trong nền, phải đi đọc journalctl mới biết.
 #
-# KHÔNG in ra giá trị key nào — chỉ nói có hay không.
+# Không in ra giá trị key nào, chỉ nói có hay không.
 
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -49,9 +48,8 @@ for M in pydantic_settings langchain_openai azure.ai.documentintelligence \
     fi
 done
 
-# python-magic cần thư viện HỆ THỐNG libmagic, không có trong pip.
-# Thiếu nó thì src/file_utils.py chết ngay lúc import, và thông báo lỗi
-# ("failed to find libmagic") không gợi được là phải apt install.
+# python-magic cần thư viện hệ thống libmagic, không có trong pip. Thiếu nó
+# thì src/file_utils.py chết lúc import.
 if $PY -c "import magic" 2>/dev/null; then
     ok "import magic (libmagic có sẵn)"
 else
@@ -76,9 +74,8 @@ else
            scp .env $(whoami)@$(hostname):$(pwd)/"
 fi
 
-# Ba file này phải TỒN TẠI trước khi chạy. Thiếu .alert_state.json thì mỗi
-# lần systemd dựng lại job là gửi thêm một thư cảnh báo — đúng lúc hệ thống
-# đang hỏng nhất thì hộp thư người vận hành ngập thư trùng.
+# Ba file này phải tồn tại trước khi chạy. Thiếu .alert_state.json thì mỗi
+# lần systemd dựng lại job là gửi thêm một thư cảnh báo.
 for F in mooc_log.db .report_state.json .alert_state.json; do
     if [ -e "$F" ]; then
         ok "$F có mặt"
@@ -103,11 +100,9 @@ fi
 
 echo
 echo "=== 5. Gọi thử eLIS (chỉ ĐỌC, không xử lý, không tốn tiền LLM) ==="
-echo "    Đây là bước quan trọng nhất: eLIS chặn theo IP, và IP của server này"
-echo "    gần như chắc chắn KHÁC IP máy bạn."
+echo "    eLIS chặn theo IP, và IP server thường khác IP máy bạn."
 echo
-# Nuốt traceback: run.py in nguyên vết gọi khi lỗi mạng, mười mấy dòng
-# Python che mất câu duy nhất cần đọc là mã lỗi.
+# Nuốt traceback: run.py in nguyên vết gọi khi lỗi mạng, che mất mã lỗi.
 RA=$(mktemp)
 if KMP_DUPLICATE_LIB_OK=TRUE timeout 60 "$PY" run.py status >"$RA" 2>&1; then
     head -20 "$RA" | sed 's/^/    /'

@@ -1,27 +1,14 @@
 """Dựng HTML báo cáo khóa học theo khoảng thời gian (report_layout).
 
-Tách khỏi send_report.py vì đây là báo cáo KHÁC: send_report lo báo cáo MỘT
-NGÀY, còn đây là báo cáo tuần/tháng có biểu đồ và thống kê theo nhà cung cấp.
-
-BỐ CỤC (theo mẫu đã chốt):
-    CERTIFICATE VERIFICATION REPORT
-    ────────────────────────────────
-    Total Processed  Approved  Rejected  Approval Rate
-    ────────────────────────────────
-    Certificate Processing Trend        [biểu đồ đường]
-    ────────────────────────────────
-    Approval vs Rejection               [biểu đồ cột chồng]
-    ────────────────────────────────
-    Lý do từ chối · Theo nhà cung cấp
-    ────────────────────────────────
-    Key Findings
+BỐ CỤC: tiêu đề · hàng KPI · biểu đồ đường xu hướng · biểu đồ cột chồng
+duyệt/từ chối · lý do từ chối · theo nhà cung cấp · Key Findings.
 
 MỌI THỨ DỰNG BẰNG <table>. Outlook trên Windows dựng HTML bằng engine của
-Word: flexbox, grid, position, và phần lớn CSS hiện đại bị bỏ qua. Bảng có
+Word: flexbox, grid, position và phần lớn CSS hiện đại bị bỏ qua. Bảng có
 thuộc tính width/bgcolor thì chạy ở mọi client, kể cả Outlook 2016.
 
-Biểu đồ trả về dưới dạng (html, danh_sach_anh) — ảnh phải được đính kèm
-inline theo Content-ID; xem send_report._send_smtp.
+Biểu đồ trả về dưới dạng (html, danh_sach_anh) — ảnh phải đính kèm inline
+theo Content-ID; xem send_report._send_smtp.
 """
 
 from __future__ import annotations
@@ -88,9 +75,8 @@ def _section_title(text: str) -> str:
 def _rejection_reason_table(rc: dict) -> str:
     """Bảng nguyên nhân từ chối, kèm thanh tỷ lệ vẽ bằng ô bảng.
 
-    Mẫu số của % là SỐ CA TỪ CHỐI, không phải tổng ba nguyên nhân — vì câu
-    hỏi người đọc đặt ra là "trong số bị từ chối, bao nhiêu phần sai tên",
-    chứ không phải "sai tên chiếm bao nhiêu phần trong các lỗi".
+    Mẫu số của % là SỐ CA TỪ CHỐI, không phải tổng ba nguyên nhân: câu hỏi là
+    "trong số bị từ chối, bao nhiêu phần sai tên".
     """
     rows = rc["causes"]
     mau_so = rc["total_rejected"]
@@ -122,8 +108,8 @@ def _rejection_reason_table(rc: dict) -> str:
           </td>
         </tr>""")
 
-    # Câu này BẮT BUỘC phải có khi có ca sai nhiều thứ: không có nó thì người
-    # đọc cộng ba số, thấy lớn hơn tổng từ chối, và kết luận báo cáo sai.
+    # BẮT BUỘC khi có ca sai nhiều tiêu chí: thiếu nó thì người đọc cộng ba số
+    # ra lớn hơn tổng từ chối và kết luận báo cáo sai.
     ghi_chu = ""
     if rc["multi_cause"]:
         ghi_chu = (
@@ -142,8 +128,8 @@ def _rejection_reason_table(rc: dict) -> str:
 def _provider_table(rows: list[dict]) -> str:
     """Bảng theo nhà cung cấp, kèm thanh tỷ lệ duyệt vẽ bằng ô bảng.
 
-    Thanh tỷ lệ dùng hai <td> có bgcolor và width tính theo phần trăm — cách
-    duy nhất vẽ được thanh trong Outlook mà không cần ảnh.
+    Thanh dùng hai <td> có bgcolor và width phần trăm — cách duy nhất vẽ được
+    thanh trong Outlook mà không cần ảnh.
     """
     if not rows:
         return (f'<tr><td colspan="4" style="padding:6px 12px;font-size:13px;'
@@ -195,9 +181,7 @@ def _provider_table(rows: list[dict]) -> str:
 def key_findings(stats: dict) -> list[str]:
     """Sinh các gạch đầu dòng Key Findings từ số liệu.
 
-    Chỉ nêu điều SỐ LIỆU CHỨNG MINH được. Không viết "chất lượng đang cải
-    thiện" khi chỉ có hai mốc — hai điểm thì nối được đường thẳng nào cũng
-    đúng, đó chưa phải xu hướng.
+    Chỉ nêu điều SỐ LIỆU CHỨNG MINH được: hai mốc chưa phải xu hướng.
     """
     ra = []
     tong = stats["total"]
@@ -261,9 +245,8 @@ def key_findings(stats: dict) -> list[str]:
 def _warning_block(warnings: list[str]) -> str:
     """Khối "Cần chú ý" — diễn giải sẵn các con số thành câu hành động.
 
-    Đặt NGAY DƯỚI hàng KPI, trước cả biểu đồ: nếu job chết hoặc eLIS hỏng thì
-    đó là thứ duy nhất người đọc cần biết, không nên bắt họ cuộn qua hai biểu
-    đồ mới thấy.
+    Đặt NGAY DƯỚI hàng KPI, trước cả biểu đồ: job chết hay eLIS hỏng thì đó là
+    thứ duy nhất người đọc cần biết.
     """
     if not warnings:
         return ""
@@ -306,10 +289,9 @@ def _chart_block(has_charts: bool, bucket_label: str) -> str:
 def _exclusion_note(stats: dict) -> str:
     """Một dòng ở chân báo cáo cho số ca bị loại vì hỏng kỹ thuật.
 
-    Không dựng thành mục riêng — người đọc báo cáo này quan tâm kết quả
-    nghiệp vụ, không quan tâm hạ tầng. Nhưng cũng KHÔNG giấu hẳn: im lặng
-    bỏ bớt bản ghi là cách một báo cáo bắt đầu nói dối. Ai cần chi tiết thì
-    tra mooc_log.db, cột stage.
+    Không dựng thành mục riêng (người đọc quan tâm kết quả nghiệp vụ, không
+    quan tâm hạ tầng) nhưng cũng KHÔNG giấu hẳn: im lặng bỏ bớt bản ghi là
+    cách một báo cáo bắt đầu nói dối. Chi tiết ở mooc_log.db, cột stage.
     """
     n = stats.get("excluded_technical", 0)
     if not n:
@@ -318,14 +300,69 @@ def _exclusion_note(stats: dict) -> str:
             f"được (eLIS không trả file, AI lỗi…) — không phải nhân viên khai sai.")
 
 
+def _cert_list_table(block: dict) -> str:
+    """Bảng liệt kê từng chứng chỉ đã xử lý trong ngày gửi.
+
+    Cột elis_sent_ok: 1 = eLIS đã nhận, 0 = eLIS từ chối, None = chưa nộp
+    (ca bỏ qua và ca hỏng kỹ thuật đều rơi vào đây).
+    """
+    rows = (block or {}).get("rows") or []
+    if not rows:
+        return ('<tr><td colspan="4" style="padding:0 12px 18px;font-size:13px;'
+                f'color:{COLORS["muted"]};">Không có chứng chỉ nào trong ngày.'
+                '</td></tr>')
+
+    dau = ('<tr bgcolor="#f6f8fa">'
+           + "".join(
+               f'<td style="padding:6px 8px;font-size:11px;font-weight:bold;'
+               f'color:{COLORS["ink2"]};border-bottom:1px solid '
+               f'{COLORS["border"]};">{c}</td>'
+               for c in ("Giờ", "Nhân viên", "Khóa học", "Kết quả"))
+           + "</tr>")
+
+    mau = {"APPROVED": COLORS["green"], "REJECTED": COLORS["red"]}
+    than = []
+    for r in rows:
+        gui = {1: "", 0: " · eLIS từ chối", None: " · chưa nộp"}.get(
+            r.get("elis_sent_ok"), "")
+        ly_do = f'<div style="font-size:11px;color:{COLORS["muted"]};">' \
+                f'{_e(r["reason"])}</div>' if r.get("reason") else ""
+        than.append(
+            f'<tr>'
+            f'<td style="padding:6px 8px;font-size:12px;color:{COLORS["ink2"]};'
+            f'border-bottom:1px solid {COLORS["border"]};white-space:nowrap;">'
+            f'{_e(r["time"])}</td>'
+            f'<td style="padding:6px 8px;font-size:12px;color:{COLORS["ink"]};'
+            f'border-bottom:1px solid {COLORS["border"]};">{_e(r["employee"])}'
+            f'</td>'
+            f'<td style="padding:6px 8px;font-size:12px;color:{COLORS["ink"]};'
+            f'border-bottom:1px solid {COLORS["border"]};">{_e(r["course"])}</td>'
+            f'<td style="padding:6px 8px;font-size:12px;font-weight:bold;'
+            f'color:{mau.get(r["verdict"], COLORS["ink2"])};'
+            f'border-bottom:1px solid {COLORS["border"]};">'
+            f'{_e(r["verdict"] or r["stage"])}'
+            f'<span style="font-weight:normal;color:{COLORS["muted"]};">'
+            f'{_e(gui)}</span>{ly_do}</td>'
+            f'</tr>')
+
+    con = block.get("truncated") or 0
+    ghi_chu = (f'<tr><td colspan="4" style="padding:6px 8px;font-size:11px;'
+               f'color:{COLORS["muted"]};">Còn {_n(con)} dòng nữa, xem '
+               f'mooc_log.db.</td></tr>') if con else ""
+
+    return ('<tr><td colspan="4" style="padding:0 12px 18px;">'
+            '<table width="100%" cellpadding="0" cellspacing="0" border="0">'
+            f'{dau}{"".join(than)}{ghi_chu}</table></td></tr>')
+
+
 def build_html(stats: dict) -> tuple[str, list[tuple[str, bytes]]]:
     """Dựng HTML báo cáo. Trả về (html, [(cid, png_bytes), ...])."""
     anh: list[tuple[str, bytes]] = []
     xu_huong = stats["trend"]
+    cert_block = stats.get("certificates") or {}
 
-    # Ít hơn hai mốc thì KHÔNG vẽ biểu đồ. Một điểm không thành đường, và
-    # một cột chồng chỉ lặp lại đúng những con số đã có ở hàng KPI phía trên
-    # — thêm hình chỉ làm báo cáo dài ra mà không nói thêm được gì.
+    # Ít hơn hai mốc thì KHÔNG vẽ biểu đồ: một điểm không thành đường, một cột
+    # chồng chỉ lặp lại các con số đã có ở hàng KPI phía trên.
     has_charts = len(xu_huong) >= 2
     if has_charts:
         anh.append(("chart_trend", charts.line_chart(xu_huong)))
@@ -372,6 +409,11 @@ def build_html(stats: dict) -> tuple[str, list[tuple[str, bytes]]]:
   {_provider_table(stats['by_provider'])}
 
   {_divider()}
+  {_section_title(f"Chứng chỉ đã xử lý ngày {_e(cert_block.get('day', ''))}"
+                  f" ({_n(cert_block.get('total', 0))})")}
+  {_cert_list_table(cert_block)}
+
+  {_divider()}
   {_section_title("Key Findings")}
   <tr><td colspan="4" style="padding:0 12px 18px;">
     <ul style="margin:0;padding-left:20px;color:{COLORS['ink']};">{bullets}</ul>
@@ -386,11 +428,10 @@ def build_html(stats: dict) -> tuple[str, list[tuple[str, bytes]]]:
 
 
 def build_text(stats: dict) -> str:
-    """Bản text thuần — phần text/plain của email, và fallback khi ảnh bị chặn.
+    """Bản text thuần — phần text/plain của email, fallback khi ảnh bị chặn.
 
-    Không phải hình thức: một số client (và người đọc trên đồng hồ, hoặc
-    Outlook đặt chế độ text) không thấy ảnh nào cả. Bản này phải tự nó đủ
-    nghĩa, nên nó chứa cả bảng số của hai biểu đồ.
+    Một số client (Outlook đặt chế độ text, đồng hồ...) không thấy ảnh nào cả,
+    nên bản này phải tự nó đủ nghĩa: nó chứa cả bảng số của hai biểu đồ.
     """
     d = ["BÁO CÁO XÁC MINH CHỨNG CHỈ MOOC",
          f"{stats['from_day']} -> {stats['to_day']}", "",
@@ -423,6 +464,22 @@ def build_text(stats: dict) -> str:
             d.append(f"  {m['provider'][:21]:<22}{_n(m['total']):>7}"
                      f"{_n(m['approved']):>8}{_n(m['rejected']):>9}"
                      f"{m['approval_rate']:>7.0f}%")
+
+    cert = stats.get("certificates") or {}
+    if cert.get("rows"):
+        d += ["", f"CHỨNG CHỈ ĐÃ XỬ LÝ NGÀY {cert['day']} "
+                  f"({_n(cert['total'])}):",
+              f"  {'Giờ':<6}{'Nhân viên':<16}{'Khóa học':<34}Kết quả"]
+        for r in cert["rows"]:
+            gui = {1: "", 0: " (eLIS từ chối)", None: " (chưa nộp)"}.get(
+                r["elis_sent_ok"], "")
+            d.append(f"  {r['time']:<6}{r['employee'][:15]:<16}"
+                     f"{r['course'][:33]:<34}"
+                     f"{r['verdict'] or r['stage']}{gui}")
+            if r["reason"]:
+                d.append(f"        {r['reason']}")
+        if cert.get("truncated"):
+            d.append(f"  (Còn {_n(cert['truncated'])} dòng nữa, xem mooc_log.db.)")
 
     if stats.get("warnings"):
         d += ["", "CẦN CHÚ Ý:"] + [f"  - {c}" for c in stats["warnings"]]

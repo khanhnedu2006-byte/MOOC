@@ -3,19 +3,14 @@
 Hai luật, cùng một kết cục — để nguyên WAITING cho người duyệt xử lý:
 
   1. Chứng chỉ ghi email NGOÀI công ty thay cho tên ("minhnt4487@gmail.com").
-     Nhân viên học khóa ngoài hay đăng ký bằng mail cá nhân.        1/162 ca.
   2. Tên trên ảnh THIẾU họ hoặc tên đệm ("Lê Tiến" / "Lê Xuân Tiến").
-     Nhà cấp chứng chỉ in tên người học tự gõ lúc đăng ký.          9/162 ca.
 
-Cả hai đều KHÔNG phải "sai" — hệ thống chỉ không nối được chuỗi đọc ra với
-nhân viên nào. Từ chối là từ chối oan, nên đẩy sang người xem.
+Cả hai đều không phải "sai": hệ thống chỉ không nối được chuỗi đọc ra với
+nhân viên nào, nên từ chối là từ chối oan. Khác ca hỏng kỹ thuật ở ba điểm mà
+ba test cuối canh: không chặn hàng đợi, không tính ngưỡng mail, không thử lại.
 
-Ca này KHÁC ca hỏng kỹ thuật ở ba điểm, và ba test cuối canh đúng ba điểm đó:
-không chặn hàng đợi, không tính vào ngưỡng gửi mail, không thử lại.
-
-Bẫy dễ sập nhất: email CÔNG TY cũng là email, nhưng phần trước "@" chính là mã
-nhân viên nên match_code vẫn khớp và chứng chỉ vẫn được duyệt bình thường. Luật
-viết rộng tay một chút là nuốt luôn 6/7 ca email đang chạy đúng.
+Bẫy dễ sập: email CÔNG TY cũng là email, nhưng phần trước "@" là mã nhân viên
+nên match_code vẫn khớp; luật viết rộng tay là nuốt luôn các ca đang đúng.
 """
 
 import logging
@@ -44,8 +39,8 @@ logging.disable(logging.CRITICAL)
 
 # ===== Nhận diện email ngoài công ty =====
 #
-# Bảy ca dưới đây là TOÀN BỘ ca có email trong recipient_name của bộ đánh giá
-# thật (7/162). Sáu ca đầu phải giữ nguyên hành vi cũ, chỉ ca cuối được đổi.
+# Bảy ca có email trong recipient_name. Sáu ca đầu là email công ty, phải giữ
+# nguyên; chỉ ca cuối là email ngoài.
 
 @pytest.mark.parametrize("name_on_image, expected", [
     ("doannv19@fpt.com", None),
@@ -67,8 +62,8 @@ def test_ten_nguoi_binh_thuong_KHONG_bi_coi_la_email():
 
 
 def test_chay_tren_chuoi_GOC_chu_khong_qua_normalize():
-    """normalize() cắt "@" thành khoảng trắng, sau đó không còn phân biệt được
-    email với tên người nữa — nên phép kiểm tra phải đứng TRƯỚC nó."""
+    """normalize() cắt "@" thành khoảng trắng nên sau đó không phân biệt được
+    email với tên người — phép kiểm tra phải đứng TRƯỚC nó."""
     from process_data import normalize
     assert "@" not in normalize("minhnt4487@gmail.com")
     assert compare.external_email("minhnt4487@gmail.com") == "gmail.com"
@@ -86,19 +81,12 @@ def _extracted(recipient, course="Python"):
 
 
 def test_ten_dung_NHUNG_kem_email_ca_nhan_van_BI_BO_QUA():
-    """GIỚI HẠN ĐÃ BIẾT, ghi lại ở đây để không ai sửa nhầm thành "lỗi".
+    """GIỚI HẠN ĐÃ BIẾT, ghi lại để không ai sửa nhầm thành "lỗi".
 
-    Ảnh in "NGUYEN THUY LINH minhnt4487@gmail.com" — tên đúng nằm ngay đó, mắt
-    người đọc là xác minh được. Nhưng match_name so TẬP HỢP TỪ tuyệt đối, nên
-    ba từ thừa ("minhnt4487", "gmail", "com") làm phép so trượt.
-
-    Không chữa ở đây, và đó là lựa chọn CÓ CHỦ ĐÍCH: chữa nghĩa là nới
-    match_name thành so "tập con", mà nới ra thì "Nguyễn Tuấn" khớp với nhiều
-    nhân viên khác nhau — mua vài ca đúng bằng một lỗ hổng danh tính. Hướng sai
-    hiện tại an toàn (ca đó về tay người duyệt, không bị từ chối oan).
-
-    Ca email CÔNG TY không dính giới hạn này vì match_code cứu: "LinhNT8" nằm
-    trong ảnh dưới dạng một từ trọn vẹn sau normalize.
+    Tên đúng nằm ngay trên ảnh, nhưng match_name so TẬP HỢP TỪ tuyệt đối nên
+    ba từ thừa của email làm phép so trượt. Không chữa, có chủ đích: nới
+    thành so "tập con" thì "Nguyễn Tuấn" khớp nhiều nhân viên — đổi vài ca
+    đúng lấy một lỗ hổng danh tính. Hướng sai hiện tại an toàn.
     """
     reason = pipeline._unverifiable_identity(
         _extracted("NGUYEN THUY LINH minhnt4487@gmail.com"),
@@ -117,13 +105,9 @@ def test_ma_nhan_vien_KHOP_thi_KHONG_bo_qua():
 def test_ma_KHOP_thi_email_ca_nhan_di_kem_KHONG_lam_bo_qua():
     """Canh đúng THỨ TỰ trong _unverifiable_identity.
 
-    Ảnh in cả mã nhân viên lẫn email cá nhân — match_code tìm thấy "linhnt8"
-    như một từ trọn vẹn nên danh tính đã xác minh xong; cái email đi kèm chỉ là
-    thông tin liên hệ, không phải thứ định danh.
-
-    Đảo thứ tự (hỏi email trước) thì ca này bị bỏ qua oan, mà không test nào
-    khác trong file bắt được — vì mọi ca còn lại đều dùng email @fpt.com, tức
-    external_email() trả None nên thứ tự không lộ ra.
+    match_code thấy "linhnt8" trọn vẹn nên danh tính đã xác minh xong; email
+    cá nhân đi kèm chỉ là liên hệ. Hỏi email trước thì ca này bị bỏ qua oan,
+    và không test nào khác bắt được vì mọi ca còn lại dùng @fpt.com.
     """
     assert pipeline._unverifiable_identity(
         _extracted("LINHNT8 linhnt8@gmail.com"), _given()) is None
@@ -136,8 +120,8 @@ def test_khong_khop_gi_va_email_ngoai_thi_BO_QUA():
 
 
 def test_khong_khop_gi_nhung_KHONG_phai_email_thi_van_TU_CHOI():
-    """Tên đọc được là tên người thật, chỉ khác người — đó là kết luận nghiệp
-    vụ bình thường, không phải ca không xác minh được."""
+    """Tên đọc được là tên người thật, chỉ khác người — kết luận nghiệp vụ
+    bình thường, không phải ca không xác minh được."""
     assert pipeline._unverifiable_identity(
         _extracted("Trần Văn Bê"), _given()) is None
 
@@ -237,18 +221,15 @@ def test_ca_bo_qua_KHONG_BAO_GIO_duoc_nop_ve_elis(moi_truong):
     """Nộp nghĩa là bản ghi rời WAITING và học viên nhận một kết luận mà hệ
     thống chưa hề đưa ra được.
 
-    Trường comment trên eLIS có thể đang mang câu của bản code CŨ ("Chưa xử lý
-    được chứng chỉ, vui lòng thử lại sau") và sẽ nằm lại đó vĩnh viễn vì không
-    có gì ghi đè. Đó là dấu vết đã biết, KHÔNG phải lý do để gọi API ③ — gọi
-    ③ nghĩa là gửi status cho một ca mà hệ thống chưa kết luận được.
+    Comment cũ còn sót trên eLIS không phải lý do để gọi API ③.
     """
     _, da_nop, _ = _chay([_item("A")], [_bo_qua()])
     assert da_nop == [], f"đã nộp {da_nop} cho một ca không kết luận được"
 
 
 def test_ca_bo_qua_KHONG_chan_cac_ca_sau(moi_truong):
-    """Khác hẳn ca hỏng kỹ thuật: đây không phải sự cố cả lô, chứng chỉ B và C
-    hoàn toàn bình thường nên phải được xử lý ngay trong vòng này."""
+    """Khác ca hỏng kỹ thuật: không phải sự cố cả lô, nên B và C phải được xử
+    lý ngay trong vòng này."""
     _, da_nop, so_lan_quet = _chay(
         [_item("A"), _item("B"), _item("C")],
         [_bo_qua(), _duyet(), _duyet()])
@@ -257,9 +238,8 @@ def test_ca_bo_qua_KHONG_chan_cac_ca_sau(moi_truong):
 
 
 def test_vong_sau_KHONG_tai_lai_ca_da_bo_qua(moi_truong):
-    """Đây là lý do tồn tại của skipped_ids: bản ghi vẫn WAITING nên getCert
-    trả về nó mãi, mà mỗi lượt xử lý lại là một lượt Gemma + Azure + LLM2 trả
-    tiền cho một kết quả không bao giờ đổi."""
+    """Lý do tồn tại của skipped_ids: bản ghi vẫn WAITING nên getCert trả về
+    nó mãi, mỗi lượt là một lượt Gemma + Azure + LLM2 cho kết quả không đổi."""
     _chay([_item("A")], [_bo_qua()])
     _, da_nop, so_lan_quet = _chay([_item("A"), _item("B")], [_duyet()])
     assert so_lan_quet == 1, "đã quét lại ca bỏ qua — đốt thêm một lượt LLM"
@@ -267,9 +247,8 @@ def test_vong_sau_KHONG_tai_lai_ca_da_bo_qua(moi_truong):
 
 
 def test_ca_bo_qua_KHONG_tinh_vao_nguong_gui_mail(moi_truong):
-    """Chu kỳ poll 5 giây mà ngưỡng cảnh báo là 5 lần: nếu ca bỏ qua bị đếm
-    như hỏng kỹ thuật thì 25 giây sau người vận hành nhận mail báo động về một
-    chứng chỉ mà hệ thống chẳng làm sai gì cả."""
+    """Poll 5 giây, ngưỡng cảnh báo 5 lần: đếm ca bỏ qua như hỏng kỹ thuật
+    thì 25 giây sau đã có mail báo động về một ca chẳng sai gì."""
     _chay([_item("A")], [_bo_qua()])
     assert database.SKIP_STAGE not in database.TECHNICAL_STAGES
     assert database.technical_retry_state(["A"], moi_truong) == {}
@@ -278,9 +257,7 @@ def test_ca_bo_qua_KHONG_tinh_vao_nguong_gui_mail(moi_truong):
 def test_bo_qua_TU_HET_khi_chung_chi_duoc_xu_ly_binh_thuong(moi_truong):
     """skipped_ids lấy dòng MỚI NHẤT, không phải "từng có dòng skip".
 
-    Nếu lấy nhầm thành "từng có", một lần bỏ qua sai (luật viết hụt, model đọc
-    lỗi) sẽ khóa chứng chỉ đó vĩnh viễn, và cách chữa duy nhất là vào SQLite
-    trên production xóa tay.
+    Lấy nhầm thì một lần bỏ qua sai khóa chứng chỉ đó vĩnh viễn.
     """
     conn = sqlite3.connect(moi_truong)
     conn.execute("INSERT INTO process_log (created_at,user_course_id,verdict,stage)"
@@ -300,10 +277,8 @@ def test_bo_qua_TU_HET_khi_chung_chi_duoc_xu_ly_binh_thuong(moi_truong):
 
 # ===== Thiếu họ hoặc tên đệm =====
 #
-# Chín ca dưới đây là TOÀN BỘ ca "tên trên ảnh là tập con của tên eLIS" trong
-# bộ đánh giá thật (9/162 — nguyên nhân từ chối oan lớn nhất của hệ thống,
-# nhiều gấp chín lần ca email cá nhân). Nhà cấp chứng chỉ ngoài in tên người
-# học tự gõ lúc đăng ký, mà người Việt hay bỏ tên đệm khi gõ.
+# Chín ca "tên trên ảnh là tập con của tên eLIS" — nguyên nhân từ chối oan
+# lớn nhất. Chứng chỉ in tên người học tự gõ, mà người Việt hay bỏ tên đệm.
 
 @pytest.mark.parametrize("name_on_image, employee_name", [
     ("Thanh Nga", "Tô Thị Thanh Nga"),
@@ -326,29 +301,27 @@ def test_chin_ca_thieu_ten_dem_that_deu_duoc_BO_QUA(name_on_image, employee_name
 
 
 def test_ten_KHAC_HAN_thi_KHONG_phai_thieu_ten_dem():
-    """Không chung từ nào thì không phải "bỏ bớt tên đệm" — đó là chuyện khác,
-    và gộp chung sẽ giấu mất ca nộp nhầm chứng chỉ của người khác."""
+    """Không chung từ nào thì không phải "bỏ bớt tên đệm". Gộp chung sẽ giấu
+    mất ca nộp nhầm chứng chỉ của người khác."""
     assert compare.name_missing_words("Trần Văn Bê", "Nguyễn Thúy Linh") is False
 
 
 def test_anh_THUA_tu_KHONG_tinh_la_thieu_ten_dem():
-    """Chiều ngược lại cố ý không bắt: ảnh thừa từ có thể là chức danh, cũng có
-    thể là tên người khác in kèm — hai thứ đó không quy về một luật được."""
+    """Chiều ngược lại cố ý không bắt: ảnh thừa từ có thể là chức danh, cũng
+    có thể là tên người khác — không quy về một luật được."""
     assert compare.name_missing_words("Nguyễn Thị Thanh Nga", "Thanh Nga") is False
 
 
 def test_tap_hop_BANG_nhau_khong_vao_nhanh_thieu_ten_dem():
-    """Bằng nhau thì match_name đã bắt từ trước; dùng "<" chứ không "<=" để
-    nhánh này không bao giờ cướp quyền của phép so tên."""
+    """Bằng nhau thì match_name đã bắt từ trước. Dùng "<" chứ không "<=" để
+    nhánh này không cướp quyền của phép so tên."""
     assert compare.name_missing_words("Lê Xuân Tiến", "Lê Xuân Tiến") is False
 
 
 # ===== Danh tính chỉ thắng khi tên là lý do DUY NHẤT =====
 #
-# 6/10 ca vướng danh tính trong bộ đánh giá CÒN sai cả khóa học hoặc ngày. Phép
-# so khóa học không cần biết người đó là ai, nên kết luận đó vẫn đứng vững —
-# bỏ qua chúng là vứt đi 60% số ca vốn kết luận được, và học viên mất luôn câu
-# "Tên khóa học không khớp" vốn cho họ biết đường nộp lại.
+# Phần lớn ca vướng danh tính còn sai cả khóa học hoặc ngày. Phép so khóa học
+# không cần biết người đó là ai nên kết luận đó vẫn đứng vững.
 
 def test_sai_ca_khoa_hoc_thi_TU_CHOI_chu_khong_bo_qua():
     result = _process("Lê Tiến", "Lê Tiến",

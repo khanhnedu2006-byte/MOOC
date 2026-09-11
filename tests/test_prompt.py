@@ -1,14 +1,9 @@
 """Test canh mẫu prompt (test_prompt).
 
-Rủi ro cụ thể: prompt là CHUỖI, chỗ thay thế là CHUỖI, và không có gì bắt hai
-bên phải khớp nhau. Lệch tên thì `str.replace()` chỉ lặng lẽ không thay gì —
-không exception, không cảnh báo. Prompt vẫn được gửi đi, LLM vẫn trả lời, chỉ
-là trả lời "vui lòng cung cấp nội dung {ocr_text}" thay vì dữ liệu.
-
-Đã xảy ra thật: sau đợt đổi tên định danh sang tiếng Anh, PROMPT được đổi
-thành {ocr_text} nhưng dòng .replace("{text_ocr}") thì không (nó nằm trong
-chuỗi nháy đơn, không phải docstring). Tầng 2 hỏng hoàn toàn trong khi vẫn
-trả tiền cho Azure OCR ở bước trước đó. Lỗi chỉ lộ ra ở log production.
+Prompt là CHUỖI, chỗ thay thế cũng là CHUỖI, không gì bắt hai bên khớp nhau.
+Lệch tên thì `str.replace()` lặng lẽ không thay gì: prompt vẫn gửi đi, LLM
+vẫn trả lời "vui lòng cung cấp nội dung {ocr_text}" thay vì dữ liệu. Tầng 2
+hỏng hoàn toàn mà vẫn trả tiền Azure OCR, chỉ lộ ra ở log production.
 """
 
 import sys
@@ -53,7 +48,7 @@ def test_placeholder_ton_tai_trong_prompt():
 
 
 def test_text_ocr_that_su_di_vao_prompt():
-    """Đây là test bắt được lỗi đã xảy ra ở production."""
+    """Text OCR phải thật sự nằm trong prompt gửi đi, không còn placeholder."""
     llm = _LlmGia(JSON_HOP_LE)
     bucket = "GIAY CHUNG NHAN — Bui Duc Hoa — ISO 27001 — 10/07/2026"
     llm_text.extract_from_text(bucket, llm=llm)
@@ -68,9 +63,7 @@ def test_text_ocr_that_su_di_vao_prompt():
 def test_khong_con_dau_ngoac_nhon_la_trong_prompt_gui_di():
     """Quét mọi {...} còn sót — mỗi cái là một chỗ thay thế bị quên.
 
-    PROMPT có ví dụ JSON nên bản thân nó chứa nhiều dấu ngoặc nhọn. Chỉ soi
-    các cụm dạng {ten_bien} (một từ định danh, không khoảng trắng, không dấu
-    nháy) — đó mới là hình dạng của một placeholder.
+    PROMPT có ví dụ JSON nên chỉ soi cụm dạng {ten_bien}.
     """
     import re
 
@@ -106,8 +99,7 @@ def test_boc_duoc_json_trong_rao_markdown():
 def test_llm_vision_khong_dung_placeholder():
     """LLM1 gửi ảnh kèm prompt tĩnh — không có chỗ thay thế nào để lệch.
 
-    Test này chốt lại điều đó: nếu sau này ai thêm placeholder vào PROMPT của
-    llm_vision mà quên thay, test sẽ đỏ.
+    Ai thêm placeholder vào llm_vision.PROMPT mà quên thay thì đỏ ở đây.
     """
     import re
     con_sot = re.findall(r"\{[a-z_][a-z0-9_]*\}", llm_vision.PROMPT)
@@ -120,9 +112,7 @@ def test_llm_vision_khong_dung_placeholder():
 def test_hai_prompt_cung_yeu_cau_dung_bo_truong():
     """LLM1 và LLM2 phải trích cùng bộ trường, nếu không pipeline so lệch.
 
-    pipeline._llms_agree() so recipient_name và certificate_name của hai bên.
-    Một bên đổi tên trường trong prompt mà bên kia không đổi thì hai model
-    trả về hai schema khác nhau, và bước đồng thuận mất ý nghĩa.
+    Một bên đổi tên trường thì bước đồng thuận mất ý nghĩa.
     """
     truong = set(ExtractedInfo.model_fields)
     for name, prompt in (("llm_vision", llm_vision.PROMPT),
@@ -138,10 +128,8 @@ def test_hai_prompt_cung_yeu_cau_dung_bo_truong():
 def test_ocr_hong_het_van_giu_ly_do_that():
     """Hết quota / sai key KHÔNG được hiện ra giống hệt ảnh mờ.
 
-    Bản trước nuốt mọi OcrError rồi ném đúng một câu "Không trang nào đọc
-    được chữ." Câu đó đúng về hình thức nhưng che mất nguyên nhân — người vận
-    hành nhìn log không biết phải đi sửa gì: đổi key, xin thêm quota, hay bảo
-    nhân viên chụp lại ảnh.
+    Một câu chung thì người vận hành không biết đi đổi key, xin quota, hay
+    bảo nhân viên chụp lại ảnh.
     """
     from unittest.mock import patch
 
@@ -179,11 +167,8 @@ def test_ocr_mot_trang_hong_van_lay_duoc_trang_con_lai():
 
 
 def test_azure_loi_tam_thoi_duoc_thu_lai():
-    """408/429/5xx là lỗi TẠM THỜI — không thử lại thì một lần Azure trở chứng
-    làm chứng chỉ HỢP LỆ bị từ chối vĩnh viễn trên eLIS.
-
-    Đã gặp thật: Azure 408 "The operation was timeout" sau 43 giây.
-    """
+    """408/429/5xx là lỗi TẠM THỜI — không thử lại thì một lần Azure trở
+    chứng làm chứng chỉ HỢP LỆ bị từ chối vĩnh viễn trên eLIS."""
     from unittest.mock import MagicMock, patch
 
     from azure.core.exceptions import HttpResponseError
@@ -251,12 +236,11 @@ def test_moi_ma_loi_tam_thoi_deu_co_giai_thich():
                 f"mã {code} không có lời giải thích nào")
 
 
-# ===== Luật chống các lỗi đã đo được trên dữ liệu thật =====
+# ===== Luật chống các lỗi đọc sai trên chứng chỉ thật =====
 #
-# Các lỗi dưới đây đều quan sát được trên bộ 133 chứng chỉ thật. Prompt rất dễ
-# bị sửa "cho gọn" mà không ai nhận ra đã mất luật nào, vì KHÔNG có gì báo lỗi
-# — chỉ có tỷ lệ từ chối oan lặng lẽ tăng lại sau vài tháng. Mỗi test dưới đây
-# neo một luật kèm lý do nó tồn tại.
+# Prompt rất dễ bị sửa "cho gọn" mà không ai nhận ra đã mất luật nào: không
+# gì báo lỗi, chỉ có tỷ lệ từ chối oan lặng lẽ tăng. Mỗi test dưới đây neo
+# một luật kèm lý do nó tồn tại.
 
 import pytest as _pytest
 
@@ -269,11 +253,10 @@ def _hai_prompt():
 
 @_pytest.mark.parametrize("name,prompt", _hai_prompt())
 def test_co_truong_rieng_cho_nguoi_ky(name, prompt):
-    """Chứng chỉ Codelearn của 'tienpham89' bị đọc thành 'ĐỖ VĂN KHẮC'.
+    """Mất trường này thì model đọc tên giám đốc thành tên người nhận.
 
-    Tên người nhận in chữ mảnh ở giữa trang; tên giám đốc IN ĐẬM VIẾT HOA ở
-    cuối, cạnh nét ký. Model chọn chữ nổi bật nhất. Cho người ký một ô riêng
-    buộc model phải PHÂN BIỆT hai vai trò thay vì chọn bừa một cái tên.
+    Tên giám đốc IN ĐẬM cạnh nét ký nên nổi bật hơn tên người nhận. Cho
+    người ký một ô riêng buộc model PHÂN BIỆT hai vai trò.
     """
     assert "signatory_name" in prompt, f"{name}: mất trường tên người ký"
 
@@ -289,8 +272,7 @@ def test_cam_lay_ten_canh_chu_ky(name, prompt):
 def test_chap_nhan_username_lam_ten_nguoi_nhan(name, prompt):
     """Nhiều chứng chỉ in username ('tienpham89') chứ không phải họ tên.
 
-    Không nói rõ thì model đi tìm 'một chuỗi trông giống tên người' ở chỗ
-    khác trên trang — đúng cái bẫy sinh ra lỗi trên.
+    Không nói rõ thì model đi tìm "chuỗi trông giống tên người" ở chỗ khác.
     """
     assert "username" in prompt.lower()
 
@@ -300,15 +282,11 @@ def test_tach_ten_khoa_theo_NGON_NGU(name, prompt):
     """Tên khóa song ngữ -> tách: tiếng Việt vào certificate_name, tiếng Anh
     vào certificate_name_alt.
 
-    Tách là ĐÚNG, với điều kiện phía so sánh thử cả bản GHÉP hai nửa — vì
-    eLIS lưu tên khóa ở cả ba dạng (chỉ Việt / chỉ Anh / cả hai nối lại).
-    Bản trước tôi bắt model chép nguyên cả dòng để né ca eLIS-lưu-cả-hai;
-    cách đó hỏng ngược lại ở ca eLIS chỉ lưu một ngôn ngữ. Sửa ở tầng so
-    sánh (match_course_bilingual) mới giải được cả ba dạng cùng lúc.
+    eLIS lưu tên khóa ở cả ba dạng (chỉ Việt / chỉ Anh / cả hai nối lại), nên
+    tách chỉ đúng khi match_course_bilingual thử cả bản GHÉP hai nửa.
     """
-    # Kiểm đúng ÁNH XẠ trường <-> ngôn ngữ, không chỉ kiểm hai chữ có mặt.
-    # Bản trước chỉ tìm "TIẾNG VIỆT"/"TIẾNG ANH" nên đổi hẳn luật mà test vẫn
-    # xanh — test xanh vì lý do sai.
+    # Kiểm đúng ÁNH XẠ trường <-> ngôn ngữ, không chỉ kiểm hai chữ có mặt:
+    # tìm mỗi "TIẾNG VIỆT"/"TIẾNG ANH" thì đổi hẳn luật mà test vẫn xanh.
     gon = " ".join(prompt.split())
     assert "certificate_name = bản TIẾNG VIỆT" in gon, (
         f"{name}: không nói rõ certificate_name là bản tiếng Việt")
@@ -320,8 +298,7 @@ def test_tach_ten_khoa_theo_NGON_NGU(name, prompt):
 def test_chi_lay_ten_khoa_khong_lay_cau_bao_quanh(name, prompt):
     """Chứng chỉ in: Đã hoàn thành khoá học "Python cơ bản".
 
-    Tên khóa là "Python cơ bản", KHÔNG phải cả câu. Lấy cả câu thì chuỗi dài
-    ra và không bao giờ khớp tên khóa eLIS lưu.
+    Lấy cả câu thay vì mỗi tên khóa thì không bao giờ khớp tên eLIS lưu.
     """
     assert "KHÔNG lấy câu bao quanh" in prompt
     assert "Has successfully completed the course" in prompt
@@ -329,10 +306,9 @@ def test_chi_lay_ten_khoa_khong_lay_cau_bao_quanh(name, prompt):
 
 @_pytest.mark.parametrize("name,prompt", _hai_prompt())
 def test_giu_nguyen_chu_khong_phai_latin(name, prompt):
-    """'AI入門講座' bị đọc thành 'AIXFEDE'.
+    """Chữ không phải Latin ('AI入門講座') dễ bị model bịa thành 'AIXFEDE'.
 
-    Bịa một chuỗi Latin còn tệ hơn bỏ trống: bỏ trống thì phần Latin còn lại
-    vẫn đối chiếu được, bịa thì thêm từ rác làm hỏng cả phép so.
+    Bỏ trống thì phần Latin còn lại vẫn đối chiếu được; bịa thì hỏng phép so.
     """
     thap = prompt.lower()
     assert "phiên âm" in thap or "romaji" in thap
@@ -341,10 +317,9 @@ def test_giu_nguyen_chu_khong_phai_latin(name, prompt):
 
 @_pytest.mark.parametrize("name,prompt", _hai_prompt())
 def test_cam_lay_ngay_tu_dong_ho_he_thong(name, prompt):
-    """Có 'chứng chỉ' thật ra là ảnh chụp màn hình Udacity.
+    """Có "chứng chỉ" thật ra là ảnh chụp màn hình.
 
-    Trên đó ngày duy nhất là đồng hồ taskbar Windows — không phải ngày hoàn
-    thành khóa học. Lấy nó là bịa ra bằng chứng không tồn tại.
+    Ngày duy nhất trên đó là đồng hồ taskbar; lấy nó là bịa ra bằng chứng.
     """
     assert "taskbar" in prompt.lower()
 

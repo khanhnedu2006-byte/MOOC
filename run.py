@@ -39,6 +39,12 @@ logger = logging.getLogger("run")
 
 TECHNICAL_STAGES = frozenset(database.TECHNICAL_STAGES)
 
+
+# Kết quả một vòng xử lý.
+#   scanned_count  - số chứng chỉ đã quét
+#   accepted_count - số cái eLIS xác nhận đã nhận
+#   deferred_count - số cái chưa xử lý (giãn cách hoặc kẹt sau ca hỏng)
+#   api_error      - có giá trị khi không gọi được eLIS
 class RoundResult(NamedTuple):
     scanned_count: int
     accepted_count: int
@@ -51,17 +57,19 @@ class CertOutcome(NamedTuple):
     technical_failure: bool
     accepted_by_elis: bool
 
-# Hỏng KỸ THUẬT hay hỏng NGHIỆP VỤ?
-# - Kỹ thuật = hệ thống chưa xử lý được (Azure lỗi, eLIS không trả file...) -> trả về WAITING
-# - Nghiệp vụ = đọc được ảnh nhưng sai tên/khóa/ngày -> nộp REJECTED bình thường.
+
+# Kỹ thuật = hệ thống chưa xử lý được (Azure lỗi, eLIS không trả file) -> WAITING.
+# Nghiệp vụ = đọc được ảnh nhưng sai tên/khóa/ngày -> REJECTED.
 def is_technical_failure(result: ProcessResult) -> bool:
     return result.stage in TECHNICAL_STAGES
 
+
+# Ca BỎ QUA: đọc được ảnh nhưng không xác minh được danh tính (email ngoài công ty).
 def is_skip(result: ProcessResult) -> bool:
     return result.stage == database.SKIP_STAGE
 
-# Gọi 1 request eLIS, tự thử lại khi lỗi tạm thời (502, timeout).
-# Thử tối đa RETRY_COUNT lần, cách nhau RETRY_DELAY_SECONDS giây
+# Gọi eLIS, thử lại khi lỗi tạm thời (502, timeout).
+# Tối đa RETRY_COUNT lần, cách nhau RETRY_DELAY_SECONDS giây.
 def call_with_retry(func, *args, **kwargs):
     last_error = None
     for attempt in range(1, settings.retry_count + 1):
@@ -76,6 +84,15 @@ def call_with_retry(func, *args, **kwargs):
     raise last_error
 
 #2. Lọc hàng đợi, báo hoãn, cảnh báo
+
+# Những khóa nhân viên này ĐÃ được duyệt.
+#
+# Hỏi eLIS theo email: API ① nhận `employeeEmail` nên mỗi chứng chỉ chỉ tốn
+# một request và dữ liệu luôn tươi. API trả về mọi bản ghi của người đó ở mọi
+# trạng thái, nên lọc lại tại đây: đúng email và `submitStatus == "APPROVED"`.
+#
+# Phải tự kiểm email vì API bỏ qua tham số lạ trong im lặng (trả 200 kèm toàn
+# bộ bản ghi). Phát hiện API không lọc thì trả set rỗng.
 def completed_courses(email: str) -> set[str]:
     wanted = str(email or "").strip().lower()
     if not wanted:
@@ -88,9 +105,9 @@ def completed_courses(email: str) -> set[str]:
         if str(row.get("employeeEmail") or "").strip().lower() != wanted:
             foreign += 1
             continue
-        # Đọc `submitStatus` chứ không phải `status`: `status` là trạng thái
-        # đăng ký học ("REGISTED"), còn `submitStatus` mới là trạng thái duyệt
-        # chứng chỉ. Hai trường này nằm cạnh nhau trong cùng một bản ghi.
+        # CHỈ lấy bản ghi ĐÃ DUYỆT, nếu không thì chứng chỉ WAITING đang xử lý
+        # cũng "trùng" với chính nó và cả hàng đợi bị từ chối tự động.
+        # Đọc `submitStatus`, không phải `status` (trạng thái đăng ký học).
         if str(row.get("submitStatus") or "").strip().upper() != "APPROVED":
             continue
         course = normalize(row.get("courseName"))
@@ -98,7 +115,7 @@ def completed_courses(email: str) -> set[str]:
             courses.add(course)
 
     if foreign:
-        logger.error("API 1 KHÔNG lọc theo employeeEmail: hỏi %s nhưng %d/%d "
+        logger.error("API ① KHÔNG lọc theo employeeEmail: hỏi %s nhưng %d/%d "
                      "bản ghi trả về là của người khác. Bỏ qua luật chống nộp "
                      "trùng cho lượt này — sửa lại tên tham số trước khi tin "
                      "kết quả.", wanted, foreign, len(rows))
@@ -107,8 +124,16 @@ def completed_courses(email: str) -> set[str]:
     return courses
 
 
-# Nhớ những khóa vừa được DUYỆT TRONG VÒNG NÀY.
+# LUẬT NGHIỆP VỤ (HR chốt): MỘT KHÓA HỌC CHỈ ĐƯỢC HỌC MỘT LẦN.
+# Không có cửa sổ thời gian, không thêm luật kiểu "chỉ tính nếu duyệt trong
+# vòng N tháng".
+
+
+# Nhớ những khóa vừa được DUYỆT TRONG VÒNG NÀY, bịt khe hở khi hai bản ghi
+# trùng nhau cùng nằm một vòng: eLIS chưa chắc kịp phản ánh cái đầu khi cái
+# thứ hai hỏi. Xóa ở đầu mỗi vòng.
 _approved_this_round: set[tuple[str, str]] = set()
+
 
 # Chứng chỉ này có phải nộp trùng không?
 def is_duplicate(info: dict) -> bool:
@@ -126,16 +151,15 @@ def is_duplicate(info: dict) -> bool:
     try:
         return course in completed_courses(email)
     except client.ElisError as e:
-        # Hỏng thì MỞ, không đóng: không tra được lịch sử thì chứng chỉ đi
-        # tiếp theo luồng thường. Coi lỗi mạng là "chưa từng duyệt" rồi từ
-        # chối hàng loạt mới là kiểu hỏng biến sự cố hạ tầng thành hàng trăm
-        # từ chối oan.
+        # Hỏng thì MỞ, không đóng: không tra được lịch sử thì chứng chỉ vẫn đi
+        # tiếp theo luồng thường, tránh biến sự cố hạ tầng thành từ chối oan.
         logger.warning("Không tra được lịch sử của %s (%s) — bỏ qua luật "
                        "chống nộp trùng cho chứng chỉ này.", email, e)
         return False
 
 
-# Nộp REJECTED cho một ca nộp trùng. KHÔNG tải file, KHÔNG gọi LLM.
+# Nộp REJECTED cho ca nộp trùng: KHÔNG tải file, KHÔNG gọi LLM. Là kết luận
+# nghiệp vụ nên vẫn gọi API ③, khác ca bỏ qua vốn để nguyên WAITING.
 def reject_duplicate(info: dict) -> bool:
     result = ProcessResult(verdict=Verdict.REJECTED,
                            reason="Cán bộ nộp trùng khóa học",
@@ -157,11 +181,13 @@ def reject_duplicate(info: dict) -> bool:
 
 # Cắt hàng đợi tại chứng chỉ ĐẦU TIÊN chưa tới lượt thử lại.
 # Trả về (ready, deferred, needs_alert):
-#   ready       - những cái được xử lý vòng này, ĐÚNG THỨ TỰ eLIS trả về
-#   deferred    - cái đang chờ hết giãn cách, kèm thời gian còn lại
-#   needs_alert - cái đã hỏng tới ngưỡng, cần gửi email (VẪN ở lại hàng đợi)
+#   ready       - xử lý vòng này, giữ đúng thứ tự eLIS trả về
+#   deferred    - đang chờ hết giãn cách, kèm thời gian còn lại
+#   needs_alert - đã hỏng tới ngưỡng, cần gửi email (vẫn ở lại hàng đợi)
 def filter_queue(items: list[dict],
                  ignore_cooldown: bool = False) -> tuple[list, list, list]:
+    # Loại ca BỎ QUA trước cả API ② tải file: chúng đã chạy hết pipeline một
+    # lần và kết quả không đổi, quét lại chỉ tốn tiền LLM.
     skipped = database.skipped_ids([i["id"] for i in items])
     if skipped:
         report_skipped(items, skipped)
@@ -200,7 +226,10 @@ def filter_queue(items: list[dict],
 
 _last_skipped_ids: frozenset = frozenset()
 
-# In danh sách chứng chỉ đang bị BỎ QUA 
+
+# In danh sách chứng chỉ đang bị BỎ QUA — CHỈ khi tập id thay đổi.
+# Trên eLIS chúng trông y hệt ca chưa tới lượt (cùng WAITING, comment rỗng),
+# nên log này là chỗ duy nhất người vận hành thấy chúng.
 def report_skipped(items: list[dict], skipped: set) -> None:
     global _last_skipped_ids
     if frozenset(skipped) == _last_skipped_ids:
@@ -218,7 +247,8 @@ def report_skipped(items: list[dict], skipped: set) -> None:
 
 _last_deferred_ids: frozenset = frozenset()
 
-# In danh sách chứng chỉ đang chờ tới lượt
+
+# In danh sách chứng chỉ đang chờ tới lượt — CHỈ khi tập id thay đổi.
 def report_deferred(deferred: list[tuple]) -> None:
     global _last_deferred_ids
     current_ids = frozenset(str(item["id"]) for item, *_ in deferred)
@@ -240,7 +270,7 @@ def report_deferred(deferred: list[tuple]) -> None:
                     time_left.total_seconds() / 60)
 
 
-# Gửi email cho người vận hành khi có ca bị hỏng 5 lần
+# Gửi email cho người vận hành khi có ca hỏng tới ngưỡng.
 def alert_operator(needs_alert: list[tuple]) -> None:
     try:
         details = database.technical_failure_detail(
@@ -268,9 +298,9 @@ def alert_operator(needs_alert: list[tuple]) -> None:
 
 #3. Vòng xử lý với từng chứng chỉ
 
-# Xử lý hàng đợi MỘT vòng, từng chứng chỉ một.
-# Trình tự: gọi API 1 lấy hàng đợi -> lọc giãn cách -> chạy tuần tự.
+# Xử lý hàng đợi MỘT vòng: API ① lấy hàng đợi -> lọc giãn cách -> chạy tuần tự.
 # Gặp ca hỏng kỹ thuật là DỪNG cả vòng (chặn đầu hàng).
+# ignore_cooldown=True dành cho lệnh tay `python run.py retry`.
 def process_one_round(azure_client, items: list[dict] | None = None,
                       ignore_cooldown: bool = False) -> RoundResult:
     # ---- API 1: fetch the queue ----
@@ -329,14 +359,13 @@ def process_one_round(azure_client, items: list[dict] | None = None,
                                          (1 if blocked_by else 0))
     return RoundResult(scanned, accepted, deferred_total)
 
-# tải, scan, log, submit 1 chứng chỉ
 # Tải -> quét -> ghi log -> nộp cho ĐÚNG MỘT chứng chỉ.
 # Trả technical_failure=True khi cả vòng phải dừng tại đây.
 def handle_one_certificate(info: dict, azure_client,
                            position: int, total: int) -> CertOutcome:
     uc_id = info["id"]
 
-    # Kiểm nộp trùng TRƯỚC khi tải file — ca trùng không tốn lượt LLM nào.
+    # Kiểm nộp trùng TRƯỚC khi tải file để ca trùng không tốn lượt LLM.
     if is_duplicate(info):
         return CertOutcome(False, reject_duplicate(info))
 
@@ -390,7 +419,7 @@ def handle_one_certificate(info: dict, azure_client,
     if technical:
         return CertOutcome(True, False)
 
-    # Ca BỎ QUA: KHÔNG gọi API ③. Bản ghi ở lại WAITING
+    # Ca BỎ QUA: không gọi API ③, bản ghi ở lại WAITING.
     if is_skip(result):
         return CertOutcome(False, False)
 
@@ -405,7 +434,9 @@ def handle_one_certificate(info: dict, azure_client,
 
 #4. Nộp kết quả, ghi log, gọi pipeline
 
-# Gọi API 3 nộp kết quả của MỘT chứng chỉ. True = eLIS đã nhận.
+# Gọi API ③ nộp kết quả MỘT chứng chỉ. True = eLIS đã nhận.
+# API ③ hỏng là mất kết quả đã trả phí Gemma + Azure, vòng sau quét lại từ
+# đầu, nên phải đếm để cảnh báo.
 def submit_result(dto: dict) -> bool:
     try:
         data = call_with_retry(client.update_status, [dto])
@@ -453,8 +484,9 @@ def log_technical_failure(info: dict, reason: str,
     except Exception as e:
         logger.warning("Ghi log thất bại lỗi: %s", e)
 
+
 # Đánh dấu eLIS có nhận kết quả không (elis_sent_ok).
-# Lỗi ghi DB chỉ log cảnh báo, không chặn luồng — đây là việc phụ.
+# Lỗi ghi DB chỉ log cảnh báo, không chặn luồng.
 def record_send_status(user_course_id, succeeded: bool, message=None) -> None:
     if not user_course_id:
         return
@@ -511,8 +543,8 @@ def learner_comment(result: ProcessResult) -> str:
         return "Hợp lệ"
     return result.reason or "Chứng chỉ không hợp lệ"
 
-# Dựng payload cho API 3 từ kết quả pipeline .
-# employeeId là mã eLIS cấp — KHÁC employee_code (username dùng đối chiếu ảnh).
+# Dựng payload cho API ③.
+# employeeId là mã eLIS cấp, KHÁC employee_code (username dùng đối chiếu ảnh).
 def build_result_dto(result: ProcessResult, info: dict) -> dict:
     return {
         "id": info["id"],
@@ -522,6 +554,7 @@ def build_result_dto(result: ProcessResult, info: dict) -> dict:
         "employeeId": info["employeeId"],
         "comment": learner_comment(result),
     }
+
 
 #6. chạy chương trình
 def run_forever(azure_client) -> None:
@@ -566,7 +599,7 @@ def run_forever(azure_client) -> None:
         time.sleep(sleep_seconds)
 
 
-# CHỈ XEM: in hàng đợi eLIS kèm trạng thái thử lại của từng ca.
+# Chỉ đọc: in hàng đợi eLIS kèm trạng thái thử lại.
 def print_status() -> int:
     items = call_with_retry(client.get_pending_list, page=1, size=100)
     if not items:
@@ -613,8 +646,7 @@ def print_status() -> int:
 
 
 # Điểm vào: chọn chế độ loop / once / retry / status rồi chạy.
-# status KHÔNG tạo client Azure — làm vậy sẽ bắt một lệnh chỉ-xem phụ thuộc
-# vào việc key Azure còn hạn hay không.
+# status KHÔNG tạo client Azure, để lệnh chỉ-đọc không phụ thuộc key Azure.
 def main() -> int:
     mode = sys.argv[1] if len(sys.argv) > 1 else "loop"
     if mode not in ("once", "loop", "retry", "status"):

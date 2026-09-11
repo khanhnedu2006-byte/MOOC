@@ -1,19 +1,13 @@
 """Test luồng thử lại ca hỏng kỹ thuật (test_retry).
 
-Ca hỏng kỹ thuật KHÔNG bị nộp REJECTED — để nguyên WAITING trên eLIS để còn
-được xử lý lại. Cách làm đó tạo ra một rủi ro phải chặn: bản ghi còn WAITING
-thì vòng getCert sau lại trả về nó, job lại tải và gọi LLM lại. Với chu kỳ 5
-giây, một file hỏng vĩnh viễn sẽ quay vòng mãi mãi, mỗi vòng tốn một lượt LLM.
+Ca hỏng kỹ thuật để nguyên WAITING, không nộp REJECTED. Rủi ro kèm theo: nó
+còn WAITING nên vòng sau lại tải và gọi LLM lại, quay vòng mãi. Ba lớp chặn:
 
-Ba lớp, mỗi lớp một test ở đây:
   1. Cooldown  — chưa tới lượt thì BỎ QUA hẳn, không tải, không gọi LLM.
   2. Cảnh báo  — hỏng tới ngưỡng thì gửi EMAIL, và VẪN thử tiếp.
   3. Thứ tự    — ca thử lại xếp sau ca mới, không chặn hàng đợi.
 
-LỚP 2 TRƯỚC ĐÂY LÀ "BỎ CUỘC, NỘP REJECTED". HR đã bỏ luật đó: lỗi hệ thống
-làm cả dãy cùng hỏng, nên nộp REJECTED là từ chối oan hàng loạt chứng chỉ hợp
-lệ. Test dưới đây canh đúng chiều ngược lại — quá ngưỡng mà vẫn nộp REJECTED
-là LỖI.
+Luật HR: quá ngưỡng mà vẫn nộp REJECTED là LỖI.
 """
 
 import logging
@@ -61,12 +55,10 @@ def moi_truong(tmp_path, monkeypatch):
     monkeypatch.setattr(database, "DB_PATH", db)
     monkeypatch.setattr(run.settings, "technical_alert_after", 3)
     monkeypatch.setattr(run.settings, "technical_retry_cooldown_minutes", 30)
-    # Không test nào ở đây được phép chạm SMTP thật. Test nào muốn quan sát
-    # cảnh báo thì tự bắt run.alert.send_alert lấy.
+    # Không test nào được chạm SMTP thật; muốn quan sát thì tự bắt send_alert.
     monkeypatch.setattr(run.alert, "send_alert", lambda *a, **k: False)
-    # File trạng thái cảnh báo RIÊNG cho từng test. Thiếu dòng này, bộ đếm lỗi
-    # API của test ghi thẳng vào .alert_state.json thật ở gốc dự án — test làm
-    # bẩn máy đang chạy, và test sau đọc phải bộ đếm của test trước.
+    # File trạng thái cảnh báo RIÊNG cho từng test. Thiếu dòng này, bộ đếm ghi
+    # vào .alert_state.json thật và test sau đọc phải bộ đếm của test trước.
     monkeypatch.setattr(run.alert, "STATE_FILE", tmp_path / ".alert_state.json")
     return db
 
@@ -146,14 +138,7 @@ def test_ca_nghiep_vu_van_nop_binh_thuong(moi_truong):
 def test_moi_vong_chi_quet_MOI_CHUNG_CHI_DUNG_MOT_LAN(moi_truong):
     """Bỏ hẳn lượt thử lại cuối vòng.
 
-    Bản trước gom ca hỏng rồi gọi đệ quy để thử thêm lần nữa ở cuối vòng.
-    Hỏng kỹ thuật là hỏng CẢ LÔ, nên lượt thứ hai (vài giây sau lượt đầu) gặp
-    lại đúng sự cố đó và gần như chắc chắn hỏng tiếp — tốn thêm một lượt LLM
-    cho mỗi chứng chỉ mà không cứu được gì.
-
-    Hệ quả quan trọng hơn: mỗi vòng đếm HAI lần hỏng thì
-    TECHNICAL_ALERT_AFTER=5 thật ra chỉ là 3 vòng, và không ai đọc cấu hình
-    mà đoán ra được điều đó.
+    Mỗi vòng đếm HAI lần hỏng thì TECHNICAL_ALERT_AFTER=5 thật ra là 3 vòng.
     """
     attempts = {"n": 0}
 
@@ -180,9 +165,7 @@ def test_moi_vong_chi_quet_MOI_CHUNG_CHI_DUNG_MOT_LAN(moi_truong):
 def test_mot_lan_hong_ghi_dung_MOT_dong_log(moi_truong):
     """Ngưỡng cảnh báo phải đếm đúng số VÒNG, không phải số lượt quét.
 
-    Đây là nửa còn lại của test trên, nhìn từ phía dữ liệu: một vòng hỏng ghi
-    đúng một dòng log, nên "hỏng 5 lần" = 5 vòng = ~10 phút với giãn cách 2
-    phút. Đúng bằng thứ cấu hình nói.
+    Một vòng hỏng ghi đúng một dòng log, nên "hỏng 5 lần" = 5 vòng.
     """
     _chay([_item("uc-1")], [_hong()])
 
@@ -197,9 +180,7 @@ def test_mot_lan_hong_ghi_dung_MOT_dong_log(moi_truong):
 def test_ca_hong_CHAN_cac_ca_sau(moi_truong):
     """CHẶN ĐẦU HÀNG: chứng chỉ 1 hỏng thì 2, 3 chưa tới lượt.
 
-    Đây là yêu cầu nghiệp vụ. Hỏng kỹ thuật là hỏng CẢ LÔ, nên chạy tiếp 2, 3
-    khi 1 vừa hỏng chỉ khiến chúng hỏng theo và đội số lần hỏng của chính
-    chúng lên — rồi cả ba cùng chạm ngưỡng cảnh báo vì đúng một sự cố.
+    Chạy tiếp thì cả ba cùng hỏng và cùng chạm ngưỡng vì đúng một sự cố.
     """
     _, da_nop = _chay([_item("uc-1"), _item("uc-2"), _item("uc-3")],
                       [_hong(), _duyet(), _duyet()])
@@ -217,8 +198,7 @@ def test_ca_hong_CHAN_ca_o_bat_ky_vi_tri_nao(moi_truong):
 def test_ca_hong_CHAN_ca_sau_KHONG_ton_luot_LLM(moi_truong):
     """Ca sau không chỉ bị bỏ kết quả — nó không được QUÉT lần nào.
 
-    Quét rồi vứt kết quả thì vẫn tốn tiền LLM và vẫn ghi log hỏng cho ca đó,
-    tức là vẫn đội số lần hỏng của nó lên. Phải dừng TRƯỚC khi quét.
+    Quét rồi vứt kết quả vẫn tốn tiền LLM và vẫn đội số lần hỏng của nó lên.
     """
     attempts = {"n": 0}
     ket_qua = iter([_hong(), _duyet(), _duyet()])
@@ -247,8 +227,7 @@ def test_ca_hong_CHAN_ca_sau_KHONG_ton_luot_LLM(moi_truong):
 def test_ca_dau_hang_dang_gian_cach_thi_ca_sau_CHO_THEO(moi_truong):
     """Ca đầu hàng chưa tới lượt thử lại -> cả hàng đợi đứng yên.
 
-    Không có luật này thì trong 2 phút giãn cách của chứng chỉ 1, hệ thống sẽ
-    chạy 2, 3, 4 trước — tức là 1 mất chỗ đứng đầu, đúng thứ vừa bỏ đi.
+    Thiếu luật này thì 2, 3, 4 chạy trước và 1 mất chỗ đứng đầu.
     """
     _lich_su_hong(moi_truong, "uc-1", attempts=1, gio_truoc=0)   # còn giãn cách
 
@@ -263,8 +242,7 @@ def test_ca_dau_hang_dang_gian_cach_thi_ca_sau_CHO_THEO(moi_truong):
 def test_chua_het_cooldown_thi_KHONG_goi_llm(moi_truong):
     """Lớp chặn quan trọng nhất về chi phí.
 
-    Không có nó, với POLL_INTERVAL_SECONDS=5 thì cùng một chứng chỉ hỏng sẽ
-    tốn 12 lượt LLM mỗi phút, mãi mãi.
+    Thiếu nó, một chứng chỉ hỏng tốn 12 lượt LLM mỗi phút, mãi mãi.
     """
     _chay([_item("uc-1")], [_hong(), _hong()])       # tạo lịch sử hỏng
 
@@ -295,10 +273,7 @@ def test_het_cooldown_thi_duoc_thu_lai(moi_truong):
 def test_qua_nguong_KHONG_BAO_GIO_nop_rejected(moi_truong):
     """Luật HR: lỗi hệ thống không bao giờ thành REJECTED.
 
-    Đây là test quan trọng nhất trong file. Nhánh bỏ cuộc cũ nộp REJECTED sau
-    N lần hỏng; HR bỏ luật đó vì lỗi hệ thống làm cả dãy cùng hỏng, nên nó từ
-    chối oan hàng loạt chứng chỉ hợp lệ. Nếu ai đó khôi phục nhánh cũ, test
-    này phải đỏ.
+    Nộp REJECTED sau N lần hỏng là từ chối oan hàng loạt chứng chỉ hợp lệ.
     """
     _lich_su_hong(moi_truong, "uc-X", attempts=9)     # gấp ba lần ngưỡng
 
@@ -318,9 +293,7 @@ def test_qua_nguong_KHONG_BAO_GIO_nop_rejected(moi_truong):
 def test_qua_nguong_van_duoc_thu_lai(moi_truong):
     """Vượt ngưỡng KHÔNG loại chứng chỉ khỏi hàng đợi.
 
-    Đây là nửa còn lại của luật HR: không từ chối thì phải tiếp tục thử, nếu
-    không chứng chỉ nằm WAITING vĩnh viễn — đúng cái tình trạng nhánh bỏ cuộc
-    từng chặn.
+    Không từ chối thì phải tiếp tục thử, nếu không nó nằm WAITING vĩnh viễn.
     """
     _lich_su_hong(moi_truong, "uc-X", attempts=9)
 
@@ -334,8 +307,7 @@ def test_qua_nguong_van_duoc_thu_lai(moi_truong):
 def test_qua_nguong_thi_gui_canh_bao_kem_du_thong_tin(moi_truong, monkeypatch):
     """Email cảnh báo phải nói được CÁI GÌ hỏng, không chỉ 'có lỗi'.
 
-    Thiếu stage/reason thì người nhận vẫn phải mở log lên mới biết đi sửa ở
-    đâu — lúc đó thư chỉ là tiếng ồn.
+    Thiếu stage/reason thì người nhận phải mở log mới biết sửa ở đâu.
     """
     _lich_su_hong(moi_truong, "uc-X", attempts=5, stage="stage2_error")
 
@@ -359,10 +331,7 @@ def test_qua_nguong_thi_gui_canh_bao_kem_du_thong_tin(moi_truong, monkeypatch):
 def test_chua_toi_nguong_thi_KHONG_gui_canh_bao(moi_truong, monkeypatch):
     """Hỏng một hai lần là chuyện thường — báo ngay thì thư thành tiếng ồn.
 
-    alert_operator() được gọi MỖI vòng, kể cả khi không có ca nào vượt ngưỡng:
-    đó là cách alert.py báo được sự cố API (lúc đó không có chứng chỉ nào để
-    liệt kê). Nên thứ phải canh ở đây là DANH SÁCH GỬI ĐI RỖNG, chứ không phải
-    "không gọi hàm" — send_alert([]) tự trả về False mà không gửi thư nào.
+    alert_operator() chạy MỖI vòng, nên phải canh DANH SÁCH GỬI ĐI RỖNG.
     """
     _lich_su_hong(moi_truong, "uc-X", attempts=2)      # ngưỡng = 3
 
@@ -381,8 +350,7 @@ def test_chua_toi_nguong_thi_KHONG_gui_canh_bao(moi_truong, monkeypatch):
 def test_ca_lo_cung_hong_thi_gop_MOT_thu(moi_truong, monkeypatch):
     """Azure hết hạn mức -> cả hàng đợi cùng vượt ngưỡng trong một vòng.
 
-    Phải là MỘT lời gọi send_alert mang cả danh sách, không phải mỗi chứng chỉ
-    một lời gọi: 50 thư giống hệt nhau thì người nhận lọc bỏ tất.
+    Phải là MỘT send_alert mang cả danh sách; 50 thư thì người nhận lọc bỏ.
     """
     for i in range(4):
         _lich_su_hong(moi_truong, f"uc-{i}", attempts=5)
@@ -405,11 +373,7 @@ def test_ca_lo_cung_hong_thi_gop_MOT_thu(moi_truong, monkeypatch):
 def test_GIU_NGUYEN_thu_tu_elis_tra_ve(moi_truong):
     """KHÔNG đẩy ca đã hỏng xuống cuối hàng đợi.
 
-    Bản trước xếp ca đã từng hỏng sau toàn bộ ca chưa hỏng, với lý do "một
-    chứng chỉ mắc kẹt không được chặn hàng đợi". Lý do đó không đứng vững:
-    hỏng kỹ thuật là hỏng CẢ LÔ, nên đẩy chứng chỉ 1 xuống cuối chỉ để nó gặp
-    lại đúng sự cố đó ở cuối hàng — không cứu được gì, mà lại làm mất thứ tự
-    eLIS trả về nên log khó đối chiếu với màn hình eLIS.
+    Đẩy xuống cuối không cứu được gì mà làm log lệch thứ tự màn hình eLIS.
     """
     _lich_su_hong(moi_truong, "uc-cu", attempts=1, gio_truoc=5)
 
@@ -432,8 +396,7 @@ def test_ca_hong_o_GIUA_cung_giu_nguyen_cho(moi_truong):
 def test_stage_ky_thuat_khong_lech_giua_run_va_database():
     """run.TECHNICAL_STAGES phải lấy từ database, không chép tay.
 
-    Hai danh sách chép tay sẽ lệch nhau sau lần thêm stage tiếp theo, và khi
-    đó một loại lỗi kỹ thuật mới sẽ bị nộp REJECTED mà không ai để ý.
+    Hai danh sách lệch nhau thì lỗi kỹ thuật mới bị nộp REJECTED.
     """
     assert run.TECHNICAL_STAGES == frozenset(database.TECHNICAL_STAGES)
 
@@ -449,9 +412,7 @@ def test_danh_sach_stage_khop_voi_bao_cao():
 def test_log_khong_lap_moi_vong_khi_ca_dang_cooldown(moi_truong, monkeypatch):
     """Cooldown là hàng TIẾNG, vòng lặp là vài GIÂY.
 
-    In trạng thái mỗi vòng thì 6 tiếng chờ sinh ra hơn 4.000 dòng giống hệt
-    nhau, nhấn chìm mọi thông tin thật. Log phải nói về việc job LÀM, không
-    phải việc job đang bỏ qua.
+    In mỗi vòng thì 6 tiếng chờ sinh hơn 4.000 dòng giống hệt nhau.
     """
     import io
 
@@ -508,8 +469,8 @@ def test_van_bao_khi_co_viec_that(moi_truong, monkeypatch):
     lg.setLevel(logging.INFO)
     logging.disable(logging.NOTSET)
     try:
-        # uc-moi đứng TRƯỚC: nó tới lượt nên chạy được, còn uc-cu đứng sau
-        # đang trong giãn cách nên chặn từ chỗ đó trở đi.
+        # uc-moi đứng TRƯỚC nên chạy được; uc-cu đứng sau đang trong giãn
+        # cách nên chặn từ chỗ đó trở đi.
         with patch.object(client, "get_pending_list",
                           return_value=[_item("uc-moi"), _item("uc-cu")]), \
              patch.object(client, "download_certificates", side_effect=lambda cc: []):
@@ -525,9 +486,7 @@ def test_van_bao_khi_co_viec_that(moi_truong, monkeypatch):
 def test_log_hoan_noi_ro_ca_nao_va_bao_lau(moi_truong, monkeypatch):
     """Log phải trả lời được: ca NÀO, hỏng MẤY LẦN, còn BAO LÂU.
 
-    Bản trước chỉ in "Hoãn 1 chứng chỉ". Khi dòng đó nằm ngay cạnh một ca vừa
-    bị từ chối vì sai tên, người đọc tưởng hệ thống đang hoãn nhầm cả ca
-    nghiệp vụ — đúng hiểu nhầm đã xảy ra thật.
+    Chỉ in "Hoãn 1 chứng chỉ" thì người đọc tưởng hoãn nhầm cả ca nghiệp vụ.
     """
     import io
 
@@ -562,17 +521,15 @@ def test_log_hoan_noi_ro_ca_nao_va_bao_lau(moi_truong, monkeypatch):
     assert "uc-treo" in ra, "không cho biết ca nào bị hoãn"
     assert "hỏng 2 lần" in ra, "không cho biết đã hỏng mấy lần"
     assert "thử lại sau" in ra, "không cho biết bao giờ thử lại"
-    # KHÔNG được in dạng phân số "2/3": mẫu số gợi ý rằng tới đó là dừng, mà
-    # giờ không còn mốc dừng nào. Người vận hành đọc "2/3" sẽ đi báo học viên
-    # rằng chứng chỉ sắp bị từ chối — đúng thứ luật HR mới cấm.
+    # KHÔNG in dạng phân số "2/3": mẫu số gợi ý tới đó là dừng, mà không còn
+    # mốc dừng nào. Người đọc sẽ tưởng chứng chỉ sắp bị từ chối.
     assert "2/3" not in ra, "vẫn in dạng phân số như thể còn nhánh bỏ cuộc"
 
 
 def test_che_do_retry_bo_qua_cooldown(moi_truong):
     """`python run.py retry`: người vận hành biết sự cố đã khỏi, muốn thử ngay.
 
-    Không có lối này thì cách duy nhất để thử lại sớm là sửa .env rồi khởi
-    động lại job — hoặc tệ hơn, xóa dòng trong DB log (làm hỏng kiểm toán).
+    Thiếu lối này thì phải sửa .env khởi động lại job, hoặc xóa dòng DB log.
     """
     _chay([_item("uc-1")], [_hong(), _hong()])       # tạo lịch sử hỏng
 
@@ -597,8 +554,7 @@ def test_che_do_retry_bo_qua_cooldown(moi_truong):
 def test_log_hoan_co_ten_khoa_hoc(moi_truong, monkeypatch):
     """Người vận hành nhìn eLIS thấy TÊN KHÓA HỌC, không thấy user_course_id.
 
-    Log chỉ in id thì không đối chiếu được với màn hình eLIS, và dễ kết luận
-    hệ thống đang bỏ sót chứng chỉ — đúng hiểu nhầm đã xảy ra thật.
+    Log chỉ in id thì không đối chiếu được với màn hình eLIS.
     """
     import io
 
@@ -636,10 +592,8 @@ def test_log_hoan_co_ten_khoa_hoc(moi_truong, monkeypatch):
 
 # ===== Ca hỏng kỹ thuật phải được GHI LÀ WAITING, không phải REJECTED =====
 #
-# Đây là chỗ log từng nói dối: bản ghi KHÔNG hề được nộp về eLIS (nên bên đó
-# vẫn WAITING và sẽ được thử lại), nhưng log và màn hình lại ghi REJECTED.
-# Người vận hành đọc log rồi đi báo học viên "chứng chỉ bị từ chối" trong khi
-# hệ thống chỉ đang hẹn thử lại sau vài tiếng.
+# Bản ghi không hề được nộp về eLIS nên bên đó vẫn WAITING. Log ghi REJECTED
+# là nói dối: người vận hành sẽ đi báo học viên "chứng chỉ bị từ chối".
 
 def test_hong_ky_thuat_ghi_log_la_waiting(moi_truong):
     """Pipeline trả REJECTED, nhưng vì là stage kỹ thuật nên log phải WAITING."""
@@ -655,8 +609,7 @@ def test_hong_ky_thuat_ghi_log_la_waiting(moi_truong):
 def test_ca_nghiep_vu_van_ghi_dung_verdict(moi_truong):
     """Đối chứng: ca AI phán đoán được thì KHÔNG bị đổi thành WAITING.
 
-    Thiếu test này thì một lần sửa ẩu có thể biến mọi dòng log thành WAITING
-    và báo cáo sẽ đếm ra 0 duyệt / 0 từ chối mà không ai thấy lỗi.
+    Nếu mọi dòng log thành WAITING thì báo cáo đếm ra 0 duyệt / 0 từ chối.
     """
     _chay([_item("uc-ok")], [_duyet()])
     row = database.read_recent_logs(1, db_path=moi_truong)[0]
@@ -678,16 +631,14 @@ def test_lo_khong_tai_duoc_file_cung_ghi_waiting(moi_truong):
 def test_ten_khoa_hoc_duoc_ghi_vao_log(moi_truong):
     """Cột course_name phải được điền ở CẢ hai đường ghi log.
 
-    Không có nó thì từ DB không biết dòng log nào ứng với khóa nào — đúng
-    tình huống đã xảy ra: một chứng chỉ treo trên eLIS mà phải đoán xem nó là
-    cái nào bằng cách so mốc thời gian.
+    Thiếu nó thì từ DB không biết dòng log nào ứng với khóa nào.
     """
     # Đường 1: chạy được pipeline (write_log).
     _chay([_item("uc-n1")], [_duyet()])
     assert database.read_recent_logs(1, db_path=moi_truong)[0]["course_name"] == "ISO 27001"
 
-    # Đường 2: hỏng trước cả khi có ảnh (write_failure_log) — quan trọng hơn,
-    # vì ca này không đọc được ảnh nên certificate_name luôn NULL.
+    # Đường 2: hỏng trước khi có ảnh (write_failure_log) — ca này không đọc
+    # được ảnh nên certificate_name luôn NULL.
     with patch.object(client, "get_pending_list", return_value=[_item("uc-n2")]), \
          patch.object(client, "download_certificates",
                       side_effect=client.ElisError("mạng hỏng")):

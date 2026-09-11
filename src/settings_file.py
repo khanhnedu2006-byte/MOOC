@@ -1,23 +1,19 @@
 """Sửa cấu hình lúc đang chạy và ghi lại vào .env (settings_file).
 
-App desktop cần sửa được mọi cấu hình, không chỉ bốn khóa bí mật. Việc đó có
-ba phần, và phần nào làm thiếu cũng cho ra một nút "Lưu" nói dối:
+Ba phần, thiếu phần nào cũng cho ra một nút "Lưu" nói dối:
 
-  1. KIỂM giá trị mới trước — "abc" cho POLL_INTERVAL_SECONDS phải bị chặn
-     ngay ở giao diện, không phải đợi vòng sau nổ trong luồng nền.
-  2. GÁN vào object `settings` đang chạy, để có hiệu lực từ vòng kế tiếp mà
+  1. KIỂM giá trị mới trước, trên một bản sao.
+  2. GHI xuống .env.
+  3. GÁN vào object `settings` đang chạy, để có hiệu lực từ vòng kế tiếp mà
      không phải khởi động lại. Làm được vì không chỗ nào trong dự án đọc
-     `settings.X` ở mức module — mọi chỗ đều đọc lại trong thân hàm.
-     `tests/test_settings_file.py` canh điều đó bằng AST.
-  3. GHI xuống .env, nếu không thì tắt app là mất.
+     `settings.X` ở mức module; tests/test_settings_file.py canh bằng AST.
 
-Bốn khóa bí mật CỐ Ý không đi qua đây: chúng thuộc về kho khóa Windows
-(src/vault.py), và ghi chúng ngược vào .env là đi lùi.
+Bốn khóa bí mật không đi qua đây — chúng thuộc kho khóa Windows
+(src/vault.py).
 
-GHI ĐÈ .env KHÔNG ĐƯỢC LÀM MẤT CHÚ THÍCH. File .env của dự án này có chú
-thích giải thích từng tham số; dựng lại file từ đầu bằng dict là xóa sạch
-phần đó. Nên hàm ở đây sửa ĐÚNG chỗ giá trị trên từng dòng, giữ nguyên mọi
-thứ còn lại — kể cả chú thích cuối dòng.
+Ghi đè .env không được làm mất chú thích: file .env có chú thích giải thích
+từng tham số. Hàm ở đây sửa đúng chỗ giá trị trên từng dòng, giữ nguyên mọi
+thứ còn lại, kể cả chú thích cuối dòng.
 """
 
 import logging
@@ -42,11 +38,10 @@ SECRET_FIELDS = frozenset(name.lower() for name in vault.SECRET_NAMES)
 _ASSIGN = re.compile(r"^(\s*)(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*)$")
 
 
-# Nhóm cấu hình trên tab Cấu hình. Bốn khóa bí mật KHÔNG có ở đây — chúng
+# Nhóm cấu hình trên tab Cấu hình. Bốn khóa bí mật không có ở đây — chúng
 # thuộc kho khóa Windows, xem main_app._build_secret_box.
-# test_settings_file.py canh danh sách này phủ đủ mọi trường sửa được:
-# thêm trường vào config.py mà quên thêm vào đây thì nó biến mất khỏi giao
-# diện một cách im lặng.
+# test_settings_file.py canh danh sách này phủ đủ mọi trường sửa được: thêm
+# trường vào config.py mà quên thêm vào đây thì nó biến mất khỏi giao diện.
 CONFIG_GROUPS = [
     ("Kết nối eLIS", [
         ("elis_base_url", "API nghiệp vụ"),
@@ -93,9 +88,8 @@ CONFIG_GROUPS = [
     ]),
 ]
 
-# Trường chỉ nhận vài giá trị -> cho chọn, đừng bắt gõ. Gõ "Strict" hoa chữ S
-# thì pydantic nhận, nhưng compare.py so bằng == nên luật siết im lặng không
-# bật. Danh sách chọn chặn hẳn kiểu lỗi đó.
+# Trường chỉ nhận vài giá trị thì cho chọn, đừng bắt gõ. Gõ "Strict" hoa chữ
+# S thì pydantic nhận, nhưng pipeline so bằng == nên luật siết không bật.
 CONFIG_CHOICES = {
     "course_match_mode": ["loose", "strict"],
     "report_schedule": ["off", "daily", "weekly", "monthly"],
@@ -112,12 +106,11 @@ def editable_fields() -> list[str]:
 
 
 def env_names(field: str) -> list[str]:
-    """Mọi tên biến .env mà pydantic chấp nhận cho trường này, TÊN CHÍNH ĐỨNG ĐẦU.
+    """Mọi tên biến .env pydantic chấp nhận cho trường này, tên chính đầu.
 
-    Phải có hàm này vì vài trường nhận nhiều tên: `technical_alert_after` còn
-    ăn `TECHNICAL_RETRY_MAX`, `smtp_user` còn ăn `SMTP_USERNAME`. Nếu ghi mù
-    theo tên chính trong khi .env đang dùng tên cũ, file sẽ có HAI dòng cho
-    cùng một tham số — và người đọc sau không biết dòng nào đang có tác dụng.
+    Vài trường nhận nhiều tên: `technical_alert_after` còn ăn
+    `TECHNICAL_RETRY_MAX`, `smtp_user` còn ăn `SMTP_USERNAME`. Ghi mù theo
+    tên chính trong khi .env dùng tên cũ thì file có hai dòng cho một tham số.
     """
     info = Settings.model_fields[field]
     alias = getattr(info, "validation_alias", None)
@@ -132,8 +125,8 @@ def env_names(field: str) -> list[str]:
 def format_value(value) -> str:
     """Đưa giá trị về dạng ghi được vào .env.
 
-    Bọc nháy khi chuỗi có khoảng trắng hoặc dấu `#`: python-dotenv coi phần
-    sau `#` là chú thích, nên `MAIL_TO=a@x.com #chính` sẽ lặng lẽ mất đuôi.
+    Bọc nháy khi chuỗi có khoảng trắng hoặc `#`: python-dotenv coi phần sau
+    `#` là chú thích.
     """
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -161,10 +154,10 @@ def _split_comment(raw: str) -> tuple[str, str]:
 
 
 def update_env_text(text: str, updates: dict[str, str]) -> str:
-    """Trả về nội dung .env mới. `updates`: TÊN TRƯỜNG -> giá trị đã format.
+    """Nội dung .env mới. `updates`: tên trường -> giá trị đã format.
 
-    Sửa tại chỗ nếu tìm thấy bất kỳ tên nào của trường; không thấy thì thêm
-    vào cuối file. Mọi dòng khác giữ nguyên từng ký tự.
+    Sửa tại chỗ nếu thấy bất kỳ tên nào của trường, không thấy thì thêm vào
+    cuối file. Mọi dòng khác giữ nguyên từng ký tự.
     """
     lines = text.splitlines(keepends=True)
     remaining = dict(updates)
@@ -196,9 +189,8 @@ def update_env_text(text: str, updates: dict[str, str]) -> str:
 def validate(raw: dict[str, str]) -> dict:
     """Kiểm giá trị mới trên một BẢN SAO, trả về giá trị đã ép kiểu.
 
-    Kiểm trên bản sao chứ không gán thẳng: gán ba trường mà trường thứ ba
-    sai thì hai trường đầu đã kịp đổi, và hệ thống chạy tiếp bằng một nửa
-    cấu hình mới — kiểu hỏng không ai nghĩ tới lúc đọc log.
+    Bản sao chứ không gán thẳng: gán ba trường mà trường thứ ba sai thì hai
+    trường đầu đã kịp đổi, hệ thống chạy tiếp bằng nửa cấu hình mới.
     """
     unknown = set(raw) - set(editable_fields())
     if unknown:
@@ -218,11 +210,9 @@ def validate(raw: dict[str, str]) -> dict:
 
 
 def _short(error: Exception) -> str:
-    """Lấy dòng có ích nhất trong thông báo dài dòng của pydantic.
+    """Lấy dòng có ích nhất trong thông báo của pydantic.
 
-    ValidationError in ra bốn dòng, trong đó chỉ dòng "Input should be..."
-    là thứ người dùng cần đọc. Dán cả bốn dòng vào hộp thoại thì dòng có ích
-    lọt thỏm giữa tên lớp và một đường link.
+    ValidationError in bốn dòng, chỉ dòng "Input should be..." đáng đọc.
     """
     useful = [line.strip() for line in str(error).splitlines()
               if line.strip() and not line.strip().startswith("For further")]
@@ -230,12 +220,11 @@ def _short(error: Exception) -> str:
 
 
 def apply_changes(raw: dict[str, str], env_path: Path | None = None) -> list[tuple]:
-    """Kiểm → ghi .env → gán vào settings đang chạy. Trả về nhật ký thay đổi.
+    """Kiểm, ghi .env, rồi gán vào settings đang chạy. Trả về danh sách đổi.
 
-    THỨ TỰ QUAN TRỌNG: ghi đĩa TRƯỚC, gán vào bộ nhớ SAU. Ngược lại thì khi
-    đĩa đầy hoặc file bị khóa, hệ thống chạy bằng cấu hình mới mà file vẫn
-    ghi cấu hình cũ — khởi động lại là im lặng quay về giá trị cũ, và không
-    ai hiểu vì sao.
+    Ghi đĩa TRƯỚC, gán bộ nhớ SAU. Ngược lại thì khi đĩa đầy hoặc file bị
+    khóa, hệ thống chạy cấu hình mới còn file giữ cấu hình cũ, và khởi động
+    lại là im lặng quay về giá trị cũ.
     """
     env_path = Path(env_path) if env_path else ENV_PATH
     coerced = validate(raw)
@@ -261,11 +250,10 @@ def apply_changes(raw: dict[str, str], env_path: Path | None = None) -> list[tup
 
 
 def _write_audit(changes: list[tuple]) -> None:
-    """Ghi lại AI đổi GÌ, LÚC NÀO.
+    """Ghi lại ai đổi gì, lúc nào.
 
-    Cho sửa cấu hình bằng vài cú bấm chuột thì phải đánh đổi bằng một cuốn
-    sổ. Không có nó, ba tháng sau không ai trả lời được câu "vì sao
-    COURSE_MATCH_MODE thành strict".
+    Sửa cấu hình bằng vài cú bấm chuột thì phải có dấu vết, nếu không ba
+    tháng sau không ai trả lời được "vì sao COURSE_MATCH_MODE thành strict".
     """
     stamp = datetime.now().isoformat(timespec="seconds")
     who = os.environ.get("USERNAME") or os.environ.get("USER") or "?"
@@ -277,5 +265,5 @@ def _write_audit(changes: list[tuple]) -> None:
         with AUDIT_PATH.open("a", encoding="utf-8") as handle:
             handle.write("\n".join(dong) + "\n")
     except OSError as e:
-        # Mất cuốn sổ thì tiếc, nhưng không được phép làm hỏng việc lưu.
+        # Mất sổ thì tiếc, nhưng không được làm hỏng chính việc lưu.
         logger.warning("Không ghi được %s: %s", AUDIT_PATH.name, e)

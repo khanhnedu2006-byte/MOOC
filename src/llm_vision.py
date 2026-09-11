@@ -1,14 +1,10 @@
-"""Gemma đọc ảnh chứng chỉ qua FPT (llm_vision) — đây là LLM1.
+"""Gemma đọc ảnh chứng chỉ qua FPT (llm_vision) — LLM1.
 
-Nhận ảnh (bytes) -> trích 4 trường -> trả về ExtractedInfo.
+Nhận ảnh (bytes) -> trích 4 trường -> ExtractedInfo.
 
-Cách ép JSON: yêu cầu rõ trong prompt + tự parse bằng Pydantic. Không dùng
-with_structured_output vì không chắc endpoint FPT hỗ trợ json_schema mode;
-cách này chạy được với mọi endpoint OpenAI-compatible.
-
-Dùng trong pipeline:
-    from llm_vision import extract_from_image
-    info = extract_from_image(image_bytes)
+Ép JSON bằng prompt + parse Pydantic, không dùng with_structured_output:
+không chắc endpoint FPT hỗ trợ json_schema mode. Cách này chạy với mọi
+endpoint OpenAI-compatible.
 """
 
 import base64
@@ -88,9 +84,8 @@ class LlmVisionError(Exception):
     """Lỗi khi gọi Gemma hoặc parse kết quả."""
 
 
-# Chữ ký byte đầu file -> kiểu MIME. Nhận dạng theo NỘI CORRECT, không theo
-# đuôi file hay giả định, vì file_utils.compress_to_fit() có thể đã đổi ảnh sang
-# JPEG để lọt giới hạn kích thước request.
+# Chữ ký byte đầu file -> kiểu MIME. Nhận theo nội dung, không theo đuôi file:
+# file_utils.compress_to_fit() có thể đã đổi ảnh sang JPEG cho lọt giới hạn.
 _MIME_SIGNATURES = (
     (b"\x89PNG\r\n\x1a\n", "image/png"),
     (b"\xff\xd8\xff",      "image/jpeg"),
@@ -103,10 +98,8 @@ _MIME_SIGNATURES = (
 def _image_to_data_url(image_bytes: bytes) -> str:
     """Mã hóa ảnh thành data URL base64 để gửi qua API.
 
-    Kiểu MIME lấy từ CHỮ KÝ BYTE thật. Trước đây hàm khai cứng "image/png"
-    cho mọi ảnh — chấp nhận được khi mọi ảnh đều là PNG, nhưng sai kể từ khi
-    compress_to_fit() đổi ảnh lớn sang JPEG. Khai sai MIME thì API có thể từ
-    chối, hoặc tệ hơn là đọc sai ảnh mà không báo gì.
+    MIME lấy từ CHỮ KÝ BYTE thật. Khai sai MIME thì API có thể từ chối, hoặc
+    tệ hơn là đọc sai ảnh mà không báo gì.
     """
     kind = next((mime for signature, mime in _MIME_SIGNATURES
                  if image_bytes.startswith(signature)), "image/png")
@@ -128,7 +121,7 @@ def _strip_json_fence(text: str) -> str:
 def extract_from_image(image_bytes: bytes, llm=None) -> ExtractedInfo:
     """Gửi ảnh cho Gemma, trả về ExtractedInfo.
 
-    Cho phép truyền llm sẵn (để test hoặc tái dùng client). Nếu không thì tự tạo.
+    Truyền sẵn llm để test hoặc tái dùng client; không thì tự tạo.
     """
     if llm is None:
         llm = get_llm()
@@ -138,10 +131,9 @@ def extract_from_image(image_bytes: bytes, llm=None) -> ExtractedInfo:
         {"type": "image_url", "image_url": {"url": _image_to_data_url(image_bytes)}},
     ])
 
-    # Thử lại lỗi TẠM THỜI (rate-limit, 5xx, rớt mạng), KHÔNG thử lại lỗi
-    # vĩnh viễn (hết tiền, sai key). Bảng phân loại nằm ở llm_error để hai
-    # file llm_vision/llm_text dùng chung một bản — chép hai bản là cách chắc
-    # chắn để chúng lệch nhau, đúng chuyện đã xảy ra với prompt.
+    # Thử lại lỗi TẠM THỜI (rate-limit, 5xx, rớt mạng), KHÔNG thử lại lỗi vĩnh
+    # viễn (hết tiền, sai key). Bảng phân loại để chung ở llm_error cho
+    # llm_vision và llm_text dùng một bản, tránh hai bên lệch nhau.
     try:
         phan_hoi = llm_error.call_with_retry(
             lambda: llm.invoke([message]), "LLM1 (Gemma đọc ảnh)")

@@ -2,28 +2,19 @@
 
 Sinh ảnh PNG bằng Pillow rồi nhúng vào email dưới dạng đính kèm inline (CID).
 
-VÌ SAO PNG CHỨ KHÔNG PHẢI SVG HAY JAVASCRIPT:
-Outlook trên Windows KHÔNG dùng engine trình duyệt — nó dựng HTML bằng engine
-của Microsoft Word. Hệ quả:
-  - <svg> không hiển thị.
-  - <canvas> và mọi JavaScript không chạy.
-  - flexbox, grid, position, background-image phần lớn bị bỏ qua.
-Thứ chắc chắn hiển thị là <img> và <table> có màu nền. Nên biểu đồ phải là
-ảnh raster, còn khung báo cáo phải là bảng.
+PNG chứ không SVG/JavaScript: Outlook trên Windows dựng HTML bằng engine của
+Microsoft Word, nên <svg>, <canvas>, JavaScript và phần lớn
+flexbox/grid/position/background-image không chạy. Chỉ <img> và <table> có màu
+nền là chắc chắn hiển thị.
 
-VÌ SAO ĐÍNH KÈM CID CHỨ KHÔNG PHẢI LINK ẢNH:
-Outlook mặc định CHẶN ảnh tải từ internet ("Click here to download pictures").
-Ảnh đính kèm inline theo Content-ID nằm ngay trong thư nên không bị chặn.
+Đính kèm CID chứ không link ảnh: Outlook mặc định chặn ảnh tải từ internet.
 
-VÌ SAO PILLOW CHỨ KHÔNG PHẢI MATPLOTLIB:
-Pillow đã là thư viện của dự án (file_utils dùng để nén ảnh). Thêm matplotlib
-chỉ để vẽ hai biểu đồ sẽ làm image Docker phình thêm khoảng 60 MB và kéo theo
-numpy — cái giá không đáng cho vài đường kẻ.
+Pillow chứ không matplotlib: Pillow đã có sẵn trong dự án, thêm matplotlib làm
+image Docker phình ~60 MB và kéo theo numpy.
 
-BẢNG MÀU đã qua kiểm tra mù màu (deuteranopia/protanopia/tritanopia), khoảng
-cách cặp gần nhất ΔE 6.2 ở tritan. Ngưỡng đó CHỈ hợp lệ khi có kênh phân biệt
-thứ hai ngoài màu — nên mọi biểu đồ ở đây đều có chú giải, nhãn số trực tiếp,
-và khe hở 2px giữa các mảng. Không bao giờ để màu là thứ duy nhất mang nghĩa.
+BẢNG MÀU đã qua kiểm tra mù màu (deuteranopia/protanopia/tritanopia), cặp gần
+nhất ΔE 6.2 ở tritan. Ngưỡng đó chỉ hợp lệ khi có kênh phân biệt thứ hai ngoài
+màu, nên mọi biểu đồ đều có chú giải, nhãn số và khe hở 2px giữa các mảng.
 """
 
 from __future__ import annotations
@@ -35,7 +26,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 # ===== Bảng màu =====
 APPROVED = (12, 163, 12)      # #0ca30c  xanh — trạng thái tốt
-REJECTED = (42, 120, 214)     # #2a78d6  xanh dương — kết quả hợp lệ, KHÔNG phải lỗi
+REJECTED = (42, 120, 214)     # #2a78d6  xanh dương — kết quả hợp lệ, không phải lỗi
 CAUSE = (208, 59, 59)         # #d03b3b  đỏ — nguyên nhân từ chối
 TOTAL_LINE = (82, 81, 78)     # #52514e  mực phụ — đường tổng, giữ vai trò nền
 
@@ -44,8 +35,7 @@ INK = (11, 11, 11)            # #0b0b0b
 INK_2 = (82, 81, 78)          # #52514e
 GRID = (228, 228, 224)        # lưới lùi về sau, không tranh với dữ liệu
 
-# Vẽ ở 2x rồi thu nhỏ -> nét mượt trên màn hình HiDPI mà không cần antialias
-# thủ công cho từng nét.
+# Vẽ ở 2x rồi thu nhỏ -> nét mượt trên HiDPI, khỏi antialias thủ công.
 SCALE = 2
 
 _FONT_DIRS = (
@@ -65,8 +55,8 @@ _FONT_DIRS_BOLD = (
 def _font(size: int, dam: bool = False):
     """Tải font, thử lần lượt các đường dẫn Linux rồi Windows.
 
-    Không tìm được font nào thì lùi về font mặc định của Pillow — xấu nhưng
-    vẫn đọc được. Biểu đồ xấu còn hơn báo cáo không gửi được.
+    Không có font nào thì lùi về font mặc định của Pillow, xấu nhưng vẫn gửi
+    được báo cáo.
     """
     for p in (_FONT_DIRS_BOLD if dam else _FONT_DIRS):
         if Path(p).is_file():
@@ -93,8 +83,7 @@ def _xuat_png(anh: Image.Image) -> bytes:
 def _thang_do(gia_tri_max: int) -> tuple[int, int]:
     """Chọn trần trục Y và bước chia thành số tròn.
 
-    Trục chạy tới đúng giá trị lớn nhất trông rất lộn xộn (trần 137, vạch
-    45.67). Làm tròn lên số đẹp thì người đọc ước lượng được bằng mắt.
+    Trục chạy tới đúng giá trị lớn nhất cho ra trần 137, vạch 45.67.
     """
     if gia_tri_max <= 0:
         return 1, 1
@@ -121,8 +110,7 @@ def _khung(d, x0, y0, x1, y1, tran, buoc, font_nho):
 def _nhan_moc(bucket: str) -> str:
     """Rút gọn mốc thời gian thành nhãn trục X đọc được.
 
-    Cắt cứng n ký tự cuối cho ra "6-W29" từ "2026-W29" — vừa xấu vừa gây
-    hiểu nhầm là ngày 6. Cắt theo CẤU TRÚC của từng loại mốc thì mới đúng.
+    Cắt theo CẤU TRÚC từng loại mốc; cắt cứng n ký tự cuối cho ra "6-W29".
     """
     b = str(bucket)
     if "-W" in b:                       # 2026-W29 -> W29
@@ -138,8 +126,7 @@ def _nhan_moc(bucket: str) -> str:
 def _chu_giai(d, x, y, items: list[tuple[str, tuple]], font):
     """Chú giải: ô màu + CHỮ. Luôn có, kể cả khi chỉ hai chuỗi.
 
-    Chữ ở đây mặc màu mực chứ không mặc màu chuỗi — ô màu bên cạnh đã mang
-    danh tính rồi; tô chữ theo màu chuỗi làm chữ khó đọc mà không thêm nghĩa.
+    Chữ mặc màu mực, không mặc màu chuỗi: ô màu đã mang danh tính.
     """
     cx = x
     o = 10 * SCALE
@@ -159,10 +146,9 @@ def line_chart(diem: list[dict], rong: int = 640, cao: int = 260) -> bytes:
 
     diem: [{"bucket": "2026-W30", "total": 120, "approved": 100}, ...]
 
-    HAI ĐƯỜNG CÙNG MỘT ĐƠN VỊ (số chứng chỉ), nên dùng CHUNG một trục.
-    Không bao giờ vẽ tỷ lệ duyệt (%) chung khung với số lượng: hai thang đo
-    khác nhau trên hai trục Y là cách chắc chắn nhất để người đọc thấy một
-    mối tương quan không có thật.
+    HAI ĐƯỜNG CÙNG ĐƠN VỊ (số chứng chỉ) nên dùng CHUNG một trục. Không vẽ tỷ
+    lệ duyệt (%) chung khung với số lượng: hai trục Y làm người đọc thấy tương
+    quan không có thật.
     """
     W, H = rong * SCALE, cao * SCALE
     anh = Image.new("RGB", (W, H), SURFACE)
@@ -174,8 +160,8 @@ def line_chart(diem: list[dict], rong: int = 640, cao: int = 260) -> bytes:
                font=f_th, fill=INK_2)
         return _xuat_png(anh)
 
-    # Lề phải rộng hơn lề trên: nhãn số của mốc cuối được vẽ bên phải điểm
-    # cuối, sát mép thì bị cắt mất chữ số.
+    # Lề phải rộng hơn lề trên vì nhãn số của mốc cuối vẽ bên phải điểm cuối,
+    # sát mép thì bị cắt chữ số.
     x0, y0 = 62 * SCALE, 34 * SCALE
     x1, y1 = W - 54 * SCALE, H - 46 * SCALE
     tran, buoc = _thang_do(max(p["total"] for p in diem))
@@ -192,18 +178,15 @@ def line_chart(diem: list[dict], rong: int = 640, cao: int = 260) -> bytes:
         if len(pts) > 1:
             d.line(pts, fill=color, width=2 * SCALE, joint="curve")
         for x, y in pts:
-            # Vòng nền quanh điểm để hai đường chồng nhau vẫn tách được.
+            # Vòng nền quanh điểm để hai đường chồng nhau vẫn tách nhau.
             r = 4 * SCALE
             d.ellipse([x - r - SCALE, y - r - SCALE, x + r + SCALE, y + r + SCALE],
                       fill=SURFACE)
             d.ellipse([x - r, y - r, x + r, y + r], fill=color)
 
-    # Nhãn trực tiếp: CHỈ mốc cuối. Ghi số lên mọi điểm thì biểu đồ thành
-    # bảng số, và đường — thứ mang thông tin xu hướng — bị chữ che mất.
-    #
-    # Đặt bên PHẢI điểm cuối, và nếu hai nhãn quá gần nhau theo chiều dọc thì
-    # đẩy ra hai phía. Hai đường hội tụ ở mốc cuối là chuyện thường, để mặc
-    # thì hai con số chồng lên nhau thành một mớ không đọc được.
+    # Nhãn trực tiếp CHỈ ở mốc cuối; ghi số lên mọi điểm thì chữ che mất đường.
+    # Đặt bên PHẢI điểm cuối; hai nhãn quá gần nhau theo chiều dọc thì đẩy ra
+    # hai phía, vì hai đường hay hội tụ ở mốc cuối.
     nhan_cuoi = []
     for key in ("total", "approved"):
         gt = diem[-1].get(key, 0)
@@ -238,11 +221,9 @@ def line_chart(diem: list[dict], rong: int = 640, cao: int = 260) -> bytes:
 def stacked_bar_chart(diem: list[dict], rong: int = 640, cao: int = 260) -> bytes:
     """Cột chồng theo mốc: được duyệt / từ chối.
 
-    Chiều cao cột = khối lượng, hai mảng = cơ cấu. Một hình trả lời cả hai
-    câu hỏi, thay vì hai biểu đồ.
-
-    Chỉ gồm ca AI THỰC SỰ phán đoán được. Ca hỏng kỹ thuật đã bị loại từ
-    tầng truy vấn, nên cột ở đây luôn cộng đúng bằng tổng ở đầu báo cáo.
+    Chiều cao cột = khối lượng, hai mảng = cơ cấu. Chỉ gồm ca AI phán đoán
+    được; ca hỏng kỹ thuật đã bị loại từ tầng truy vấn nên cột luôn cộng đúng
+    bằng tổng ở đầu báo cáo.
     """
     W, H = rong * SCALE, cao * SCALE
     anh = Image.new("RGB", (W, H), SURFACE)
@@ -268,8 +249,8 @@ def stacked_bar_chart(diem: list[dict], rong: int = 640, cao: int = 260) -> byte
         cx = x0 + o_rong * (i + 0.5)
         trai, phai = cx - cot_rong / 2, cx + cot_rong / 2
         day = y1
-        # Duyệt ở dưới cùng, neo vào trục: mắt so chiều cao từ một đường
-        # nền chung thì chính xác hơn nhiều so với mảng lơ lửng giữa cột.
+        # Duyệt ở dưới cùng, neo vào trục: so chiều cao từ một đường nền chung
+        # chính xác hơn mảng lơ lửng giữa cột.
         for key, color in (("approved", APPROVED), ("rejected", REJECTED)):
             gt = p.get(key, 0)
             if gt <= 0:

@@ -1,11 +1,8 @@
 """Test công cụ ghép Excel với ảnh (test_match_images).
 
 Sai ở đây KHÔNG CÓ TRIỆU CHỨNG: ghép lệch một dòng thì bộ đánh giá vẫn chạy
-trơn, vẫn in ra số liệu đẹp, chỉ có điều nó chấm model bằng nhãn của ảnh
-khác. Người đọc sẽ đi sửa prompt cho một lỗi không tồn tại. Không có test
-nào ở tầng trên bắt được chuyện đó, nên phải chặn ngay tại đây.
+trơn nhưng chấm model bằng nhãn của ảnh khác, và không tầng nào trên bắt được.
 
-Hai nhóm test:
   1. Ghép ĐÚNG bất kể cách đặt tên file (dấu _, dấu -, chữ hoa, dấu tiếng Việt).
   2. Ghép KHÔNG ĐƯỢC thì phải BÁO RA, tuyệt đối không tự đoán bừa.
 """
@@ -49,9 +46,8 @@ def _tao_anh(thu_muc, *name):
 def test_ghep_duoc_moi_cach_dat_ten(tmp_path, file_name):
     """Bốn cách đặt tên khác nhau phải cho cùng một kết quả ghép.
 
-    Ca "(1)" là ca thật hay gặp: tải trùng tên thì trình duyệt tự thêm hậu
-    tố. Không bỏ hậu tố trước khi chuẩn hóa thì "1" thành một từ trong khóa
-    và ảnh đó vĩnh viễn không khớp dòng nào.
+    Ca "(1)" là hậu tố trình duyệt thêm khi tải trùng tên; không bỏ nó thì
+    "1" thành một từ trong tên khóa và ảnh đó không khớp dòng nào.
     """
     anh = _tao_anh(tmp_path, file_name)
     rows = [_dong(2, "hoabd3@fpt.com.vn", "Learning Microsoft 365 Copilot for Work")]
@@ -95,10 +91,7 @@ def test_ten_khoa_co_dau_tieng_viet(tmp_path):
 
 
 def test_ten_khoa_chua_dau_gach_duoi(tmp_path):
-    """Không được tách tên file theo dấu "_" đầu tiên.
-
-    Tên khóa học có "_" bên trong: tách sai một lần là ghép sai cả bộ.
-    """
+    """Tên khóa học có "_" bên trong, tách sai một lần là ghép sai cả bộ."""
     anh = _tao_anh(tmp_path, "hoabd3_Excel_Power_Query_101.jpg")
     rows = [_dong(2, "hoabd3@fpt.com", "Excel Power Query 101")]
     assert len(match_images.match(rows, anh)["matched"]) == 1
@@ -130,8 +123,7 @@ def test_anh_thua_duoc_bao_ra(tmp_path):
 def test_trung_khoa_thi_bao_mo_ho_chu_khong_tu_chon(tmp_path):
     """Cùng NV + cùng khóa, hai ảnh -> KHÔNG được chọn bừa một cái.
 
-    Đây là test quan trọng nhất file: chọn bừa vẫn cho ra một bộ dữ liệu
-    chạy được, và 50% khả năng nó gán sai nhãn mà không ai biết.
+    Chọn bừa vẫn ra bộ dữ liệu chạy được, với 50% khả năng gán sai nhãn.
     """
     anh = _tao_anh(tmp_path, "hoabd3_ISO 27001.jpg", "hoabd3_ISO-27001.png")
     rows = [_dong(2, "hoabd3@fpt.com", "ISO 27001")]
@@ -283,9 +275,8 @@ def test_bo_qua_dong_trong_cuoi_sheet(tmp_path):
 def test_submit_status_khong_thanh_gt_verdict(tmp_path):
     """Cột APPROVED/REJECTED của eLIS KHÔNG được đổ vào gt_verdict.
 
-    Người duyệt thật từ chối vì nhiều lý do hệ thống không kiểm (nộp trùng,
-    HR đã ghi nhận giờ, khóa ngoài danh mục MOOC). Lấy nó làm nhãn chuẩn là
-    chấm AI trượt vì không phát hiện được thứ chưa bao giờ giao cho nó.
+    Người duyệt từ chối vì nhiều lý do hệ thống không kiểm, nên lấy nó làm
+    nhãn chuẩn là chấm AI trượt vì thứ chưa bao giờ giao cho nó.
     """
     anh = _tao_anh(tmp_path, "hoabd3_ISO 27001.jpg")
     r = _dong(2, "hoabd3@fpt.com", "ISO 27001")
@@ -334,9 +325,8 @@ def test_thieu_cot_status_van_chay_binh_thuong(tmp_path):
 def test_hoa_thuong_trong_email_khong_anh_huong(tmp_path, email, file_name):
     """Email FPT viết kiểu 'DungHA31' (tên thường + chữ cái đầu viết hoa).
 
-    code_from_email() hạ chữ thường, normalize() hạ tiếp lần nữa, nên mọi
-    cách viết hoa đều phải ra cùng một khóa. Test này neo lại điều đó để
-    không ai đi sửa nhầm chỗ khi gặp ca ghép hụt vì lý do khác.
+    code_from_email() và normalize() đều hạ chữ thường, nên mọi cách viết
+    hoa phải ra cùng một khóa ghép.
     """
     anh = _tao_anh(tmp_path, file_name)
     rows = [_dong(2, email, "Java Cơ bản")]
@@ -346,11 +336,8 @@ def test_hoa_thuong_trong_email_khong_anh_huong(tmp_path, email, file_name):
 def test_bao_cao_tach_chua_nop_anh_voi_ghep_hut(tmp_path, capsys):
     """Hai loại 'thiếu ảnh' phải được tách, vì cần hai cách xử lý khác nhau.
 
-    - Mã không có ảnh nào  -> chưa nộp / khác đợt dữ liệu, KHÔNG phải lỗi ghép.
+    - Mã không có ảnh nào  -> chưa nộp, KHÔNG phải lỗi ghép.
     - Mã có ảnh khóa khác  -> ghép hụt thật, đáng soi tên khóa.
-
-    Gộp chung là lý do người đọc tưởng công cụ ghép sai rồi đi sửa luật so
-    tên, trong khi thật ra Excel và thư mục ảnh là hai đợt khác nhau.
     """
     anh = _tao_anh(tmp_path,
                    "HOABD3_ISO 27001.jpg",          # hoabd3 có ảnh, khóa khác
@@ -377,12 +364,9 @@ def test_bao_cao_tach_chua_nop_anh_voi_ghep_hut(tmp_path, capsys):
 # ===== Hậu tố "(N)" vs NĂM trong ngoặc =====
 
 def test_nam_trong_ngoac_KHONG_bi_cat(tmp_path):
-    """Ca thật đã hỏng: '(2025)' bị cắt như thể là hậu tố tải trùng.
+    """NĂM trong ngoặc không được cắt như thể là hậu tố tải trùng.
 
-    Tên khóa eLIS: 'Luyện thi PMP: Tư duy & mẹo làm bài (Mindset & Tips) (2025)'
-    Tên file     : 'QUYND10_Luyện thi PMP_Tư duy & mẹo làm bài (Mindset & Tips) (2025).pdf'
-    Cùng người, cùng khóa, nhưng regex \\(\\d+\\) ăn mất '(2025)' nên hai bên
-    lệch đúng MỘT từ và không ghép được. Lỗi do chính công cụ này gây ra.
+    Regex \\(\\d+\\) ăn mất '(2025)' thì hai bên lệch MỘT từ, không ghép được.
     """
     anh = _tao_anh(
         tmp_path,
@@ -413,9 +397,8 @@ def test_hau_to_tai_trung_van_bi_bo(tmp_path, duoi):
 def test_khong_goi_y_anh_cua_nguoi_khac(tmp_path):
     """Gợi ý sai NGƯỜI còn tệ hơn không gợi ý gì.
 
-    Ca thật: dòng của 'ducdm45' (khóa 'Claude in Google Vertex Al') được gợi
-    ý ghép với 'KIENNT128_Claude in Google Vertex Al.png'. Làm theo là gán
-    chứng chỉ của Kiên cho Đức — sai không có triệu chứng nào.
+    Gợi ý theo tên khóa mà bỏ qua mã nhân viên là gán chứng chỉ của người
+    này cho người kia, sai không có triệu chứng.
     """
     anh = _tao_anh(tmp_path, "KIENNT128_Claude in Google Vertex Al.png")
     rows = [_dong(52, "ducdm45@fpt.com", "Claude in Google Vertex Al")]
@@ -443,8 +426,7 @@ def test_van_goi_y_khi_CUNG_ma_nhan_vien(tmp_path):
 def test_bao_cao_day_du_KHONG_cat_bot_dong(tmp_path):
     """Bảng trên màn hình cắt ở 20 dòng; file này thì KHÔNG được cắt.
 
-    Danh sách mang đi đối chiếu mà bị cắt thì người nhận tưởng 20 là tất cả
-    và bổ sung thiếu — sai lặng lẽ, không ai biết cho tới lần chạy sau.
+    Bị cắt thì người nhận tưởng 20 là tất cả và bổ sung thiếu.
     """
     import csv as _csv
     anh = _tao_anh(tmp_path, *[f"NGUOI{i}_Khóa {i}.jpg" for i in range(30)])
@@ -478,8 +460,8 @@ def test_bao_cao_day_du_phan_loai_dung(tmp_path):
     assert theo_loai["anh_thua"]["ten_file_anh"] == "ZZZ_Anh thua.jpg"
     assert theo_loai["chua_nop_anh"]["ma_nv"] == "khongco"
     assert theo_loai["ghep_hut"]["ma_nv"] == "hoabd3"
-    # Ca ghép hụt phải chỉ ra ảnh người đó ĐANG CÓ, nếu không người đọc
-    # không biết phải so tên khóa với cái gì.
+    # Ca ghép hụt phải chỉ ra ảnh người đó ĐANG CÓ, để người đọc biết so tên
+    # khóa với cái gì.
     assert "HOABD3_ISO 27001.jpg" in theo_loai["ghep_hut"]["ghi_chu"]
 
 

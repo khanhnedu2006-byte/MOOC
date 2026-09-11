@@ -6,10 +6,9 @@
         powershell -ExecutionPolicy Bypass -File tools\autostart.ps1 status
         powershell -ExecutionPolicy Bypass -File tools\autostart.ps1 uninstall
 
-    VÌ SAO DÙNG TASK SCHEDULER CHỨ KHÔNG PHẢI KHÓA REGISTRY "Run":
-    khóa Run chỉ chạy chương trình đúng một lần lúc đăng nhập. App chết giữa
-    chừng là thôi, đến sáng hôm sau mới biết, mà hàng đợi thì đã dồn cả đêm.
-    Task Scheduler chạy lại được, và nói cho biết lần chạy cuối kết thúc ra sao.
+    Dùng Task Scheduler chứ không dùng khóa Registry "Run": khóa Run chỉ
+    chạy chương trình một lần lúc đăng nhập, app chết giữa chừng là thôi.
+    Task Scheduler chạy lại được và cho biết lần chạy cuối kết thúc ra sao.
 #>
 
 [CmdletBinding()]
@@ -33,13 +32,12 @@ function Find-Pythonw {
         if (-not (Test-Path $Python)) { throw "Không thấy $Python" }
         return (Resolve-Path $Python).Path
     }
-    # pythonw.exe chứ không phải python.exe: pythonw không mở cửa sổ console
-    # đen. Dùng python.exe thì mỗi lần đăng nhập lại có một cửa sổ đen nằm
-    # trên màn hình, và người dùng sẽ đóng nó — đóng là job chết.
+    # pythonw.exe không mở cửa sổ console đen. python.exe thì mỗi lần đăng
+    # nhập lại có một cửa sổ đen, người dùng đóng nó là job chết.
     $found = Get-Command pythonw.exe -ErrorAction SilentlyContinue
     if ($found) { return $found.Source }
 
-    # Trường hợp hay gặp nhất khi không thấy: dùng conda mà chưa activate env.
+    # Hay gặp: dùng conda mà chưa activate env.
     throw @"
 Không tìm thấy pythonw.exe trong PATH.
 
@@ -56,9 +54,8 @@ function Install-Autostart {
     $taskAction = New-ScheduledTaskAction -Execute $exe `
         -Argument "`"$AppPath`"" -WorkingDirectory $Root
 
-    # Hoãn 1 phút sau khi đăng nhập. eLIS chặn theo IP nên phải đợi mạng
-    # công ty / VPN lên hẳn; chạy ngay lập tức thì mấy vòng đầu chỉ toàn 403
-    # rồi bắn cảnh báo giả cho người vận hành.
+    # Hoãn 1 phút sau khi đăng nhập, đợi mạng công ty / VPN lên hẳn. eLIS
+    # chặn theo IP nên chạy ngay thì mấy vòng đầu chỉ toàn 403.
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $trigger.Delay = "PT1M"
 
@@ -69,14 +66,14 @@ function Install-Autostart {
         -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -StartWhenAvailable
 
-    # HAI tham số có mặc định SAI với app này, phải đặt lại:
-    #   ExecutionTimeLimit   mặc định 3 ngày -> Windows tự giết app vào ngày
-    #                        thứ tư. Đặt Zero là chạy không giới hạn.
-    #   *OnBatteries         mặc định: rút sạc là dừng tác vụ. Máy này là
-    #                        laptop, nên mặc định đó nghĩa là job chết im lặng.
+    # Hai tham số có mặc định sai với app này:
+    #   ExecutionTimeLimit  mặc định 3 ngày, Windows tự giết app vào ngày thứ
+    #                       tư. Zero là chạy không giới hạn.
+    #   *OnBatteries        mặc định rút sạc là dừng tác vụ. Máy vận hành là
+    #                       laptop.
     #
-    # MultipleInstances IgnoreNew TRÙNG với mặc định của Windows — viết ra chỉ
-    # để nói rõ ý, và làm lớp thứ hai bên cạnh khóa socket trong main_app.py.
+    # MultipleInstances IgnoreNew trùng với mặc định của Windows, viết ra để
+    # nói rõ ý và làm lớp thứ hai bên cạnh khóa socket trong main_app.py.
 
     Register-ScheduledTask -TaskName $TaskName -Action $taskAction `
         -Trigger $trigger -Settings $settings -Force `
@@ -114,7 +111,7 @@ function Show-Status {
     Write-Host "Chạy lần cuối : $($info.LastRunTime)"
     Write-Host "Lần chạy sau  : $($info.NextRunTime)"
 
-    # 0 = xong bình thường. 267009 = đang chạy. Còn lại là đáng xem.
+    # 0 = xong bình thường. 267009 = đang chạy.
     $code = $info.LastTaskResult
     $note = switch ($code) {
         0      { "kết thúc bình thường" }

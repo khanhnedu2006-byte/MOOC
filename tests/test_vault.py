@@ -1,18 +1,13 @@
-"""Test kho khóa Windows và THỨ TỰ ƯU TIÊN của nguồn cấu hình (test_vault).
+"""Test kho khóa Windows và thứ tự ưu tiên nguồn cấu hình (test_vault).
 
-Phần đáng test ở đây không phải "gọi keyring có chạy không" — đó là việc của
-thư viện. Phần đáng test là hai câu hỏi mà sai thì hỏng im lặng:
+Ba câu hỏi, sai câu nào cũng hỏng im lặng:
 
-  1. Khóa trong kho có THẮNG được .env không? Không thắng thì nút "Lưu khóa"
-     trong app là nút giả: báo đã lưu, chương trình vẫn chạy key cũ.
-  2. Biến môi trường có THẮNG được kho khóa không? Không thắng thì
-     `set AZURE_KEY=... && python run.py` mất tác dụng, và bản Docker (truyền
-     cấu hình bằng biến môi trường) có nguy cơ bị kho khóa của máy dev đè lên.
-
-Cộng thêm một câu thứ ba, dành riêng cho bản chạy trong container:
-
-  3. Trên máy không phải Windows, code có ĐỘNG tới keyring không? Phải là
-     không — kể cả import cũng không, vì trong container không có D-Bus.
+  1. Khóa trong kho có thắng .env không? Không thì nút "Lưu khóa" là nút giả.
+  2. Biến môi trường có thắng kho khóa không? Không thì
+     `set AZURE_KEY=... && python run.py` mất tác dụng, và bản Docker có nguy
+     cơ bị kho khóa của máy dev đè lên.
+  3. Trên máy không phải Windows, code có động tới keyring không? Phải là
+     không, kể cả import — container không có D-Bus.
 """
 
 import sys
@@ -125,8 +120,8 @@ def test_cau_hinh_khong_bi_mat_KHONG_doc_tu_kho(tmp_path, monkeypatch):
 
 
 def test_ten_khoa_khop_voi_ten_truong_trong_Settings():
-    """Đổi tên trường trong Settings mà quên sửa vault -> kho khóa im lặng
-    không còn tác dụng. Test này bắt đúng lúc đổi tên."""
+    """Đổi tên trường trong Settings mà quên sửa vault thì kho khóa im lặng
+    mất tác dụng."""
     fields = set(Settings.model_fields)
     thieu = {n.lower() for n in vault.SECRET_NAMES} - fields
     assert not thieu, f"vault.SECRET_NAMES có tên không còn trong Settings: {thieu}"
@@ -135,13 +130,11 @@ def test_ten_khoa_khop_voi_ten_truong_trong_Settings():
 # ---------------------------------------------------- vault.py
 
 def test_khong_phai_windows_thi_KHONG_dung_toi_keyring(monkeypatch):
-    """Chốt cho bản Docker: trong container không có D-Bus, chạm vào là hỏng.
+    """Chốt cho bản Docker: container không có D-Bus, chạm keyring là hỏng.
 
-    Test này CẤM LUÔN CÂU IMPORT chứ không chỉ xem giá trị trả về. Lý do:
-    kiểm mỗi giá trị trả về thì bỏ chốt `sys.platform` đi test vẫn xanh —
-    trên Linux keyring trả về backend `fail` nên kết quả cuối vẫn là None.
-    Xanh ở CI, rồi hỏng trên máy thật. Đã thử phá đúng kiểu đó và test cũ
-    không bắt được, nên mới có mấy dòng cấm import dưới đây.
+    Cấm luôn câu import chứ không chỉ xem giá trị trả về: bỏ chốt
+    `sys.platform` mà chỉ kiểm giá trị thì test vẫn xanh, vì trên Linux
+    keyring trả về backend `fail` nên kết quả cuối vẫn là None.
     """
     monkeypatch.setattr(sys, "platform", "linux")
 
@@ -169,7 +162,7 @@ def test_doc_duoc_thi_tra_ve_ten_thuong(dung_kho):
 
 
 def test_kho_hong_thi_tra_ve_rong_chu_khong_nem_loi(dung_kho):
-    """Kho khóa hỏng không được phép làm job không khởi động nổi."""
+    """Kho khóa hỏng chỉ được làm hệ thống rơi về .env, không làm job chết."""
     dung_kho({(vault.SERVICE, "FPT_API_KEY"): "abc"}, fail_on_read=True)
     assert vault.read_all() == {}
 
@@ -208,9 +201,8 @@ def test_ghi_gia_tri_rong_bi_tu_choi(dung_kho):
 
 
 def test_khong_co_backend_thi_ghi_phai_BAO_LOI(monkeypatch):
-    """Đây là chỗ duy nhất được phép ném lỗi: người dùng vừa bấm Lưu và đang
-    chờ biết kết quả. Báo 'đã lưu' trong khi không lưu được là kiểu hỏng tệ
-    nhất — key vẫn sai mà không ai biết vì sao."""
+    """Chỗ duy nhất được phép ném lỗi: người dùng vừa bấm Lưu và đang chờ
+    kết quả."""
     monkeypatch.setattr(vault, "_load_keyring", lambda: None)
     with pytest.raises(vault.VaultError):
         vault.set_secret("AZURE_KEY", "gia-tri")

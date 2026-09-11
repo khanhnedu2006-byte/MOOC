@@ -1,12 +1,10 @@
-"""Phần chạy job của app desktop (app_runner) — KHÔNG có giao diện.
+"""Phần chạy job của app desktop (app_runner) — không có giao diện.
 
-Tách khỏi main_app.py vì đúng một lý do: main_app.py `import tkinter`, mà máy
-CI Linux thường không cài python3-tk. Để chung thì cả bộ test không import nổi
-file này, và phần dễ sai nhất của app — chỗ tự gọi API ① rồi phải tự ghi sổ
-cho alert — sẽ không có test nào canh.
+Tách khỏi main_app.py vì main_app.py `import tkinter`, mà CI Linux thường
+không cài python3-tk. Để chung thì bộ test không import nổi file này.
 
-Ở đây không có một lời gọi Tk nào. Luồng nền chỉ ghi vào SharedState; phía
-giao diện đọc lại bằng snapshot().
+Không có lời gọi Tk nào ở đây. Luồng nền chỉ ghi vào SharedState; giao diện
+đọc lại bằng snapshot().
 """
 
 import logging
@@ -94,16 +92,14 @@ class JobRunner(threading.Thread):
         try:
             azure_client = ocr_azure.create_client()
         except Exception as e:
-            # Sai key Azure là hỏng ngay từ đầu; báo lên giao diện rồi dừng
-            # hẳn, đừng lặp vô ích mỗi 5 giây.
+            # Sai key Azure là hỏng ngay từ đầu. Báo lên giao diện rồi dừng,
+            # lặp mỗi 5 giây cũng vô ích.
             logger.exception("Không tạo được client Azure: %s", e)
             self.state.update(phase="error", fatal=str(e))
             return
 
-        # Mốc đầu phiên. Không có nó thì ô "Từ chối" đếm cả lịch sử trong DB
-        # (hàng trăm) trong khi ô "eLIS đã nhận" ngay bên cạnh chỉ đếm từ lúc
-        # mở app — hai con số cạnh nhau mà mốc thời gian khác nhau thì người
-        # đọc trừ nhẩm ra kết luận sai.
+        # Mốc đầu phiên. Thiếu nó thì ô "Từ chối" đếm cả lịch sử trong DB
+        # trong khi ô "eLIS đã nhận" bên cạnh chỉ đếm từ lúc mở app.
         try:
             self.rejected_at_start = database.count_by_verdict().get("REJECTED", 0)
         except Exception:
@@ -131,9 +127,9 @@ class JobRunner(threading.Thread):
         self.state.update(phase="running",
                           round_index=snapshot["round_index"] + 1)
 
-        # Tự gọi API ① thay vì để process_one_round gọi, chỉ vì một lý do:
-        # giao diện cần biết hàng đợi dài bao nhiêu, mà RoundResult không nói.
-        # Đổi lại phải tự ghi sổ thành/bại cho alert — đúng như run.py làm.
+        # Tự gọi API ① thay vì để process_one_round gọi: giao diện cần biết
+        # hàng đợi dài bao nhiêu, mà RoundResult không nói. Đổi lại phải tự
+        # ghi sổ thành/bại cho alert, đúng như run.py làm.
         try:
             items = run.call_with_retry(client.get_pending_list, page=1, size=100)
         except client.ElisError as e:
@@ -187,7 +183,7 @@ class JobRunner(threading.Thread):
     def _sleep_between_rounds(self) -> None:
         seconds = max(1, settings.poll_interval_seconds)
         self.state.update(phase="sleeping", next_round_at=time.time() + seconds)
-        # wait() thay cho sleep() để nút "Chạy vòng ngay" có tác dụng tức thì.
+        # wait() thay sleep() để nút "Chạy vòng ngay" ăn ngay.
         self.wake_event.wait(timeout=seconds)
         self.wake_event.clear()
 

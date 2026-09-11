@@ -1,30 +1,17 @@
 """Lịch gửi báo cáo tự động (scheduler).
 
-Chạy trong CÙNG tiến trình với vòng lặp xử lý của run.py: mỗi vòng lặp gọi
-`kiem_tra_va_gui()` một lần. Không dùng luồng riêng, không dùng thư viện lịch.
+Chạy trong CÙNG tiến trình với vòng lặp của run.py: mỗi vòng gọi
+`kiem_tra_va_gui()` một lần. Không luồng riêng, không thư viện lịch — cron cần
+thêm một tiến trình trong container, còn luồng nền phải lo khóa SQLite.
 
-VÌ SAO KHÔNG DÙNG cron / APScheduler / luồng nền:
-  - cron trong container Docker cần thêm một tiến trình nữa và một lớp cấu
-    hình nữa; container nên chạy MỘT tiến trình.
-  - Luồng nền chia sẻ kết nối SQLite với vòng chính -> phải lo khóa.
-  - Vòng lặp chính vốn đã chạy mỗi vài giây rồi. Chỉ cần hỏi "còn nợ kỳ nào
-    không" ở mỗi vòng là đủ chính xác tới từng phút.
+GỬI BÙ: mỗi vòng tính MỐC GỬI GẦN NHẤT ĐÃ QUA rồi so với mốc đã gửi, nên job
+tắt đúng lúc tới hạn thì lần bật lại vẫn gửi bù. Chỉ gửi kỳ gần nhất.
 
-GỬI BÙ:
-Mỗi vòng, scheduler tính MỐC GỬI GẦN NHẤT ĐÃ QUA rồi so với mốc đã gửi —
-chứ không hỏi "bây giờ có đúng giờ gửi không". Nhờ vậy job tắt đúng lúc tới
-hạn (máy sập, container restart) thì lần bật lại vẫn gửi bù. Chỉ gửi kỳ gần
-nhất, không gửi dồn mọi kỳ đã bỏ lỡ.
+LẦN ĐẦU BẬT gửi ngay báo cáo cho kỳ vừa kết thúc. Có chủ đích, để phát hiện
+sai cấu hình SMTP ngay.
 
-LẦN ĐẦU BẬT sẽ gửi ngay một báo cáo cho kỳ vừa kết thúc, vì chưa có mốc nào
-được ghi nhận. Đây là CHỦ ĐÍCH: bạn biết ngay cấu hình SMTP có chạy không,
-thay vì đợi hết một tuần mới phát hiện sai mật khẩu.
-
-CHỐNG GỬI TRÙNG:
-Mốc đã gửi được ghi xuống FILE, không giữ trong biến. Giữ trong biến thì
-container restart lúc 18:05 sẽ gửi lại báo cáo vừa gửi lúc 18:00 — và với
-`restart: unless-stopped` thì một job crash-loop sẽ spam mentor hàng chục
-thư. File tồn tại qua restart nên mốc đã gửi vẫn được nhớ.
+CHỐNG GỬI TRÙNG: mốc đã gửi ghi xuống FILE, không giữ trong biến — restart lúc
+18:05 sẽ gửi lại báo cáo vừa gửi lúc 18:00.
 """
 
 from __future__ import annotations
@@ -46,23 +33,18 @@ STATE_FILE = Path(__file__).resolve().parent / ".report_state.json"
 
 VALID_MODES = ("off", "daily", "weekly", "monthly")
 
-# Giãn cách giữa các lần thử lại khi GỬI HỎNG, theo số lần đã hỏng liên tiếp.
-#
-# VÌ SAO CẦN: vòng lặp chính chạy mỗi POLL_INTERVAL_SECONDS (mặc định 5 giây).
-# Không có giãn cách thì một mật khẩu sai sẽ thành 12 lần đăng nhập Gmail mỗi
-# phút, liên tục cho tới khi ai đó để ý — Gmail sẽ khóa tài khoản vì nghi
-# brute-force, và log ngập traceback tới mức che hết thông tin thật.
-#
-# Giãn dần chứ không cố định: lỗi tạm thời (mạng chập) được thử lại sớm, còn
-# lỗi cấu hình (sai mật khẩu) tự lùi về mỗi giờ một lần.
+# Giãn cách giữa các lần thử lại khi GỬI HỎNG, theo số lần hỏng liên tiếp.
+# Vòng lặp chính chạy mỗi POLL_INTERVAL_SECONDS (mặc định 5 giây), không giãn
+# cách thì một mật khẩu sai thành 12 lần đăng nhập Gmail mỗi phút và bị khóa
+# tài khoản. Giãn dần để lỗi tạm thời vẫn được thử lại sớm.
 RETRY_BACKOFF_MINUTES = (1, 5, 15, 30, 60)
 
-# Mốc gom số liệu mặc định theo từng chế độ. Báo cáo tháng mà vẽ theo ngày
-# thì biểu đồ có 30 cột chen chúc; theo tuần thì đọc được.
+# Mốc gom mặc định theo chế độ. Báo cáo tháng vẽ theo ngày thì có 30 cột chen
+# chúc; theo tuần thì đọc được.
 DEFAULT_BUCKET = {"daily": "day", "weekly": "day", "monthly": "week"}
 
-# Mốc gom KHÔNG được thô hơn kỳ báo cáo: gom 7 ngày theo "week" cho ra
-# đúng một cột, biểu đồ thành vô nghĩa. Bảng này chặn cấu hình như vậy.
+# Mốc gom KHÔNG được thô hơn kỳ báo cáo: gom 7 ngày theo "week" cho ra đúng
+# một cột. Bảng này chặn cấu hình như vậy.
 MIN_DAYS_PER_BUCKET = {"day": 2, "week": 14, "month": 62}
 
 
@@ -78,16 +60,15 @@ def _write_state(state: dict) -> None:
         STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2),
                                    encoding="utf-8")
     except OSError as e:
-        # Không ghi được thì vẫn tiếp tục, nhưng CẢNH BÁO to: mất file này
-        # nghĩa là mất cơ chế chống gửi trùng.
+        # Không ghi được thì vẫn chạy tiếp, nhưng mất file này là mất cơ chế
+        # chống gửi trùng.
         logger.error("Không ghi được %s (%s) — có nguy cơ gửi trùng báo cáo!",
                      STATE_FILE.name, e)
 
 
 def _parse_hour_minute(text: str) -> tuple[int, int]:
-    """Đọc 'HH:MM'. Sai định dạng thì lùi về 18:00 và cảnh báo, không ném lỗi.
-
-    Cấu hình sai giờ không đáng để làm chết job xác minh chứng chỉ.
+    """Đọc 'HH:MM'. Sai định dạng thì lùi về 18:00 và cảnh báo, không ném lỗi:
+    cấu hình sai giờ không đáng làm chết job xác minh chứng chỉ.
     """
     try:
         g, p = text.strip().split(":")
@@ -103,13 +84,8 @@ def _parse_hour_minute(text: str) -> tuple[int, int]:
 def _last_due_moment(mode: str, now: datetime) -> datetime:
     """Mốc gửi GẦN NHẤT đã trôi qua, tính tới thời điểm bay_gio.
 
-    Đây là chỗ quyết định hành vi GỬI BÙ. Cách cũ hỏi "bây giờ có đúng thứ
-    Sáu 18:00 không" — nghĩa là job phải đang chạy đúng phút đó. Máy tắt hôm
-    thứ Sáu, hoặc container restart ngay lúc ấy, là báo cáo tuần đó mất luôn
-    và không ai được báo.
-
-    Cách mới hỏi "mốc gửi gần nhất đã qua là lúc nào" rồi đối chiếu với mốc
-    đã gửi. Job bật lại lúc nào cũng phát hiện được là còn nợ báo cáo.
+    Chỗ quyết định hành vi GỬI BÙ: đối chiếu mốc gần nhất đã qua với mốc đã
+    gửi, nên job không cần đang chạy đúng phút tới hạn.
     """
     hour, minute = _parse_hour_minute(settings.report_time)
 
@@ -124,8 +100,8 @@ def _last_due_moment(mode: str, now: datetime) -> datetime:
             hour=hour, minute=minute, second=0, microsecond=0)
         return moment if moment <= now else moment - timedelta(days=7)
 
-    # monthly. Chặn ở 28 để tháng nào cũng có ngày đó — đặt 31 thì tháng Hai
-    # không bao giờ tới hạn và báo cáo lặng lẽ không bao giờ được gửi.
+    # monthly. Chặn ở 28 để tháng nào cũng có ngày đó: đặt 31 thì tháng Hai
+    # không bao giờ tới hạn.
     day = max(1, min(28, settings.report_monthday))
     moment = now.replace(day=day, hour=hour, minute=minute,
                           second=0, microsecond=0)
@@ -139,22 +115,16 @@ def _last_due_moment(mode: str, now: datetime) -> datetime:
 def _report_period(mode: str, moment: datetime) -> tuple[str, str, str]:
     """(from_day, to_day, khoa_ky) cho kỳ ứng với mốc gửi `moc`.
 
-    khoa_ky định danh KỲ BÁO CÁO, không phải ngày gửi. Khác biệt đó chính là
-    thứ làm cho gửi bù chạy đúng: gửi bù vào thứ Bảy vẫn mang khóa của tuần
-    ấy, nên không bị tính thành một kỳ mới, và tuần sau vẫn gửi bình thường.
+    khoa_ky định danh KỲ BÁO CÁO, không phải ngày gửi, nên bản gửi bù không bị
+    tính thành một kỳ mới.
 
-    Luôn báo cáo kỳ ĐÃ TRỌN VẸN:
+    Luôn báo cáo kỳ ĐÃ TRỌN VẸN (tháng đang chạy dở luôn thấp hơn thực tế):
       - daily   : 7 ngày kết thúc ở ngày của mốc, GỬI MỖI NGÀY
       - weekly  : 7 ngày kết thúc ở ngày của mốc
       - monthly : trọn THÁNG TRƯỚC tháng của mốc
-    Báo cáo tháng cho tháng đang chạy dở luôn thấp hơn thực tế và làm người
-    đọc tưởng khối lượng đang giảm.
 
-    VÌ SAO "daily" LÀ 7 NGÀY CHỨ KHÔNG PHẢI 1 NGÀY: một ngày chỉ cho ra MỘT
-    mốc, nên biểu đồ đường chỉ có một điểm — không vẽ được xu hướng gì, và
-    con số một ngày cũng không cho biết nó cao hay thấp so với bình thường.
-    Cửa sổ trượt 7 ngày thì mỗi bản báo cáo vẫn "mới mỗi ngày" mà luôn có đủ
-    ngữ cảnh. Khóa vẫn theo NGÀY nên vẫn đúng một thư mỗi ngày.
+    "daily" lấy 7 ngày vì một ngày chỉ cho một điểm trên biểu đồ đường; khóa
+    vẫn theo NGÀY nên vẫn một thư mỗi ngày.
     """
     state = moment.date()
 
@@ -177,9 +147,8 @@ def _report_period(mode: str, moment: datetime) -> tuple[str, str, str]:
 def _sensible_bucket(bucket: str, start: str, end: str, mode: str) -> str:
     """Hạ mốc gom xuống nếu nó thô hơn kỳ báo cáo.
 
-    REPORT_BUCKET=week với lịch daily (kỳ 7 ngày) cho ra đúng một cột. Thay
-    vì im lặng vẽ một biểu đồ vô nghĩa, hạ về mốc mịn hơn và ghi log để người
-    cấu hình biết mình đặt sai.
+    REPORT_BUCKET=week với lịch daily (kỳ 7 ngày) cho ra đúng một cột, nên hạ
+    về mốc mịn hơn và ghi log để người cấu hình biết mình đặt sai.
     """
     day_count = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
     order = ("day", "week", "month")
@@ -225,8 +194,8 @@ def _record_failure(state: dict, key: str, now: datetime, error) -> None:
     }
     _write_state(state)
 
-    # Lần đầu in đầy đủ traceback để còn chẩn đoán; các lần sau chỉ một dòng,
-    # nếu không log sẽ ngập và che mất log xử lý chứng chỉ.
+    # Lần đầu in đủ traceback để chẩn đoán; các lần sau chỉ một dòng, tránh
+    # log ngập che mất log xử lý chứng chỉ.
     if attempts == 1:
         logger.exception("Gửi báo cáo %s lỗi: %s. Thử lại sau %d phút.",
                          key, error, wait)
@@ -238,8 +207,8 @@ def _record_failure(state: dict, key: str, now: datetime, error) -> None:
 def check_and_send(now: datetime | None = None, really_send: bool = True) -> str | None:
     """Gọi mỗi vòng lặp. Gửi báo cáo nếu tới hạn; trả về khóa kỳ đã gửi.
 
-    Trả None nghĩa là chưa tới hạn hoặc đã gửi rồi — trường hợp thường gặp
-    nhất, và phải RẺ, vì hàm này chạy mỗi vài giây.
+    None = chưa tới hạn hoặc đã gửi rồi. Đây là nhánh thường gặp nhất và phải
+    RẺ, vì hàm chạy mỗi vài giây.
     """
     mode = (settings.report_schedule or "off").strip().lower()
     if mode == "off":
@@ -250,8 +219,8 @@ def check_and_send(now: datetime | None = None, really_send: bool = True) -> str
         return None
 
     now = now or datetime.now()
-    # CHỈ xét kỳ gần nhất còn nợ, không gửi bù toàn bộ các kỳ đã bỏ lỡ. Job
-    # tắt một tháng rồi bật lại thì mentor nhận MỘT báo cáo, không phải bốn.
+    # CHỈ xét kỳ gần nhất còn nợ, không gửi bù mọi kỳ đã bỏ lỡ: job tắt một
+    # tháng rồi bật lại thì nhận MỘT báo cáo, không phải bốn.
     start, end, key = _report_period(mode, _last_due_moment(mode, now))
     state = _read_state()
     if state.get("da_gui") == key:
@@ -270,9 +239,9 @@ def check_and_send(now: datetime | None = None, really_send: bool = True) -> str
             import send_report
             send_report.send_period_report(start, end, bucket)
         except Exception as e:
-            # KHÔNG ghi nhận đã gửi khi gửi hỏng -> sẽ thử lại, nhưng có
-            # giãn cách (xem _duoc_thu_lai). Cũng KHÔNG ném lỗi ra ngoài:
-            # báo cáo hỏng không được phép làm dừng việc xác minh chứng chỉ.
+            # Gửi hỏng thì KHÔNG ghi nhận đã gửi -> thử lại, có giãn cách (xem
+            # _duoc_thu_lai). Cũng không ném lỗi ra ngoài: báo cáo hỏng không
+            # được phép làm dừng việc xác minh chứng chỉ.
             _record_failure(state, key, now, e)
             return None
 

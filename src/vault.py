@@ -1,23 +1,16 @@
-"""Kho khóa của Windows (vault) — cất khóa bí mật ra ngoài file .env.
+"""Kho khóa Windows (vault) — cất bốn khóa bí mật ra ngoài .env.
 
-VẤN ĐỀ ĐANG SỬA: bốn giá trị bí mật của hệ thống nằm trong .env dưới dạng
-chữ thường. File đó không được commit, nhưng nó vẫn nằm ngay trong thư mục
-dự án — mở Notepad là đọc được, kéo nhầm vào commit là lộ, chụp màn hình lúc
-demo là lộ. Đã có một lần key FPT lộ theo đúng kiểu này.
+Ghi vào Credential Manager. Windows mã hóa bằng DPAPI, khóa gắn với tài
+khoản đang đăng nhập.
 
-CÁCH XỬ LÝ: đưa bốn giá trị đó vào Credential Manager của Windows. Windows
-mã hóa bằng DPAPI, khóa gắn với tài khoản đang đăng nhập.
+BẢO VỆ FILE, KHÔNG BẢO VỆ MÁY. Ai đăng nhập được đúng tài khoản Windows đó
+vẫn đọc ra được bằng chính thư viện này. Câu mô tả đúng: "khóa không còn nằm
+dạng chữ thường trên đĩa".
 
-NÓI CHO ĐÚNG NÓ BẢO VỆ CÁI GÌ: nó bảo vệ FILE, không bảo vệ MÁY. Ai đăng
-nhập được đúng tài khoản Windows đó vẫn đọc ra được bằng chính thư viện này.
-Đừng báo cáo là "đã bảo mật"; câu đúng là "khóa không còn nằm dạng chữ
-thường trên đĩa".
+Chép thư mục dự án sang máy khác thì khóa không đi theo — phải nhập lại.
 
-HỆ QUẢ: chép thư mục dự án sang máy khác thì khóa KHÔNG đi theo — phải nhập
-lại. Đây là tính năng, không phải lỗi.
-
-BẢN DOCKER KHÔNG ĐỔI GÌ. Mọi hàm ở đây trả về rỗng khi không phải Windows
-hoặc khi không có backend, nên config.py rơi về .env đúng như trước.
+Docker không đổi gì: mọi hàm trả về rỗng khi không phải Windows hoặc không
+có backend, nên config.py rơi về .env.
 """
 
 import logging
@@ -28,8 +21,8 @@ logger = logging.getLogger(__name__)
 # Tên "service" trong Credential Manager. Đổi tên này là mất hết khóa cũ.
 SERVICE = "MOOC"
 
-# Chỉ bốn giá trị này là bí mật thật. Mọi thứ còn lại (URL, số phút, luật
-# nghiệp vụ) cứ để file thường cho dễ đối chiếu khi chuyển UAT/production.
+# Chỉ bốn giá trị này là bí mật. URL, số phút, luật nghiệp vụ để file thường
+# cho dễ đối chiếu khi chuyển UAT/production.
 SECRET_NAMES = ("FPT_API_KEY", "AZURE_KEY", "ELIS_API_KEY", "SMTP_PASSWORD")
 
 
@@ -40,18 +33,14 @@ class VaultError(RuntimeError):
 def _load_keyring():
     """Module keyring nếu dùng được thật, ngược lại None.
 
-    Ba lớp chặn, cố ý xếp theo thứ tự rẻ tiền trước:
+    Ba lớp chặn, xếp theo thứ tự rẻ tiền trước:
 
-    1. Không phải Windows -> thôi. Trong container Linux, `import keyring`
-       kéo theo SecretStorage + jeepney và đi hỏi D-Bus; không có D-Bus thì
-       tùy phiên bản mà nó ném lỗi hoặc treo. Job chạy trong Docker không
-       được phép phụ thuộc vào chuyện đó.
-    2. Chưa cài keyring -> thôi. Gói này CỐ Ý không nằm trong
-       requirements-job.txt.
-    3. Có keyring nhưng không tìm được backend nào -> thôi. Trường hợp này
-       keyring trả về `backends.fail.Keyring`, mà bản đó vẫn cho gọi
-       set_password rồi ném lỗi — im lặng coi như đã lưu là kiểu hỏng tệ
-       nhất, nên phải nhận diện nó ở đây.
+    1. Không phải Windows. Trên Linux `import keyring` kéo theo SecretStorage
+       + jeepney rồi hỏi D-Bus; container không có D-Bus.
+    2. Chưa cài keyring. Gói này cố ý không nằm trong requirements-job.txt.
+    3. Có keyring nhưng không backend nào. Lúc đó keyring trả về
+       `backends.fail.Keyring`, mà bản đó vẫn cho gọi set_password rồi mới
+       ném lỗi.
 
     Test thay thẳng hàm này để chạy được trên Linux.
     """
@@ -81,13 +70,12 @@ def available() -> bool:
 
 
 def read_all() -> dict[str, str]:
-    """Đọc mọi khóa đang có, trả về dict TÊN THƯỜNG -> giá trị.
+    """Đọc mọi khóa đang có, trả về dict tên-thường -> giá trị.
 
-    Tên trả về viết thường (fpt_api_key) để khớp thẳng tên trường trong
-    Settings — bên config.py không phải chuyển đổi gì thêm.
+    Tên viết thường để khớp thẳng tên trường trong Settings.
 
-    Đọc hỏng thì trả về rỗng chứ không ném lỗi: kho khóa hỏng không được
-    phép làm cả job không khởi động nổi, nó chỉ nên rơi về .env.
+    Đọc hỏng thì trả về rỗng, không ném lỗi: kho khóa hỏng chỉ nên làm hệ
+    thống rơi về .env, không làm job chết lúc khởi động.
     """
     keyring = _load_keyring()
     if keyring is None:
@@ -107,11 +95,10 @@ def read_all() -> dict[str, str]:
 
 
 def describe() -> dict[str, bool]:
-    """TÊN HOA -> đã có khóa hay chưa. Dùng để vẽ giao diện, không trả giá trị.
+    """Tên hoa -> đã có khóa hay chưa. Không trả giá trị.
 
-    CỐ Ý không có hàm nào trả về giá trị thật cho giao diện. Nhập vào được,
-    xóa được, nhưng không đọc ngược ra màn hình — bớt một đường lộ khóa qua
-    ảnh chụp màn hình.
+    Cố ý không có hàm nào đọc ngược giá trị ra giao diện: nhập được, xóa
+    được, không xem lại được.
     """
     stored = read_all()
     return {name: name.lower() in stored for name in SECRET_NAMES}
@@ -120,9 +107,8 @@ def describe() -> dict[str, bool]:
 def set_secret(name: str, value: str) -> None:
     """Ghi một khóa. Ném VaultError nếu không ghi được.
 
-    Ở đây ném lỗi chứ không nuốt như read_all: người dùng vừa bấm "Lưu" và
-    đang chờ biết kết quả. Báo "đã lưu" trong khi không lưu được là cách chắc
-    chắn nhất để mất một buổi chiều đi tìm vì sao key vẫn sai.
+    Ném lỗi chứ không nuốt như read_all: người dùng vừa bấm "Lưu" và đang
+    chờ kết quả. Báo "đã lưu" khi chưa lưu được là kiểu hỏng khó lần nhất.
     """
     name = str(name).upper()
     if name not in SECRET_NAMES:
@@ -151,6 +137,6 @@ def delete_secret(name: str) -> None:
     try:
         keyring.delete_password(SERVICE, name)
     except Exception as e:
-        # keyring ném PasswordDeleteError khi không có gì để xóa. Kết quả
-        # mong muốn (khóa không còn trong kho) đã đạt rồi.
+        # keyring ném PasswordDeleteError khi không có gì để xóa — kết quả
+        # mong muốn đã đạt.
         logger.debug("Xóa %s: %s", name, e)

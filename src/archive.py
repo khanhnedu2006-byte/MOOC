@@ -1,22 +1,18 @@
 """Kho lưu chứng chỉ thật (archive).
 
-Giữ lại ảnh chứng chỉ + thông tin getCert ngay lúc job tải về, để sau này
-chạy lại bộ đánh giá mà không cần eLIS.
+Giữ ảnh chứng chỉ + thông tin getCert ngay lúc job tải về, để chạy lại bộ
+đánh giá mà không cần eLIS.
 
 VÌ SAO CẦN: sau khi job nộp APPROVED/REJECTED qua API ③, bản ghi rời trạng
-thái WAITING nên vòng getCert sau không trả về nó nữa. Data thật đi qua hệ
-thống đúng MỘT lần. Trước đây ảnh còn bị ghi ra file tạm rồi xóa ngay sau khi
-đọc — chạy xong là mất sạch, trong DB chỉ còn CHỮ model đọc được chứ không
-còn ẢNH. Mà đánh giá bước trích xuất thì bắt buộc phải có ảnh gốc.
+thái WAITING nên vòng getCert sau không trả về nó nữa — data thật đi qua hệ
+thống đúng MỘT lần. Mà đánh giá bước trích xuất thì bắt buộc phải có ảnh gốc.
 
-TÊN FILE THEO NỘI CORRECT: {user_course_id}_{8 ký tự băm nội dung}.{đuôi}
-user_course_id một mình KHÔNG đủ để phân biệt — trong dữ liệu UAT thực tế đã
-thấy cùng một user_course_id gắn với nhiều chứng chỉ khác nhau. Băm nội dung
-thì hai file khác nhau chắc chắn nằm ở hai tên khác nhau, còn cùng một file
-tải lại lần nữa sẽ tự đè lên chính nó thay vì sinh bản sao.
+TÊN FILE THEO NỘI DUNG: {user_course_id}_{8 ký tự băm nội dung}.{đuôi}. Riêng
+user_course_id KHÔNG đủ để phân biệt (dữ liệu UAT có một id gắn nhiều chứng
+chỉ); băm nội dung thì tải lại cùng một file sẽ tự đè, không sinh bản sao.
 
-MỌI LỖI Ở ĐÂY ĐỀU BỊ NUỐT: lưu trữ là việc phụ. Đĩa đầy hay không có quyền
-ghi thì tuyệt đối không được làm hỏng việc chính là duyệt chứng chỉ.
+MỌI LỖI Ở ĐÂY ĐỀU BỊ NUỐT: lưu trữ là việc phụ, không được làm hỏng việc chính
+là duyệt chứng chỉ.
 """
 
 from __future__ import annotations
@@ -29,8 +25,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Chữ ký byte đầu file -> đuôi file. Nhận dạng theo NỘI CORRECT thật, không tin
-# tên file eLIS gửi kèm (đã có tiền lệ tên file không khớp nội dung).
+# Chữ ký byte đầu file -> đuôi file. Nhận theo nội dung thật, không tin tên
+# file eLIS gửi kèm (đã có tiền lệ tên không khớp nội dung).
 _EXTENSION_SIGNATURES = (
     (b"%PDF",             ".pdf"),
     (b"\x89PNG\r\n\x1a\n", ".png"),
@@ -64,8 +60,8 @@ def _day_folder(goc: Path) -> Path:
 def save(image_bytes: bytes, info: dict, archive_root: str | Path) -> Path | None:
     """Lưu một chứng chỉ + metadata. Trả về đường dẫn ảnh, hoặc None nếu hỏng.
 
-    Gọi NGAY sau khi tải được file, TRƯỚC khi chạy pipeline — để nếu pipeline
-    chết giữa chừng thì ảnh vẫn còn, đó lại chính là ca đáng nghiên cứu nhất.
+    Gọi NGAY sau khi tải được file, TRƯỚC khi chạy pipeline: pipeline chết giữa
+    chừng thì ảnh vẫn còn, mà đó mới là ca đáng nghiên cứu nhất.
     """
     try:
         if not image_bytes:
@@ -98,11 +94,9 @@ def save(image_bytes: bytes, info: dict, archive_root: str | Path) -> Path | Non
 def write_verdict(image_path: Path | None, verdict) -> None:
     """Ghi thêm kết luận của hệ thống vào file metadata.
 
-    ĐÂY KHÔNG PHẢI NHÃN CHUẨN. Nó là câu trả lời của chính hệ thống đang cần
-    đo, lưu lại chỉ để tra cứu và để đối chiếu xem lần chạy sau có đổi kết quả
-    không. Bộ sinh file nhãn cố ý KHÔNG điền giá trị này vào cột gt_verdict:
-    lấy đáp án của model làm đáp án chuẩn thì model luôn đúng 100%, và mọi con
-    số đo được sau đó đều vô nghĩa.
+    ĐÂY KHÔNG PHẢI NHÃN CHUẨN — nó là câu trả lời của chính hệ thống đang cần
+    đo, lưu để tra cứu. Bộ sinh file nhãn cố ý KHÔNG đổ giá trị này vào cột
+    gt_verdict: lấy đáp án của model làm đáp án chuẩn thì model luôn đúng 100%.
     """
     if image_path is None:
         return

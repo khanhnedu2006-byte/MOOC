@@ -129,25 +129,21 @@ def _mismatch_reason(extracted: ExtractedInfo, given: InputInfo,
                      other: ExtractedInfo | None = None) -> str:
     """Lý do từ chối: nêu trường nào không khớp (tên / khóa học / thời gian).
 
-    Chỉ nêu ĐÚNG trường sai, không thêm chữ nào khác. Người đọc cần biết đi
-    sửa chỗ nào, không cần biết máy đã đọc mấy lần.
+    Chỉ liệt kê tên trường sai, không thêm chữ nào khác.
 
-    `other` là BẢN ĐỌC CÒN LẠI (thường là LLM1, khi phán quyết tính trên
-    LLM2). Nó KHÔNG tham gia phán quyết, chỉ dùng để LỌC BỚT: trường nào bản
-    kia đọc khớp thì không nêu.
+    `other` là bản đọc còn lại (LLM1, khi phán quyết tính trên LLM2). Nó
+    KHÔNG tham gia phán quyết, chỉ để lọc: trường nào bản kia đọc khớp thì
+    không nêu.
 
-    VÌ SAO PHẢI LỌC. Phán quyết luôn tính trên bản đọc CUỐI CÙNG. Khi LLM1
-    đọc đúng tên khóa nhưng sai mỗi tên người, pipeline rơi xuống tầng 2; nếu
-    ở đó LLM2 tách tên khóa song ngữ kém hơn thì lý do ghi "Tên khóa học
-    không khớp" cho một tên khóa vốn ĐÚNG. Học viên đọc xong đi sửa nhầm chỗ,
-    nộp lại vẫn trượt — sai một trường mà bị báo sai hai trường. Đã xảy ra
-    thật trên bản demo 10/09/2026.
+    Lọc vì phán quyết luôn tính trên bản đọc CUỐI CÙNG. LLM2 tách tên khóa
+    song ngữ kém hơn LLM1 thì lý do đổ oan cho một tên khóa vốn đúng, và
+    người nộp đi sửa nhầm chỗ.
 
-    Nêu một trường CHỈ KHI cả hai bản đọc đều trượt nó. Hai bản đọc mâu thuẫn
-    nhau ở trường nào thì im về trường đó: chưa đủ chắc để bảo người ta đi sửa.
+    Nêu một trường chỉ khi CẢ HAI bản đọc đều trượt nó. Hai bản mâu thuẫn ở
+    trường nào thì im về trường đó — chưa đủ chắc để bảo người ta đi sửa.
 
-    KHÔNG đổi phán quyết. Hàm này chỉ sinh chuỗi lý do; APPROVED/REJECTED vẫn
-    do _both_fields_match quyết, và nó không gọi tới đây.
+    Không đổi phán quyết: APPROVED/REJECTED do _both_fields_match quyết, và
+    nó không gọi tới đây.
     """
     primary = _field_matches(extracted, given)
     backup = _field_matches(other, given) if other is not None else None
@@ -157,7 +153,7 @@ def _mismatch_reason(extracted: ExtractedInfo, given: InputInfo,
         if matched:
             continue
         if backup is not None and backup[field]:
-            continue        # bản kia đọc khớp -> chưa chắc sai, không nêu
+            continue        # bản kia đọc khớp, chưa chắc sai
         errors.append("Ngày không hợp lệ" if field == "Ngày"
                       else f"{field} không khớp")
     return "; ".join(errors) if errors else "Không khớp"

@@ -1,15 +1,10 @@
 """Client gọi 3 API của ELIS (client).
 
-Luồng:
-  ① getCert          -> lấy danh sách chứng chỉ chờ duyệt (WAITING)
-  ② download          -> tải file chứng chỉ (JSON, nội dung dạng base64)
-  ③ ProcessStatus    -> gửi kết quả APPROVED/REJECTED
+  ① getCert         -> danh sách chờ duyệt (WAITING), kèm thông tin đối chiếu
+  ② download        -> tải file chứng chỉ (JSON, nội dung dạng base64)
+  ③ ProcessStatus   -> gửi kết quả APPROVED/REJECTED
 
-Mỗi API là một hàm riêng, test được độc lập. Việc nối 3 bước + chạy pipeline
-nằm ở run.py.
-
-Thông tin để đối chiếu (tên NV, khóa học, mã NV) lấy từ API ①.
-Nội dung file chứng chỉ lấy từ API ② dưới dạng base64.
+Việc nối 3 bước nằm ở run.py.
 """
 
 import base64
@@ -37,8 +32,8 @@ class ElisError(Exception):
 
 # ===== API ① — Lấy danh sách chờ duyệt =====
 
-# Trần size của API, đo được bằng check_history.py: gửi size=5000 vẫn chỉ
-# nhận về 1000. Dùng để chia trang khi kéo toàn bộ lịch sử.
+# Trần size của API: gửi size=5000 vẫn chỉ nhận về 1000. Dùng để chia trang
+# khi kéo toàn bộ lịch sử.
 MAX_PAGE_SIZE = 1000
 
 
@@ -63,11 +58,7 @@ def _get_cert(params: dict) -> list[dict]:
 
 
 def get_by_status(status: str, page: int = 1, size: int = 100) -> list[dict]:
-    """GET getCert?status=... — trả về list item ở trạng thái đó.
-
-    status nhận WAITING / APPROVED / REJECTED. Đã đo trên UAT: ba giá trị trả
-    về ba con số khác nhau (4 / 3134 / 13) nên API lọc thật, không phớt lờ.
-    """
+    """GET getCert?status=... — status nhận WAITING / APPROVED / REJECTED."""
     return _get_cert({"status": status, "page": page, "size": size})
 
 
@@ -75,26 +66,19 @@ def get_by_email(employee_email: str, page: int = 1,
                  size: int = MAX_PAGE_SIZE) -> list[dict]:
     """GET getCert?employeeEmail=... — MỌI bản ghi của một nhân viên.
 
-    KHÔNG gửi kèm `status`: bản ghi trả về đã mang sẵn trường `submitStatus`
-    (APPROVED / REJECTED / WAITING), lọc ở phía mình vừa đủ vừa chắc hơn.
-
-    Tên tham số là `employeeEmail` — KHÔNG phải employeeId / employee_id /
-    employeeCode. Ba cái đó đã đo và đều bị API bỏ qua, mỗi lần đều trả về
-    nguyên 3134 bản ghi kèm mã 200 chứ không báo lỗi gì.
-
-    CẢNH BÁO: chính vì API bỏ qua tham số lạ trong IM LẶNG, người gọi PHẢI tự
-    kiểm lại email trong từng bản ghi trả về thay vì tin là đã được lọc. Xem
-    run.py::completed_courses().
+    KHÔNG gửi kèm `status`: bản ghi trả về đã mang sẵn `submitStatus`. Tên
+    tham số phải là `employeeEmail`; employeeId / employeeCode bị API bỏ qua
+    trong IM LẶNG và trả về nguyên toàn bộ bản ghi kèm mã 200, nên người gọi
+    PHẢI tự kiểm lại email từng bản ghi (run.py::completed_courses).
     """
     return _get_cert({"employeeEmail": employee_email,
                       "page": page, "size": size})
 
 
 def get_pending_list(page: int = 1, size: int = 100) -> list[dict]:
-    """GET getCert?status=WAITING — hàng đợi chờ duyệt.
-
-    Mỗi item chứa: id, certificate_id, courseId, employeeId, employeeName,
-    employeeEmail, courseName... (xem tài liệu mục 3.5).
+    """GET getCert?status=WAITING — hàng đợi chờ duyệt; mỗi item chứa id,
+    certificate_id, courseId, employeeId, employeeName, employeeEmail,
+    courseName... (tài liệu mục 3.5).
     """
     return get_by_status("WAITING", page, size)
 
@@ -102,11 +86,8 @@ def get_pending_list(page: int = 1, size: int = 100) -> list[dict]:
 def get_all_by_status(status: str) -> list[dict]:
     """Kéo HẾT mọi trang của một trạng thái.
 
-    Dừng khi gặp trang chưa đầy. Trang đầy nhưng hết dữ liệu thì vòng sau trả
-    rỗng và cũng dừng, nên không bỏ sót bản ghi nào.
-
-    Chặn số trang để một lỗi phía API (luôn trả về trang đầy) không biến thành
-    vòng lặp vô tận nuốt hết bộ nhớ.
+    Dừng khi gặp trang chưa đầy. Chặn số trang để lỗi phía API (luôn trả
+    trang đầy) không thành vòng lặp vô tận.
     """
     out, page = [], 1
     while page <= 1000:
@@ -126,16 +107,9 @@ def download_certificates(pairs: list[dict]) -> list[dict]:
     """POST download-certificates — tải file chứng chỉ.
 
     pairs: list dict {"UserCourseId": ..., "certificate_id": ...}, tối đa 20.
-
-    Trả về list dict: {"userCourseId", "certificate_id", "anh_bytes", "ten_file"}
-    cho các item lấy được file. Item lỗi bị bỏ qua (đã ghi log ở run.py).
-
-    Response là JSON, mỗi item có một trường chứa nội dung file dạng base64.
-
-    KHÔNG hardcode tên trường base64: tài liệu chưa mô tả định dạng này, và
-    eLIS đã đổi hợp đồng API hai lần rồi. _find_base64_in_item() dò theo
-    NỘI CORRECT — giải base64 ra rồi kiểm chữ ký file — nên đổi tên trường cũng
-    không vỡ.
+    Trả list dict {"userCourseId", "certificate_id", "anh_bytes", "ten_file"};
+    item lỗi bị bỏ qua (run.py đã ghi log). KHÔNG hardcode tên trường base64:
+    eLIS từng đổi hợp đồng API nên _find_base64_in_item() dò theo NỘI DUNG.
     """
     if not pairs:
         return []
@@ -180,16 +154,10 @@ def download_certificates(pairs: list[dict]) -> list[dict]:
 def _attach_ids(verdict: list[dict], pairs: list[dict]) -> list[dict]:
     """Bù lại userCourseId cho những item eLIS trả về mà thiếu trường này.
 
-    Vì sao cần: response API ② không đảm bảo có userCourseId. Thiếu nó thì
-    run.py không nối được file với bản ghi ban đầu, và chứng chỉ bị bỏ qua
-    dù đã tải về thành công — tốn công tải mà không xử lý được.
-
-    Đối chiếu ngược từ request theo thứ tự ưu tiên:
-      1. certificate_id — chắc chắn nhất, không phụ thuộc thứ tự
-      2. Vị trí trong danh sách — chỉ dùng khi số lượng khớp nhau, vì lúc
-         đó gần như chắc chắn eLIS trả về theo đúng thứ tự nhận vào
-
-    Khi phải đoán, ghi log tên trường thật của item để lần sau biết đường.
+    Response API ② không đảm bảo có userCourseId; thiếu nó thì run.py không
+    nối được file với bản ghi ban đầu. Đối chiếu ngược từ request:
+    certificate_id trước (không phụ thuộc thứ tự), rồi mới tới vị trí trong
+    danh sách (chỉ khi số lượng khớp nhau).
     """
     by_cert = {
         str(c.get("certificate_id")): c.get("UserCourseId")
@@ -226,8 +194,7 @@ def _attach_ids(verdict: list[dict], pairs: list[dict]) -> list[dict]:
 
 # --- Đọc định dạng JSON + base64 ---------------------------------------
 
-# Chữ ký nhận dạng loại file, dùng để xác nhận chuỗi base64 giải ra đúng là
-# file chứ không phải chuỗi văn bản dài ngẫu nhiên nào đó.
+# Chữ ký loại file, xác nhận base64 giải ra đúng là file.
 _FILE_SIGNATURES = (
     b"%PDF",            # PDF
     b"\x89PNG",         # PNG
@@ -238,9 +205,8 @@ _FILE_SIGNATURES = (
     b"PK\x03\x04",      # ZIP/DOCX (một số chứng chỉ nộp dưới dạng này)
 )
 
-# Tên trường có thể chứa id, thử theo thứ tự. Không phân biệt hoa/thường và
-# bỏ qua dấu gạch dưới khi so, nên "UserCourseId" = "usercourseid" =
-# "user_course_id".
+# Tên trường có thể chứa id, thử theo thứ tự. So không phân biệt hoa/thường
+# và bỏ dấu gạch dưới: "UserCourseId" = "usercourseid" = "user_course_id".
 _UC_ID_KEYS = ("usercourseid", "id")
 _CERT_ID_KEYS = ("certificateid", "certificateid", "certid")
 _FILENAME_KEYS = ("originalfilename", "filename", "name", "entryname")
@@ -253,9 +219,7 @@ def _normalize_key(name: str) -> str:
 def _get_by_key(item: dict, keys: tuple[str, ...]):
     """Lấy giá trị theo tên khóa, bỏ qua hoa/thường và dấu gạch dưới.
 
-    eLIS trộn lẫn nhiều quy ước đặt tên giữa các API (UserCourseId khi gửi
-    lên, userCourseId khi nhận về, certificate_id ở chỗ khác), nên tra cứu
-    linh hoạt sẽ đỡ vỡ khi họ đổi tiếp.
+    eLIS trộn quy ước đặt tên: UserCourseId gửi lên, userCourseId nhận về.
     """
     mapping = {_normalize_key(k): v for k, v in item.items()}
     for key in keys:
@@ -268,11 +232,8 @@ def _get_by_key(item: dict, keys: tuple[str, ...]):
 def _decode_base64(value: str) -> bytes | None:
     """Giải base64 thành bytes, None nếu không phải file hợp lệ.
 
-    Chấp nhận cả dạng data URL ("data:application/pdf;base64,JVBER...") vì
-    một số backend trả kèm tiền tố đó.
-
-    Chỉ nhận kết quả khi byte đầu khớp một chữ ký file đã biết — tránh nhận
-    nhầm một chuỗi văn bản dài (vd tên khóa học) thành nội dung file.
+    Chấp nhận cả data URL ("data:application/pdf;base64,..."). Chỉ nhận khi
+    byte đầu khớp một chữ ký file đã biết, tránh nhận nhầm chuỗi văn bản dài.
     """
     if not isinstance(value, str) or len(value) < 64:
         return None
@@ -292,13 +253,8 @@ def _decode_base64(value: str) -> bytes | None:
 def _find_base64_in_item(item: dict) -> bytes | None:
     """Tìm trường chứa nội dung file trong một item, KHÔNG dựa vào tên trường.
 
-    Vì sao không hardcode tên: tài liệu chưa mô tả định dạng mới, và eLIS đã
-    đổi hợp đồng API hai lần. Dò theo NỘI CORRECT (giải base64 ra có đúng chữ ký
-    file không) chắc chắn hơn là đoán tên trường là fileBase64 hay base64 hay
-    fileContent.
-
-    Ưu tiên trường có tên gợi ý base64/file/content trước, để không phải giải
-    mã thử mọi trường khi item có nhiều chuỗi dài.
+    Dò theo NỘI DUNG (giải base64 có đúng chữ ký file không) chắc hơn đoán tên
+    fileBase64 / base64 / fileContent. Ưu tiên tên gợi ý base64/file/content.
     """
     suggestion, remaining = [], []
     for name, value in item.items():
@@ -340,8 +296,7 @@ def _read_files_from_json(body) -> list[dict]:
 
     verdict = []
     for item in items:
-        # success=false -> eLIS không có file (soft-fail). Bỏ qua, run.py đã
-        # ghi log những item gửi lên mà không nhận về.
+        # success=false -> eLIS không có file (soft-fail); run.py ghi log.
         if item.get("success") is False:
             continue
 
@@ -354,8 +309,7 @@ def _read_files_from_json(body) -> list[dict]:
             "certificate_id": _get_by_key(item, _CERT_ID_KEYS),
             "anh_bytes": content,
             "ten_file": _get_by_key(item, _FILENAME_KEYS),
-            # Giữ tạm tên các trường để _attach_ids() ghi log khi phải đoán id.
-            # Bị xoá ngay sau đó, không lọt ra ngoài client.py.
+            # Cho _attach_ids() ghi log khi phải đoán id; bị xoá ngay sau đó.
             "_cac_truong": list(item.keys()),
         })
 
@@ -369,8 +323,7 @@ def _read_files_from_json(body) -> list[dict]:
 def _describe_structure(value, after: int = 0) -> str:
     """Tóm tắt cấu trúc JSON (tên trường + kiểu) để báo lỗi cho dễ lần.
 
-    In tên trường chứ KHÔNG in giá trị: giá trị base64 dài hàng trăm KB, in
-    ra chỉ làm ngập log mà không giúp gì.
+    In tên trường chứ KHÔNG in giá trị: base64 dài hàng trăm KB.
     """
     if after > 3:
         return "..."
@@ -389,8 +342,7 @@ def _describe_structure(value, after: int = 0) -> str:
 def _escape_html(data_bytes, limit: int = 200) -> str:
     """Chuỗi AN TOÀN để in ra terminal.
 
-    Dữ liệu nhị phân in thẳng ra console chứa ký tự điều khiển (\\r, \\b, mã
-    ANSI) làm loạn màn hình, đè mất chính thông báo lỗi đang cần đọc.
+    Dữ liệu nhị phân chứa ký tự điều khiển (\\r, \\b, ANSI) làm loạn màn hình;
     repr() bọc chúng thành dạng \\xNN nhìn được.
     """
     if isinstance(data_bytes, bytes):
@@ -401,9 +353,7 @@ def _escape_html(data_bytes, limit: int = 200) -> str:
 def _unwrap_loose_json(value, max_items: int = 4):
     """Bóc JSON bị đóng gói nhiều lớp chuỗi lồng nhau.
 
-    ELIS trả lỗi API ② dạng chuỗi JSON, mà bên trong chuỗi đó lại có field
-    'message' cũng là chuỗi JSON nữa. Hàm này bóc dần cho tới khi ra được
-    object thật, tối đa max_items lớp để không lặp vô hạn.
+    ELIS trả lỗi API ② là chuỗi JSON, bên trong 'message' cũng là chuỗi JSON.
     """
     for _ in range(max_items):
         if not isinstance(value, str):
@@ -418,8 +368,7 @@ def _unwrap_loose_json(value, max_items: int = 4):
 def _describe_error(body: dict) -> str:
     """Diễn giải envelope lỗi của ELIS thành câu đọc được.
 
-    file_102 kèm danh sách 'items' cho biết CẶP NÀO không khớp — thông tin
-    quan trọng nhất để sửa, nên phải nêu ra thay vì cắt cụt.
+    file_102 kèm danh sách 'items' cho biết CẶP NÀO không khớp, phải nêu ra.
     """
     message = _unwrap_loose_json(body.get("message"))
 
@@ -455,11 +404,8 @@ def _describe_error(body: dict) -> str:
 def update_status(results: list[dict]) -> dict:
     """POST ProcessUserCourseStatus — gửi kết quả APPROVED/REJECTED.
 
-    results: list dict, mỗi cái đủ field:
-      id, certificate_id, status (APPROVED/REJECTED), courseId, employeeId,
-      comment (bắt buộc), comment_cer (tùy chọn). Tối đa 500.
-
-    Trả về dict data chứa successList / failList.
+    results: tối đa 500 dict đủ field id, certificate_id, status, courseId,
+    employeeId, comment (bắt buộc), comment_cer (tùy chọn).
     """
     if not results:
         raise ElisError("Danh sách kết quả rỗng.")

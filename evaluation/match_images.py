@@ -2,33 +2,25 @@
 
     python -m evaluation.match_images --excel data.xlsx --images anh/
 
-BÀI TOÁN: bộ dữ liệu thật đến dưới dạng một file Excel (mỗi dòng một chứng
-chỉ, có email nhân viên + tên khóa học) và một thư mục ảnh đặt tên theo dạng
-    <mã NV>_<tên khóa học>.<đuôi>
-trong đó mã NV là phần trước dấu @ của email. Hai bên KHÔNG cùng thứ tự.
+BÀI TOÁN: dữ liệu thật gồm một file Excel (mỗi dòng một chứng chỉ, có email
+nhân viên + tên khóa học) và một thư mục ảnh đặt tên <mã NV>_<tên khóa
+học>.<đuôi>, mã NV là phần trước dấu @ của email. Hai bên KHÔNG cùng thứ tự.
 
-VÌ SAO KHÔNG GHÉP THEO THỨ TỰ: lệch một dòng là mọi con số đánh giá sau đó
-vẫn ra đẹp và vẫn sai — model đọc đúng ảnh nhưng bị chấm bằng nhãn của ảnh
-khác, cho ra "sai tên 30%" trong khi thực tế nó đọc đúng. Người đọc sẽ đi
-sửa prompt cho một lỗi không tồn tại. Sai kiểu đó không có triệu chứng, nên
-phải chặn từ gốc.
+VÌ SAO KHÔNG GHÉP THEO THỨ TỰ: lệch một dòng thì mọi con số đánh giá vẫn ra
+đẹp mà vẫn sai — model bị chấm bằng nhãn của ảnh khác, và người đọc đi sửa
+prompt cho một lỗi không tồn tại. Sai kiểu đó không có triệu chứng.
 
 CÁCH GHÉP: dựng khóa từ CẢ HAI phía rồi so tập hợp từ đã chuẩn hóa.
     dòng Excel : normalize("hoabd3" + " " + "Learning Microsoft 365 Copilot")
     tên file   : normalize("hoabd3_Learning_Microsoft_365_Copilot")
-process_data.normalize() đã biến "_", "-", chữ hoa, dấu tiếng Việt về cùng
-một dạng, nên ba cách đặt tên file dưới đây cho ra cùng một khóa:
-    hoabd3_Learning Microsoft 365 Copilot for Work.jpg
-    hoabd3_Learning_Microsoft_365_Copilot_for_Work.png
-    HOABD3-Learning-Microsoft-365-Copilot-for-Work.pdf
+process_data.normalize() đưa "_", "-", chữ hoa và dấu tiếng Việt về cùng một
+dạng, nên mọi kiểu đặt tên file trên cho ra cùng một khóa.
 
-KHÔNG TÁCH TÊN FILE THEO DẤU "_" ĐẦU TIÊN: tên khóa học có thể chứa dấu gạch
-dưới, và một số username cũng có. Tách sai một lần là ghép sai cả bộ. Dựng
-khóa từ toàn bộ chuỗi thì không cần biết ranh giới nằm ở đâu.
+KHÔNG TÁCH TÊN FILE THEO DẤU "_" ĐẦU TIÊN: tên khóa học và username đều có
+thể chứa gạch dưới. Dựng khóa từ toàn bộ chuỗi thì không cần biết ranh giới.
 
-KHÔNG TỰ ĐỘNG GHÉP GẦN ĐÚNG. Ca không khớp tuyệt đối chỉ được GỢI Ý kèm số
-đo độ giống, người phải tự xác nhận. Ghép mờ tự động chính là cách tạo ra
-loại sai không triệu chứng nói ở trên.
+KHÔNG TỰ ĐỘNG GHÉP GẦN ĐÚNG: ca không khớp tuyệt đối chỉ được GỢI Ý kèm số đo
+độ giống, người phải tự xác nhận.
 """
 
 from __future__ import annotations
@@ -40,10 +32,8 @@ import re
 import sys
 from pathlib import Path
 
-# Xem giải thích ở evaluation/run_llm2.py: trên Windows dùng conda, hai bản
-# libiomp5md.dll bị nạp cùng lúc và chương trình chết với "OMP: Error #15".
-# File này chưa nổ vì openpyxl được import muộn bên trong hàm, nhưng rủi ro
-# vẫn còn nguyên — đặt sẵn cho chắc, và để mọi điểm vào giống nhau.
+# Trên Windows dùng conda, hai bản libiomp5md.dll nạp cùng lúc làm chương trình
+# chết với "OMP: Error #15". Đặt sẵn để mọi điểm vào giống nhau.
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -58,18 +48,14 @@ IMAGE_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".
 
 # Hậu tố trình duyệt / Windows thêm khi tải trùng tên: "... (1).jpg",
 # "... - Copy.jpg". Phải bỏ TRƯỚC khi chuẩn hóa, nếu không "1" thành một từ
-# trong khóa và ảnh đó không bao giờ khớp được dòng Excel nào.
+# trong khóa và ảnh đó không khớp được dòng Excel nào.
 #
-# CỐ Ý KHÔNG bắt dạng "_1": đó không phải hậu tố chuẩn của trình duyệt, mà
-# lại ăn mất phần đuôi hợp lệ của tên khóa học — "Excel_Power_Query_101" sẽ
-# bị cắt thành "Excel_Power_Query" và không khớp dòng nào. Bản đầu của file
-# này có bắt, và test test_ten_khoa_chua_dau_gach_duoi đã đỏ vì đúng lý do đó.
+# CỐ Ý KHÔNG bắt dạng "_1": nó ăn mất phần đuôi hợp lệ của tên khóa học
+# ("Excel_Power_Query_101" -> "Excel_Power_Query"). Có test canh.
 #
-# CHỈ 1-2 CHỮ SỐ trong ngoặc. Bản trước viết \(\d+\) và nó ăn luôn NĂM ở cuối
-# tên khóa: "Luyện thi PMP_Tư duy & mẹo làm bài (Mindset & Tips) (2025)" bị
-# cắt mất "(2025)", trong khi Excel vẫn giữ, nên hai bên lệch đúng MỘT từ và
-# không ghép được. Trình duyệt chỉ sinh hậu tố nhỏ — (1), (2)... — nên giới
-# hạn 2 chữ số vẫn bắt hết ca thật mà không đụng tới năm 4 chữ số.
+# CHỈ 1-2 CHỮ SỐ trong ngoặc: \(\d+\) ăn luôn NĂM ở cuối tên khóa ("(2025)"),
+# làm hai bên lệch đúng một từ. Trình duyệt chỉ sinh (1), (2)... nên 2 chữ số
+# vẫn bắt hết ca thật mà không đụng tới năm 4 chữ số.
 _DUPLICATE_SUFFIX = re.compile(r"\s*(\(\d{1,2}\)|-\s*copy)\s*$", re.IGNORECASE)
 
 # Từ khóa để đoán tên cột. Đoán XONG THÌ IN RA cho người kiểm, không đoán thầm.
@@ -77,9 +63,8 @@ _EMAIL_HINTS = ("email", "mail", "thu dien tu")
 _COURSE_HINTS = ("course", "khoa hoc", "ten khoa", "khoahoc")
 _NAME_HINTS = ("employee name", "ho ten", "ten nhan vien", "hoten", "full name",
                "ten nv", "employeename")
-# Hai cột này KHÔNG bắt buộc và KHÔNG dùng để chấm điểm. Chúng được chép vào
-# cột `note` để người gán nhãn thấy người duyệt thật đã kết luận gì và vì sao.
-# CỐ Ý KHÔNG đổ thẳng vào gt_verdict: xem docstring của to_cases().
+# Hai cột này KHÔNG dùng để chấm điểm, chỉ chép vào cột `note` làm ngữ cảnh cho
+# người gán nhãn. CỐ Ý KHÔNG đổ vào gt_verdict: xem docstring của to_cases().
 _STATUS_HINTS = ("submit status", "status", "trang thai")
 _COMMENT_HINTS = ("comment", "ghi chu", "ly do")
 
@@ -87,8 +72,8 @@ _COMMENT_HINTS = ("comment", "ghi chu", "ly do")
 def key_of(text: str) -> tuple[str, ...]:
     """Khóa ghép: tập hợp từ đã chuẩn hóa, sắp xếp để không phụ thuộc thứ tự.
 
-    Dùng TẬP HỢP (đã bỏ trùng) chứ không dùng dãy: tên file có thể đảo thứ tự
-    hoặc lặp từ so với Excel mà vẫn là cùng một chứng chỉ.
+    Dùng TẬP HỢP chứ không dùng dãy: tên file có thể đảo thứ tự hoặc lặp từ so
+    với Excel mà vẫn là cùng một chứng chỉ.
     """
     return tuple(sorted(set(normalize(text).split())))
 
@@ -126,8 +111,8 @@ def read_excel(path: str | Path, col_email: str | None = None,
     """Đọc Excel thành list dict, tự đoán tên cột nếu không được chỉ định.
 
     Trả về (danh sách dòng, thông tin cột đã dùng). Trả kèm thông tin cột để
-    nơi gọi IN RA cho người kiểm — đoán tên cột mà không cho người xem là
-    cách âm thầm đọc nhầm cột và sinh ra một bộ dữ liệu sai từ gốc.
+    nơi gọi IN RA cho người kiểm: đoán thầm là âm thầm đọc nhầm cột và sinh ra
+    một bộ dữ liệu sai từ gốc.
     """
     try:
         from openpyxl import load_workbook
@@ -236,9 +221,8 @@ def match(rows: list[dict], images: list[Path]) -> dict:
         if not ds_anh:
             continue
         if len(ds_dong) > 1 or len(ds_anh) > 1:
-            # Cùng nhân viên + cùng khóa xuất hiện nhiều lần (nộp lại?) thì
-            # không có cách nào biết ảnh nào ứng dòng nào. Chọn bừa là ghép
-            # sai một cách không thể phát hiện, nên báo ra để người quyết.
+            # Cùng NV + cùng khóa nhiều lần thì không biết ảnh nào ứng dòng
+            # nào. Chọn bừa là ghép sai không phát hiện được — để người quyết.
             ambiguous.append({
                 "key": " ".join(key),
                 "rows": [r["excel_row"] for r in ds_dong],
@@ -257,14 +241,9 @@ def match(rows: list[dict], images: list[Path]) -> dict:
     # Gợi ý cho ca chưa ghép: ảnh nào có tập từ giống nhất (Jaccard).
     # CHỈ GỢI Ý, không tự nhận — xem docstring đầu file.
     #
-    # CHỈ XÉT ẢNH CÙNG MÃ NHÂN VIÊN. Bản trước so mọi ảnh với mọi dòng, nên
-    # trên dữ liệu thật nó gợi ý toàn ảnh của NGƯỜI KHÁC trùng tên khóa:
-    #     dòng 52 (ducdm45,  "Claude in Google Vertex Al")
-    #        -> giống 71% với KIENNT128_Claude in Google Vertex Al.png
-    # Người đọc làm theo gợi ý đó là gán chứng chỉ của Kiên cho Đức. Bộ đánh
-    # giá vẫn chạy, số liệu vẫn đẹp, và cái sai đó không có triệu chứng nào —
-    # đúng thứ mà cả file này sinh ra để chặn. Một gợi ý sai người còn tệ hơn
-    # là không gợi ý gì.
+    # CHỈ XÉT ẢNH CÙNG MÃ NHÂN VIÊN: so mọi ảnh với mọi dòng thì gợi ý toàn ảnh
+    # của NGƯỜI KHÁC trùng tên khóa, làm theo là gán nhầm chứng chỉ sang người
+    # khác — đúng loại sai không triệu chứng mà file này sinh ra để chặn.
     suggestions = []
     for r in rows_no_image:
         code = r["employee_code"].lower()
@@ -295,21 +274,14 @@ def to_cases(matched: list[tuple[dict, Path]]) -> list[EvalCase]:
     """Chuyển cặp đã ghép thành EvalCase, điền sẵn phần ĐẦU VÀO.
 
     Để TRỐNG toàn bộ cột gt_*: nhãn chuẩn phải do người nhìn ảnh mà gán. Lấy
-    nhãn từ chính model cần đo thì model luôn "đúng 100%" và mọi con số sau
-    đó vô nghĩa.
+    nhãn từ chính model cần đo thì model luôn "đúng 100%".
 
-    VÌ SAO KHÔNG CHÉP "Submit Status" CỦA eLIS VÀO gt_verdict, dù cột đó có
-    sẵn APPROVED/REJECTED: người duyệt thật từ chối vì NHIỀU lý do mà hệ
-    thống này không hề kiểm và cũng không được thiết kế để kiểm — nộp trùng
-    khóa, HR đã tự ghi nhận giờ từ Udemy, khóa không nằm trong danh mục quy
-    đổi MOOC, hệ thống đã đồng bộ sẵn từ FPT Elearning. Hệ thống chỉ so ba
-    thứ: tên người, tên khóa, ngày. Lấy Submit Status làm nhãn chuẩn là chấm
-    AI trượt vì không phát hiện được thứ chưa bao giờ giao cho nó — precision
-    sẽ tụt thảm hại và con số đó nói sai về chất lượng thật.
-
-    Hai cột đó vẫn được chép vào `note` (không tính điểm) để người gán nhãn
-    biết bối cảnh: thấy "REJECTED — CB log trùng khóa" thì hiểu ngay đây là
-    ca nên gán gt_verdict = APPROVED nếu ảnh thật sự khớp cả ba trường.
+    VÌ SAO KHÔNG CHÉP "Submit Status" CỦA eLIS VÀO gt_verdict, dù cột đó có sẵn
+    APPROVED/REJECTED: người duyệt từ chối vì nhiều lý do hệ thống không kiểm
+    (nộp trùng khóa, HR đã tự ghi nhận giờ, khóa ngoài danh mục MOOC), mà hệ
+    thống chỉ so tên người, tên khóa và ngày — lấy nó làm nhãn chuẩn là chấm AI
+    trượt vì thứ chưa bao giờ giao cho nó. Hai cột đó vẫn chép vào `note`
+    (không tính điểm) làm ngữ cảnh cho người gán nhãn.
     """
     cases = []
     for i, (r, p) in enumerate(sorted(matched, key=lambda x: x[0]["excel_row"]),
@@ -333,9 +305,8 @@ def to_cases(matched: list[tuple[dict, Path]]) -> list[EvalCase]:
 def write_full_report(rows, images, result, path) -> int:
     """Ghi TOÀN BỘ ca chưa ghép ra CSV — không cắt bớt dòng nào.
 
-    Bảng in ra màn hình cố ý cắt ở 20 dòng cho dễ đọc, nhưng cắt bớt là thứ
-    KHÔNG được phép xảy ra với danh sách mang đi đối chiếu: người nhận sẽ
-    tưởng 20 là tất cả và bổ sung thiếu. File này là bản đầy đủ.
+    Bảng in ra màn hình cắt ở 20 dòng, nhưng danh sách mang đi đối chiếu thì
+    không được cắt: người nhận tưởng 20 là tất cả và bổ sung thiếu.
 
     Một dòng một ca, có cột "loai" để lọc trong Excel:
       anh_thua        — có ảnh, KHÔNG có dòng Excel nào (cần bổ sung Excel)
@@ -419,13 +390,11 @@ def _in_bao_cao(rows, images, result, cot) -> None:
                 print(f"      ảnh      : {p}")
 
     if result["rows_no_image"]:
-        # Tách làm hai nhóm. Chúng trông giống nhau trong báo cáo cũ nhưng là
-        # hai vấn đề khác hẳn, và nhầm nhóm là đi sửa nhầm chỗ:
-        #
-        #   - Mã KHÔNG có ảnh nào  -> người này chưa nộp ảnh, hoặc Excel và thư
-        #     mục ảnh là hai đợt dữ liệu khác nhau. KHÔNG phải lỗi ghép.
-        #   - Mã CÓ ảnh khóa khác  -> ghép hụt đúng khóa này. Đây mới là ca
-        #     đáng ngờ: có thể tên khóa viết lệch giữa hai bên.
+        # Tách hai nhóm vì nhầm nhóm là đi sửa nhầm chỗ:
+        #   - Mã KHÔNG có ảnh nào  -> chưa nộp ảnh, hoặc Excel và thư mục ảnh
+        #     là hai đợt dữ liệu khác nhau. KHÔNG phải lỗi ghép.
+        #   - Mã CÓ ảnh khóa khác  -> ghép hụt đúng khóa này; tên khóa có thể
+        #     viết lệch giữa hai bên. Đây mới là ca đáng ngờ.
         ma_co_anh = {p.name.split("_")[0].strip().lower() for p in images}
         chua_nop = [r for r in result["rows_no_image"]
                     if r["employee_code"].lower() not in ma_co_anh]
@@ -492,8 +461,7 @@ def main(argv=None) -> int:
     _in_bao_cao(rows, images, result, cot)
 
     # Báo cáo đầy đủ ghi CẢ khi --dry-run: nó là thứ để đọc, không phải bộ dữ
-    # liệu. Bảng trên màn hình cắt ở 20 dòng, nên đây mới là bản dùng được để
-    # gửi đi đối chiếu.
+    # liệu. Bảng trên màn hình cắt ở 20 dòng nên bản này mới dùng để đối chiếu.
     n = write_full_report(rows, images, result, args.report)
     print(f"\nĐã ghi danh sách ĐẦY ĐỦ {n} ca chưa ghép: {args.report}")
     print("  (lọc cột 'loai': anh_thua / chua_nop_anh / ghep_hut / mo_ho)")

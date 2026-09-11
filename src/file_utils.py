@@ -1,12 +1,9 @@
 """Tiện ích xử lý file (file_utils).
 
-Hai việc:
-  1. Kiểm tra file có phải ảnh hoặc PDF hợp lệ không — dựa trên NỘI CORRECT thật
-     (python-magic đọc byte đầu), không tin đuôi file. Bắt được cả trường hợp
-     file HEIC/WebP bị đổi đuôi thành .jpg.
-  2. Chuyển file thành ảnh dạng bytes để đưa cho Gemma (LLM nhận ảnh):
-     - Ảnh sẵn: đọc thẳng bytes.
-     - PDF: render trang thành ảnh PNG (pypdfium2).
+  1. Kiểm tra file có phải ảnh hoặc PDF hợp lệ không, dựa trên NỘI DUNG thật
+     (python-magic đọc byte đầu), không tin đuôi file — bắt được cả file
+     HEIC/WebP bị đổi đuôi thành .jpg.
+  2. Chuyển file thành ảnh bytes cho Gemma; PDF render ra PNG bằng pypdfium2.
 
 LƯU Ý WINDOWS: python-magic cần libmagic. Nếu import lỗi 'failed to find
 libmagic', cài: pip install python-magic-bin
@@ -17,12 +14,12 @@ from pathlib import Path
 import magic
 import pypdfium2 as pdfium
 
-# Các MIME được chấp nhận. Azure và Gemma đều đọc được các loại này.
+# MIME chấp nhận: Azure và Gemma đều đọc được.
 MIME_IMAGE = {"image/jpeg", "image/png", "image/bmp", "image/tiff"}
 MIME_PDF = "application/pdf"
 
-# Độ phân giải render PDF. 200 DPI đủ rõ để đọc chữ, kể cả dấu tiếng Việt.
-# pypdfium2 dùng scale (1.0 = 72 DPI), nên scale = DPI / 72.
+# 200 DPI đủ rõ để đọc chữ, kể cả dấu tiếng Việt. pypdfium2 dùng scale
+# (1.0 = 72 DPI) nên scale = DPI / 72.
 PDF_SCALE = 200 / 72
 
 
@@ -30,35 +27,22 @@ class InvalidFileError(Exception):
     """File không phải ảnh/PDF hợp lệ, hoặc không đọc được."""
 
 
-# Số byte đầu file đưa cho libmagic đoán loại. libmagic chỉ cần vài trăm byte
-# đầu (magic number); 8 KB là dư cho mọi định dạng ở đây. Đọc cả file 2 MB
-# chỉ để đoán loại là phí, nhất là khi hàm này chạy cho từng chứng chỉ.
+# libmagic chỉ cần vài trăm byte đầu (magic number); 8 KB là dư, mà không
+# phải đọc cả file cho mỗi chứng chỉ.
 _MAGIC_BYTES = 8192
 
 
 def check_mime(path: str | Path) -> str:
     """Trả về MIME thật của file. Ném InvalidFileError nếu không hỗ trợ.
 
-    Đọc nội dung thật, không tin đuôi file.
-
-    DÙNG from_buffer CHỨ KHÔNG from_file. Đây là một lỗi đã xảy ra thật:
-    trên Windows, libmagic nhận đường dẫn dưới dạng byte theo bảng mã hệ
-    thống (CP1258/CP1252), nên MỌI file có dấu tiếng Việt trong tên đều hỏng,
-    với một trong hai thông báo chẳng nói lên điều gì:
+    DÙNG from_buffer CHỨ KHÔNG from_file: trên Windows libmagic nhận đường dẫn
+    dưới dạng byte theo bảng mã hệ thống (CP1258/CP1252), nên MỌI file có dấu
+    tiếng Việt trong tên đều hỏng với thông báo khó lần:
 
         'utf-8' codec can't decode bytes in position 74-75: invalid continuation byte
-        Loại file không hỗ trợ: cannot open `...\\Mở Khoá AI_cẩm nang...`
 
-    Đo trên bộ dữ liệu thật 133 chứng chỉ: 84 file có dấu -> hỏng 84/84;
-    49 file tên thuần ASCII -> chạy 49/49. Tách sạch, không một ngoại lệ.
-
-    Job chạy thật KHÔNG lộ ra lỗi này vì nó ghi byte tải từ eLIS ra file tạm
-    có tên ASCII do tempfile sinh. Chỉ khi đọc thẳng file do người dùng đặt
-    tên — như bộ đánh giá làm — mới lòi ra. Đó là lý do một lỗi chặn 63% dữ
-    liệu vẫn nằm im được lâu như vậy.
-
-    Đọc byte bằng Python rồi mới đưa cho libmagic thì đường dẫn Unicode do
-    Python xử lý (nó làm đúng), còn libmagic không bao giờ nhìn thấy tên file.
+    Đọc byte bằng Python rồi mới đưa cho libmagic thì libmagic không bao giờ
+    nhìn thấy tên file.
     """
     path = Path(path)
     if not path.is_file():
@@ -91,14 +75,10 @@ def check_mime(path: str | Path) -> str:
 
 
 def read_as_images(path: str | Path) -> list[bytes]:
-    """Đọc file thành danh sách ảnh (bytes).
-
-    Trả về list vì PDF có thể nhiều trang. Ảnh đơn thì list có 1 phần tử.
-      - Ảnh: đọc bytes gốc.
-      - PDF: render từng trang thành ảnh.
+    """Đọc file thành danh sách ảnh (bytes); PDF nhiều trang -> nhiều phần tử.
 
     Mọi ảnh trả về đều đã qua compress_to_fit() để không vượt giới hạn kích
-    thước request của API — xem giải thích ở hàm đó.
+    thước request của API.
     """
     path = Path(path)
     mime = check_mime(path)
@@ -106,8 +86,7 @@ def read_as_images(path: str | Path) -> list[bytes]:
     if mime == MIME_PDF:
         return _render_pdf(path)
 
-    # Ảnh sẵn: đọc thẳng bytes, nhưng vẫn phải ép vừa ngưỡng — ảnh chụp
-    # từ điện thoại có thể 5-10 MB.
+    # Ảnh sẵn vẫn phải ép vừa ngưỡng: ảnh chụp từ điện thoại có thể 5-10 MB.
     return [compress_to_fit(path.read_bytes())]
 
 
@@ -115,10 +94,8 @@ def _render_pdf(path: Path) -> list[bytes]:
     """Render mỗi trang PDF thành ảnh bytes, đã ép vừa ngưỡng.
 
     Truyền BYTE chứ không truyền đường dẫn, cùng lý do với check_mime: thư
-    viện C phía dưới nhận tên file theo bảng mã hệ thống, nên tên có dấu
-    tiếng Việt là một nguồn hỏng lặng lẽ. Python đọc file rồi đưa byte sang
-    thì cả tầng đó biến mất. Chứng chỉ ở đây tối đa vài MB nên nạp vào RAM
-    không thành vấn đề.
+    viện C phía dưới nhận tên file theo bảng mã hệ thống nên tên có dấu tiếng
+    Việt hỏng lặng lẽ.
     """
     import io
 
@@ -142,21 +119,13 @@ def _render_pdf(path: Path) -> list[bytes]:
 
 # ===== Ép ảnh vừa giới hạn kích thước request =====
 
-# Ngưỡng cho MỘT ảnh, tính bằng byte.
-#
-# Vì sao 600 KB: ảnh được nhúng vào request dưới dạng base64, mà base64 làm
-# phình dữ liệu thêm khoảng 33%. 600 KB ảnh -> ~800 KB trong request, cộng
-# prompt vẫn nằm dưới 1 MB — giới hạn client_max_body_size mặc định của
-# nginx. Vượt ngưỡng đó thì nginx CHẶN NGAY và trả về trang HTML "400 Bad
-# Request", không phải lỗi JSON của API, nên rất khó đoán nguyên nhân.
-#
-# Đo thực tế trên một chứng chỉ Coursera: PDF render 200 DPI ra PNG 1,04 MB
-# -> request 1,4 MB -> nginx chặn. Cùng ảnh đó lưu JPEG chất lượng 85 chỉ
-# còn 357 KB mà KHÔNG giảm độ phân giải.
+# Ngưỡng cho MỘT ảnh, tính bằng byte. Ảnh nhúng vào request dưới dạng base64,
+# phình thêm ~33%: 600 KB ảnh -> ~800 KB, cộng prompt vẫn dưới 1 MB — giới hạn
+# client_max_body_size mặc định của nginx. Vượt thì nginx CHẶN và trả trang
+# HTML "400 Bad Request", không phải lỗi JSON của API, rất khó đoán.
 IMAGE_SIZE_LIMIT = 600_000
 
-# Chất lượng JPEG khi phải nén. 85 gần như không ảnh hưởng việc đọc chữ in
-# nhưng nhỏ hơn PNG khoảng ba lần.
+# 85 gần như không ảnh hưởng việc đọc chữ in, mà nhỏ hơn PNG khoảng ba lần.
 JPEG_QUALITY = 85
 
 # Các mức cạnh dài thử lần lượt khi đổi JPEG vẫn chưa đủ nhỏ.
@@ -166,16 +135,10 @@ _EDGE_STEPS = (2400, 2000, 1600, 1400, 1200, 1000)
 def compress_to_fit(image_bytes: bytes, limit: int = IMAGE_SIZE_LIMIT) -> bytes:
     """Ép ảnh xuống dưới ngưỡng byte, giữ độ nét nhiều nhất có thể.
 
-    Thứ tự ưu tiên — hy sinh thứ ít ảnh hưởng tới việc đọc chữ trước:
-      1. Đã đủ nhỏ  -> giữ NGUYÊN, không nén lại vô ích.
-      2. Đổi sang JPEG, GIỮ NGUYÊN độ phân giải. Thường là đủ, và không mất
-         chi tiết chữ.
-      3. Thu nhỏ dần cạnh dài. Chỉ tới bước này khi ảnh thật sự lớn.
-      4. Hạ chất lượng JPEG. Để cuối vì nó làm nhòe chữ nhiều nhất.
-
-    KHÔNG ném lỗi nếu vẫn không đạt: trả về bản nhỏ nhất làm được. Thà gửi
-    ảnh hơi to rồi nhận lỗi rõ ràng từ API, còn hơn chặn ngay tại đây và làm
-    chứng chỉ thất bại vì một lý do người vận hành không nhìn thấy.
+    Hy sinh thứ ít ảnh hưởng tới việc đọc chữ trước: đủ nhỏ thì giữ nguyên,
+    rồi đổi JPEG giữ nguyên độ phân giải, rồi thu nhỏ cạnh dài, cuối cùng mới
+    hạ chất lượng JPEG vì nó làm nhòe chữ nhiều nhất. KHÔNG ném lỗi nếu vẫn
+    không đạt, mà trả bản nhỏ nhất làm được.
     """
     if len(image_bytes) <= limit:
         return image_bytes
@@ -187,7 +150,7 @@ def compress_to_fit(image_bytes: bytes, limit: int = IMAGE_SIZE_LIMIT) -> bytes:
         image = Image.open(io.BytesIO(image_bytes))
         image.load()
     except Exception:
-        # Không mở được thì trả nguyên trạng, để tầng trên báo lỗi tử tế.
+        # Không mở được thì trả nguyên trạng để tầng trên báo lỗi.
         return image_bytes
 
     # JPEG không có kênh trong suốt; ghép nền trắng để không ra ảnh đen.

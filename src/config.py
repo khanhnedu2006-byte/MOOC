@@ -1,13 +1,7 @@
 """Cấu hình hệ thống (config).
 
-Đọc mọi key và cấu hình từ file .env, và cung cấp hàm get_llm() để tạo client
-gọi model qua FPT.
-
-Cách dùng ở module khác:
-    from config import settings, get_llm
-    llm = get_llm()
-
-File .env đặt ở thư mục gốc dự án (mooc/.env), KHÔNG commit lên git.
+Đọc key và cấu hình từ .env, cung cấp get_llm() tạo client gọi model qua FPT.
+File .env đặt ở gốc dự án (mooc/.env), KHÔNG commit lên git.
 """
 
 from typing import Any
@@ -20,16 +14,13 @@ from pydantic_settings import (BaseSettings, PydanticBaseSettingsSource,
 
 
 class WindowsVaultSource(PydanticBaseSettingsSource):
-    """Nguồn cấu hình đọc bốn khóa bí mật từ Credential Manager của Windows.
+    """Đọc bốn khóa bí mật từ Credential Manager của Windows.
 
-    Trả về rỗng ở mọi máy không phải Windows, hoặc chưa cài keyring, hoặc
-    không có backend — nên container Docker chạy y như trước khi có file này.
-    Xem src/vault.py để biết vì sao có ba lớp chặn đó.
+    Trả rỗng nếu không phải Windows hoặc thiếu keyring/backend — xem vault.py.
     """
 
     def get_field_value(self, field, field_name: str):
-        # Lớp cha khai abstract nên bắt buộc phải có, nhưng không dùng: đọc
-        # cả kho một lần trong __call__ rẻ hơn hỏi lại theo từng trường.
+        # Lớp cha khai abstract nên phải có; __call__ đọc cả kho một lần.
         return None, field_name, False
 
     def __call__(self) -> dict[str, Any]:
@@ -37,20 +28,16 @@ class WindowsVaultSource(PydanticBaseSettingsSource):
 
 
 class Settings(BaseSettings):
-    """Toàn bộ cấu hình, đọc từ .env.
-
-    Tên biến khớp với tên trong .env (không phân biệt hoa/thường).
-    Ví dụ AZURE_KEY trong .env -> settings.azure_key.
+    """Cấu hình đọc từ .env; tên biến khớp tên trong .env, không phân biệt
+    hoa/thường (AZURE_KEY -> settings.azure_key).
     """
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
-        # App desktop sửa cấu hình bằng cách gán thẳng vào object này lúc
-        # đang chạy (src/settings_file.py). Không có validate_assignment thì
-        # pydantic nhận mọi thứ: POLL_INTERVAL_SECONDS = "abc" gán êm ru, rồi
-        # vòng sau nổ TypeError trong luồng nền, cách xa chỗ gây lỗi.
+        # settings_file.py gán thẳng lúc chạy; thiếu cờ này thì giá trị sai
+        # kiểu lọt qua, lỗi nổ ở vòng sau.
         validate_assignment=True,
     )
 
@@ -59,18 +46,11 @@ class Settings(BaseSettings):
         cls, settings_cls, init_settings, env_settings,
         dotenv_settings, file_secret_settings,
     ):
-        """Thứ tự ưu tiên: tham số > biến môi trường > KHO KHÓA > .env > file.
+        """Ưu tiên: tham số > biến môi trường > kho khóa > .env > file.
 
-        Hai vị trí đều có lý do, đặt sai chỗ nào cũng hỏng:
-
-        TRÊN .env — vì nếu .env thắng thì nút "Lưu khóa" trong app thành nút
-        không làm gì cả. Người dùng nhập key mới, app báo đã lưu, chương
-        trình vẫn chạy bằng key cũ trong .env. Hỏng im lặng, rất khó lần ra.
-
-        DƯỚI biến môi trường — vì `set AZURE_KEY=... && python run.py` là
-        cách người ta thử một key khác cho đúng một lần chạy; để kho khóa
-        thắng thì lệnh đó im lặng không có tác dụng. Docker cũng truyền cấu
-        hình bằng biến môi trường, nên quy tắc này giữ nguyên bản server.
+        Kho khóa TRÊN .env, nếu không nút "Lưu khóa" trong app vô tác dụng.
+        Kho khóa DƯỚI biến môi trường, để `set AZURE_KEY=...` và Docker ghi
+        đè được cho một lần chạy.
         """
         return (init_settings, env_settings, WindowsVaultSource(settings_cls),
                 dotenv_settings, file_secret_settings)
@@ -85,7 +65,7 @@ class Settings(BaseSettings):
         default="gemma-4-31B-it",
         description="Tên model (chú ý chữ B hoa)",
     )
-    # temperature thấp cho việc trích xuất (cần ổn định, không sáng tạo).
+    # temperature thấp để trích xuất ổn định, không sáng tạo.
     llm_temperature: float = Field(default=0.2)
     llm_max_tokens: int = Field(default=2048)
 
@@ -104,43 +84,29 @@ class Settings(BaseSettings):
         default="https://apitest.fpt.com/uat-elis-gw",
         description="Base URL service download ZIP chứng chỉ",
     )
-    # API key — ELIS cấp qua kênh bảo mật, gửi trong header 'apikey'.
     elis_api_key: str = Field(default="", description="API key ELIS (header apikey)")
 
     # ===== Chế độ khớp khóa học =====
-    # "loose"  : người nhập chỉ cần là TẬP CON của tên khóa trên ảnh cũng khớp.
-    #           Vd nhập "khóa học code online", ảnh "khóa học code online
-    #           (code-bc-06)" -> khớp (ảnh có thừa mã lớp, người nhập thiếu).
-    # "strict"  : tên khóa phải trùng KHỚP HOÀN TOÀN (cùng tập từ).
-    # Mặc định "loose". Đổi thành "strict" nếu muốn siết chặt.
+    # "loose"  : tên người nhập chỉ cần là TẬP CON của tên khóa trên ảnh.
+    # "strict" : tên khóa phải trùng khớp hoàn toàn (cùng tập từ).
     course_match_mode: str = Field(default="loose")
 
     # ===== Luật thời gian hoàn thành =====
-    # Chứng chỉ hợp lệ nếu ngày hoàn thành nằm TRONG khoảng [đầu, cuối].
-    # Ngoài khoảng -> REJECTED (lý do: thời gian hoàn thành không hợp lệ).
-    # Đổi hai giá trị này khi sang năm mới. Định dạng: YYYY-MM-DD.
+    # Ngày hoàn thành ngoài khoảng [đầu, cuối] -> REJECTED. Định dạng
+    # YYYY-MM-DD; đổi khi sang năm mới.
     valid_from: str = Field(default="2026-01-01")
     valid_to: str = Field(default="2026-09-30")
 
     # ===== Gửi báo cáo qua email =====
-    # Báo cáo NỘI BỘ gửi cho mentor, không phải cho khách hàng eLIS.
+    # Báo cáo NỘI BỘ cho mentor, không gửi khách hàng eLIS.
     #
-    # SMTP_PASSWORD luôn phải là App Password, KHÔNG phải mật khẩu đăng nhập:
-    #   - Gmail: bật Xác minh 2 bước trước, rồi tạo App Password 16 ký tự.
-    #     Google đã bỏ hẳn "Quyền truy cập của ứng dụng kém an toàn" từ 2022,
-    #     nên mật khẩu Gmail thường CHẮC CHẮN bị từ chối.
-    #   - Office 365: không nhận mật khẩu thường khi tài khoản bật MFA, và
-    #     admin còn phải bật SMTP AUTH riêng cho từng hộp thư.
+    # SMTP_PASSWORD phải là App Password, KHÔNG phải mật khẩu đăng nhập. Gmail:
+    # bật Xác minh 2 bước rồi tạo App Password 16 ký tự. Office 365: từ chối
+    # mật khẩu thường khi bật MFA, admin phải bật SMTP AUTH riêng từng hộp thư,
+    # và Basic Auth cho SMTP AUTH trên Exchange Online hết hạn 31/12/2026.
     #
-    # HẠN SỬ DỤNG (chỉ với Office 365): Microsoft đang khai tử Basic Auth cho
-    # SMTP AUTH trên Exchange Online, mốc hiện tại là 31/12/2026. Gmail không
-    # bị mốc này.
-    #
-    # NHẬN NHIỀU TÊN BIẾN: SMTP_USER và SMTP_USERNAME là một; MAIL_TO,
-    # MANAGER_EMAIL cũng vậy. Lý do: tên biến trong tài liệu/mẫu mỗi nơi một
-    # khác, mà đặt sai tên thì pydantic không báo lỗi — nó chỉ lặng lẽ dùng
-    # giá trị mặc định rỗng, và bạn nhận được thông báo "thiếu cấu hình" dù
-    # đã điền đủ. Chấp nhận cả hai tên rẻ hơn nhiều so với việc đi tìm lỗi đó.
+    # SMTP_USER/SMTP_USERNAME và MAIL_TO/MANAGER_EMAIL là tên thay thế: đặt sai
+    # tên thì pydantic lặng lẽ lấy mặc định rỗng, không báo lỗi.
     smtp_host: str = Field(default="smtp.office365.com")
     smtp_port: int = Field(default=587)
     smtp_user: str = Field(
@@ -158,128 +124,77 @@ class Settings(BaseSettings):
 
     # Số lần thử lại khi gọi API gặp lỗi tạm thời (vd 502, timeout).
     retry_count: int = Field(default=3)
-    # Số giây nghỉ giữa các lần thử lại.
     retry_delay_seconds: int = Field(default=5)
-    # Timeout (giây) cho lời gọi API.
     timeout_seconds: int = Field(default=60)
 
     # ===== Kho lưu chứng chỉ (phục vụ đánh giá lại) =====
-    # Sau khi nộp kết quả, bản ghi trên eLIS rời trạng thái WAITING nên vòng
-    # getCert sau KHÔNG trả về nó nữa — data thật chỉ đi qua MỘT lần. Bật cờ
-    # này để giữ lại ảnh + thông tin getCert, nhờ đó chạy lại bộ đánh giá
-    # (thư mục evaluation/) bao nhiêu lần cũng được mà không cần eLIS.
+    # Sau khi nộp kết quả, bản ghi rời WAITING nên getCert không trả về nữa —
+    # data thật chỉ đi qua MỘT lần. Bật cờ này để giữ ảnh + thông tin getCert
+    # cho evaluation/ chạy lại mà không cần eLIS.
     #
-    # MẶC ĐỊNH TẮT có chủ đích: chứng chỉ thật chứa tên, mã và email nhân
-    # viên. Một container production âm thầm tích trữ dữ liệu cá nhân là thứ
-    # không ai muốn phát hiện ra về sau. Bật khi cần thu thập, tắt khi chạy thật.
+    # MẶC ĐỊNH TẮT vì chứng chỉ thật chứa tên, mã và email nhân viên.
     save_certificates: bool = Field(default=False)
 
     # Thư mục chứa kho, tương đối so với gốc dự án.
     archive_dir: str = Field(default="cert_archive")
 
     # ===== Thử lại ca hỏng kỹ thuật =====
-    #
     # LUẬT DO HR CHỐT: ca hỏng kỹ thuật (eLIS không trả file, Azure timeout,
-    # AI lỗi, hết hạn mức) KHÔNG BAO GIỜ bị nộp REJECTED. Lý do của HR: lỗi
-    # hệ thống thì cả dãy cùng lỗi, nên nộp REJECTED là từ chối oan hàng loạt
-    # chứng chỉ hợp lệ chỉ vì hạ tầng chập trong mười phút.
-    #
-    # Hệ quả: chứng chỉ ở lại WAITING trên eLIS và job thử lại MÃI, mỗi
-    # technical_retry_cooldown_minutes một lần, cho tới khi sự cố khỏi.
-    # KHÔNG còn nhánh bỏ cuộc nào.
-    #
-    # Thứ THAY CHO nhánh bỏ cuộc là CẢNH BÁO: hỏng tới lần thứ
-    # technical_alert_after thì gửi email cho người vận hành. Máy đã không tự
-    # quyết được thì phải có người biết — nếu không, chứng chỉ nằm WAITING vô
-    # thời hạn mà không ai hay, đúng cái tình trạng nhánh bỏ cuộc từng chặn.
+    # AI lỗi, hết hạn mức) KHÔNG BAO GIỜ bị nộp REJECTED — lỗi hạ tầng làm cả
+    # dãy cùng hỏng. Chứng chỉ ở lại WAITING và job thử lại MÃI, mỗi
+    # technical_retry_cooldown_minutes một lần; không có nhánh bỏ cuộc.
 
-    # Hỏng tới lần thứ mấy thì gửi email cảnh báo.
-    #
-    # TÊN CŨ TECHNICAL_RETRY_MAX VẪN NHẬN, nhưng NGHĨA ĐÃ ĐỔI HẲN: trước là
-    # "thử ngần này lần rồi bỏ cuộc, nộp REJECTED", giờ là "hỏng ngần này lần
-    # thì báo người, và VẪN THỬ TIẾP". Nhận tên cũ để .env đang chạy không
-    # hỏng; đọc tên mới để không ai tưởng nhánh bỏ cuộc vẫn còn.
+    # Hỏng tới lần thứ mấy thì email cho người vận hành. TÊN CŨ
+    # TECHNICAL_RETRY_MAX vẫn nhận, nhưng nghĩa đã đổi: báo người rồi VẪN
+    # THỬ TIẾP.
     technical_alert_after: int = Field(
         default=5,
         validation_alias=AliasChoices("TECHNICAL_ALERT_AFTER",
                                       "TECHNICAL_RETRY_MAX"))
 
-    # Nghỉ bao nhiêu phút trước khi thử lại cùng một chứng chỉ.
-    #
-    # Không có giãn cách thì với POLL_INTERVAL_SECONDS=5, năm lượt thử cháy
-    # hết trong vài chục giây và email cảnh báo bay đi trước khi một sự cố
-    # chớp nhoáng kịp tự khỏi.
-    #
-    # 2 phút: đủ để eLIS/Azure chập vài giây tự qua, mà vẫn phục hồi nhanh —
-    # sự cố khỏi lúc nào thì chậm nhất 2 phút sau chứng chỉ được xử lý. Mỗi
-    # vòng thử mỗi chứng chỉ ĐÚNG MỘT LẦN, nên với ngưỡng cảnh báo 5 lần thì
-    # email đi sau đúng 5 vòng, khoảng 10 phút hỏng liên tục.
-    #
-    # ĐÃ ĐỔI TỪ 360 (6 tiếng): mốc 6 tiếng hợp lý khi còn nhánh bỏ cuộc, vì
-    # khi đó mỗi lượt thử là một bước tiến tới quyết định REJECTED nên phải
-    # tiến thật chậm. Giờ không còn quyết định nào để tiến tới; mục tiêu duy
-    # nhất là bắt lại sớm nhất khi hạ tầng khỏe lại, nên giãn cách phải ngắn.
+    # Nghỉ bao nhiêu phút trước khi thử lại cùng một chứng chỉ. Quá ngắn thì
+    # với POLL_INTERVAL_SECONDS=5 cả năm lượt cháy hết trong vài chục giây,
+    # email cảnh báo bay đi trước khi sự cố chớp nhoáng tự khỏi. Mỗi vòng thử
+    # mỗi chứng chỉ ĐÚNG MỘT LẦN, nên 2 phút x ngưỡng 5 lần = ~10 phút.
     technical_retry_cooldown_minutes: int = Field(default=2)
 
     # ===== Chống nộp trùng khóa học =====
-    # Nhân viên nộp lại một khóa đã được duyệt -> REJECTED ngay, không quét
-    # LLM. Có hai luồng cùng đẩy chứng chỉ vào eLIS (hệ thống này, và luồng
-    # đồng bộ tự động của FPT Elearning) nên trùng lặp là chuyện thường xảy ra
-    # chứ không phải ca hiếm.
-    #
-    # Đối chiếu bằng EMAIL + TÊN KHÓA HỌC (phương án mentor chốt). API ① nhận
-    # tham số `employeeEmail` nên hỏi thẳng được từng người, không cần kéo cả
-    # lịch sử về. Email cũng là trường đáng tin nhất để định danh: 208.426 dòng
-    # dữ liệu thật không có dòng nào thiếu email, cũng không có email nào ứng
-    # với hai mã nhân viên.
+    # Nộp lại khóa đã duyệt -> REJECTED ngay, không quét LLM. Hai luồng cùng
+    # đẩy chứng chỉ vào eLIS (hệ thống này và đồng bộ tự động của FPT
+    # Elearning) nên trùng lặp là chuyện thường. Đối chiếu bằng EMAIL + TÊN
+    # KHÓA HỌC; API ① nhận tham số `employeeEmail` nên hỏi thẳng từng người.
     duplicate_check: bool = Field(default=True)
 
 
     # ===== Email cảnh báo lỗi hệ thống =====
-    # Người nhận cảnh báo. KHÁC mail_to (nơi nhận báo cáo định kỳ): cảnh báo
-    # là việc phải xử lý ngay, báo cáo là số liệu đọc cuối ngày. Trộn hai
-    # luồng vào một hộp thư thì cảnh báo bị chìm giữa báo cáo.
+    # KHÁC mail_to (báo cáo định kỳ): trộn chung thì cảnh báo bị chìm.
     alert_mail_to: str = Field(
         default="hoabd5@fpt.com",
         description="Email nhận cảnh báo lỗi hệ thống, nhiều người cách nhau dấu phẩy",
         validation_alias=AliasChoices("ALERT_MAIL_TO", "ALERT_EMAIL"))
 
-    # Nhịp NHẮC LẠI khi sự cố vẫn còn: mỗi ngần này tiếng một thư.
-    #
-    # KHÔNG làm chậm thư ĐẦU TIÊN. Thư đầu đi ngay khi ca đầu tiên chạm
-    # technical_alert_after; giá trị này chỉ quyết định bao lâu thì nhắc lại.
-    #
-    # BẮT BUỘC PHẢI CÓ: job thử lại mỗi 2 phút và mỗi vòng đều tính lại ai đã
-    # vượt ngưỡng — mà ca hỏng 5 lần thì vòng sau hỏng 6 lần, vẫn vượt. Không
-    # chặn thì một sự cố kéo dài 6 tiếng sinh ra 180 thư giống hệt nhau. Người
-    # nhận sẽ tạo rule lọc bỏ ngay trong ngày đầu, và từ đó cảnh báo mất tác
-    # dụng vĩnh viễn, kể cả cho những sự cố sau.
-    #
-    # 1 tiếng: đủ thưa để không ai lọc bỏ, đủ dày để một sự cố bị bỏ quên vẫn
-    # nổi lên lại trong ca trực tiếp theo. Đặt 0 là tắt chặn — đừng làm.
+    # Nhịp NHẮC LẠI khi sự cố vẫn còn; KHÔNG làm chậm thư đầu tiên.
+    # BẮT BUỘC PHẢI CÓ: job thử lại mỗi 2 phút và mỗi vòng đều tính lại ai
+    # vượt ngưỡng, nên không chặn thì một sự cố 6 tiếng sinh 180 thư giống hệt
+    # nhau và người nhận sẽ lọc bỏ vĩnh viễn. Đặt 0 là tắt chặn.
     alert_cooldown_hours: int = Field(default=1)
 
     # ===== Lịch gửi báo cáo tự động =====
-    # "off"     : không tự gửi (chỉ gửi tay bằng send_report.py --send)
-    # "daily"   : cuối mỗi ngày
-    # "weekly"  : cuối tuần
-    # "monthly" : cuối tháng
+    # "off" = chỉ gửi tay bằng send_report.py --send; còn lại là cuối mỗi
+    # ngày / tuần / tháng.
     report_schedule: str = Field(default="off")
 
-    # Giờ gửi, dạng "HH:MM" giờ Việt Nam. Mặc định 18:00 — sau giờ làm, số
-    # liệu trong ngày đã đủ.
+    # Giờ gửi "HH:MM" giờ Việt Nam.
     report_time: str = Field(default="18:00")
 
-    # Với weekly: gửi vào thứ mấy (0=Thứ Hai ... 6=Chủ nhật). Mặc định 4 =
-    # Thứ Sáu, để mentor đọc trước khi nghỉ cuối tuần chứ không phải sáng
-    # Thứ Hai lẫn với việc mới.
+    # Với weekly: thứ mấy (0=Thứ Hai ... 6=Chủ nhật). 4 = Thứ Sáu.
     report_weekday: int = Field(default=4)
 
-    # Với monthly: gửi vào ngày mấy. 1 = ngày đầu tháng, báo cáo tháng TRƯỚC.
+    # Với monthly: ngày mấy. 1 = ngày đầu tháng, báo cáo tháng TRƯỚC.
     report_monthday: int = Field(default=1)
 
-    # Mốc gom số liệu trong biểu đồ: "day" | "week" | "month".
-    # Rỗng = tự chọn theo report_schedule (xem scheduler.py).
+    # Mốc gom số liệu biểu đồ: "day" | "week" | "month". Rỗng = tự chọn theo
+    # report_schedule (xem scheduler.py).
     report_bucket: str = Field(default="")
 
 
@@ -288,11 +203,7 @@ settings = Settings()
 
 
 def get_llm(api_key: str | None = None) -> ChatOpenAI:
-    """Tạo client gọi model Gemma qua FPT.
-
-    Cho phép truyền api_key riêng (để test hoặc dùng key khác); nếu không
-    truyền thì lấy fpt_api_key trong .env.
-    """
+    """Tạo client gọi model Gemma qua FPT; api_key rỗng thì lấy từ .env."""
     effective_api_key = api_key if api_key else settings.fpt_api_key
     return ChatOpenAI(
         model=settings.fpt_model,

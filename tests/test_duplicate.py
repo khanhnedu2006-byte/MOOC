@@ -1,31 +1,19 @@
 """Test luật chống NỘP TRÙNG khóa học (test_duplicate).
 
-Có HAI luồng cùng đẩy chứng chỉ vào eLIS: hệ thống này (quét bằng AI), và
-luồng đồng bộ tự động của FPT Elearning (đẩy thẳng, không xác minh). Cùng một
-khóa của cùng một người vì thế có thể vào eLIS hai lần, thành hai bản ghi
-riêng với hai user_course_id khác nhau.
+HAI luồng cùng đẩy chứng chỉ vào eLIS: hệ thống này và luồng đồng bộ của FPT
+Elearning. Cùng một khóa của cùng một người có thể vào eLIS hai lần, thành
+hai bản ghi với hai user_course_id khác nhau — nên đối chiếu bằng EMAIL +
+TÊN KHÓA HỌC. Hỏi eLIS bằng `employeeEmail`, KHÔNG kèm `status`, rồi tự lọc
+`submitStatus == "APPROVED"`. Hai phép lọc đó là phần nguy hiểm của luật:
 
-Đối chiếu bằng EMAIL + TÊN KHÓA HỌC. Không dùng user_course_id: hai lần nộp là
-hai bản ghi riêng nên id luôn khác nhau — tra theo nó thì không bao giờ khớp
-được cái gì.
+  1. Lọc `submitStatus`. Kết quả chứa cả chứng chỉ WAITING đang xử lý, bỏ lọc
+     thì mọi chứng chỉ "trùng" với CHÍNH NÓ. Không phải `status` (trạng thái
+     đăng ký học, luôn "REGISTED").
 
-Hỏi eLIS bằng `employeeEmail`, KHÔNG kèm `status` — kết quả trả về là MỌI bản
-ghi của người đó, và mình lọc `submitStatus == "APPROVED"` ở phía mình.
+  2. Tự kiểm email. API ① bỏ qua tham số lạ trong IM LẶNG, vẫn trả 200 kèm
+     nguyên bộ dữ liệu — lúc đó cái trả về là lịch sử của MỌI người.
 
-HAI PHÉP LỌC ĐÓ LÀ TOÀN BỘ PHẦN NGUY HIỂM CỦA LUẬT, và gần nửa số test ở đây
-canh đúng chúng:
-
-  1. Lọc `submitStatus`. Kết quả chứa cả chính chứng chỉ WAITING đang xử lý.
-     Bỏ phép lọc này thì mọi chứng chỉ đều "trùng" với CHÍNH NÓ và cả hàng đợi
-     bị từ chối tự động. Đọc `submitStatus` chứ không phải `status` — `status`
-     là trạng thái đăng ký học ("REGISTED"), nằm ngay cạnh trong cùng bản ghi.
-
-  2. Tự kiểm email. API ① bỏ qua tham số lạ trong IM LẶNG: `employeeId`,
-     `employee_id`, `employeeCode` đều từng trả về 200 kèm nguyên 3134 bản ghi
-     thay vì báo lỗi. Nếu `employeeEmail` một ngày nào đó cũng bị bỏ qua thì
-     cái trả về là lịch sử của MỌI người.
-
-Cả hai kiểu hỏng đều KHÔNG báo lỗi gì — chỉ lộ ra khi hàng đợi bị từ chối sạch.
+Cả hai kiểu hỏng đều không báo lỗi, chỉ lộ ra khi hàng đợi bị từ chối sạch.
 """
 
 import logging
@@ -78,9 +66,8 @@ def test_lay_dung_khoa_cua_dung_nguoi(bat_luat):
 def test_CHI_lay_ban_ghi_DA_DUYET(bat_luat, submit_status):
     """Ca hỏng tệ nhất trong cả luật, và nó không báo lỗi gì.
 
-    Hỏi theo email thì eLIS trả về MỌI bản ghi của người đó — kể cả chính
-    chứng chỉ WAITING mình đang xử lý. Bỏ phép lọc submitStatus thì chứng chỉ
-    nào cũng "trùng" với chính nó, và cả hàng đợi bị từ chối tự động.
+    eLIS trả về cả chứng chỉ WAITING đang xử lý; bỏ lọc submitStatus thì cả
+    hàng đợi bị từ chối tự động.
     """
     with patch.object(client, "get_by_email", return_value=[
             _row("a@fpt.com", "Python cơ bản", submit_status)]):
@@ -90,9 +77,7 @@ def test_CHI_lay_ban_ghi_DA_DUYET(bat_luat, submit_status):
 def test_doc_submitStatus_chu_KHONG_phai_status(bat_luat):
     """Hai trường nằm cạnh nhau trong cùng bản ghi và rất dễ nhầm.
 
-    `status` là trạng thái đăng ký học — bản ghi thật luôn mang "REGISTED",
-    kể cả khi chứng chỉ mới chỉ đang chờ duyệt. Đọc nhầm trường này thì phép
-    lọc mất tác dụng hoàn toàn vì không bản ghi nào có status == "APPROVED".
+    `status` luôn là "REGISTED", đọc nhầm nó thì phép lọc mất tác dụng.
     """
     row = _row("a@fpt.com", "Python cơ bản", "WAITING")
     assert row["status"] == "REGISTED"
@@ -117,10 +102,9 @@ def test_email_khong_phan_biet_hoa_thuong(bat_luat):
     ("MỞ KHÓA AI: CẨM NANG VIẾT PROMPT", "Mở Khoá AI: cẩm nang viết Prompt"),
 ])
 def test_ten_khoa_lech_cach_viet_van_tinh_la_TRUNG(bat_luat, da_duyet, vua_nop):
-    """Ba cặp này lấy nguyên từ dữ liệu thật — cùng một khóa, hai cách viết.
+    """Ba cặp lấy từ dữ liệu thật — cùng một khóa, hai cách viết.
 
-    Dữ liệu thật có 6.268 cách viết tên khóa, sau normalize() còn 6.132. So thô
-    là bỏ sót đúng 129 nhóm đó.
+    So thô là bỏ sót các nhóm chỉ lệch nhau khoảng trắng hoặc hoa/thường.
     """
     with patch.object(client, "get_by_email",
                       return_value=[_row("a@fpt.com", da_duyet)]):
@@ -131,10 +115,8 @@ def test_ten_khoa_lech_cach_viet_van_tinh_la_TRUNG(bat_luat, da_duyet, vua_nop):
 def test_API_KHONG_LOC_thi_BO_QUA_luat_chu_khong_tu_choi_bua(bat_luat):
     """Ca hỏng nguy hiểm nhất, và nó KHÔNG báo lỗi gì cả.
 
-    Giả lập đúng hành vi đã quan sát: API nhận request, trả 200, nhưng phớt lờ
-    tham số lọc và trả về danh sách của mọi người. Tin vào kết quả đó thì mọi
-    chứng chỉ đều "trùng" với khóa của một người lạ nào đó, và cả hàng đợi bị
-    từ chối tự động.
+    API trả 200 nhưng phớt lờ tham số lọc; tin vào đó thì mọi chứng chỉ
+    "trùng" với khóa của một người lạ.
     """
     with patch.object(client, "get_by_email", return_value=[
             _row("nguoikhac@fpt.com", "Python cơ bản"),
@@ -143,7 +125,7 @@ def test_API_KHONG_LOC_thi_BO_QUA_luat_chu_khong_tu_choi_bua(bat_luat):
 
 
 def test_thieu_email_hoac_ten_khoa_thi_KHONG_doan(bat_luat):
-    """Từ chối dựa trên dữ liệu khuyết là kiểu sai đắt nhất. Bỏ sót thì chứng
+    """Từ chối dựa trên dữ liệu khuyết là kiểu sai đắt nhất; bỏ sót thì chứng
     chỉ chỉ đi tiếp theo luồng thường."""
     assert run.completed_courses(None) == set()
     assert run.completed_courses("") == set()
@@ -154,8 +136,7 @@ def test_thieu_email_hoac_ten_khoa_thi_KHONG_doan(bat_luat):
 def test_eLIS_LOI_thi_MO_chu_khong_dong(bat_luat):
     """Không tra được lịch sử thì chứng chỉ đi tiếp theo luồng thường.
 
-    Chiều ngược lại mới nguy: coi lỗi mạng là "chưa từng duyệt" rồi từ chối
-    hàng loạt thì một sự cố hạ tầng biến thành hàng trăm từ chối oan.
+    Coi lỗi mạng là "đã từng duyệt" thì thành hàng trăm từ chối oan.
     """
     with patch.object(client, "get_by_email",
                       side_effect=client.ElisError("eLIS sập")):
@@ -258,8 +239,7 @@ def test_ghi_log_voi_stage_duplicate(moi_truong):
 
 def test_duplicate_KHONG_bi_dem_nhu_hong_ky_thuat(moi_truong):
     """Nộp trùng là kết luận nghiệp vụ, không phải sự cố hệ thống. Xếp nhầm
-    vào TECHNICAL_STAGES thì nó vừa được thử lại vô ích vừa kéo theo email
-    báo động cho người vận hành."""
+    vào TECHNICAL_STAGES thì vừa thử lại vô ích vừa kéo theo email báo động."""
     _chay([_item("A")], [], [_row("hoabd5@fpt.com", "Python cơ bản")])
     assert "duplicate" not in database.TECHNICAL_STAGES
     assert database.technical_retry_state(["A"], moi_truong) == {}
@@ -276,9 +256,8 @@ def test_TAT_luat_thi_van_quet_nhu_cu(moi_truong, monkeypatch):
 def test_nop_cung_khoa_HAI_LAN_trong_MOT_vong(moi_truong):
     """Hai bản ghi khác nhau, cùng người cùng khóa, cùng một vòng xử lý.
 
-    Cái đầu chưa có trong lịch sử eLIS nên được quét và duyệt. Cái sau phải bị
-    bắt ngay — eLIS chưa chắc kịp phản ánh lần duyệt vừa xong, nên bộ nhớ
-    trong vòng (`_approved_this_round`) là thứ duy nhất chặn được nó.
+    eLIS chưa kịp phản ánh lần duyệt đầu, nên `_approved_this_round` là thứ
+    duy nhất chặn được cái sau.
     """
     da_nop, so_lan_quet = _chay(
         [_item("A", "Python cơ bản"), _item("B", "Python cơ bản")],
@@ -288,8 +267,8 @@ def test_nop_cung_khoa_HAI_LAN_trong_MOT_vong(moi_truong):
 
 
 def test_bo_nho_trong_vong_duoc_XOA_giua_cac_vong(moi_truong):
-    """Không xóa thì một khóa vừa duyệt sẽ bị coi là trùng mãi mãi, kể cả sau
-    khi eLIS đã có dữ liệu thật — và không ai truy ra vì sao."""
+    """Không xóa thì một khóa vừa duyệt bị coi là trùng mãi mãi, kể cả khi
+    eLIS đã có dữ liệu thật."""
     _chay([_item("A")], [_duyet()], [])
     assert run._approved_this_round != set()
     _chay([_item("B", "Java cơ bản")], [_duyet()], [])
@@ -309,11 +288,8 @@ class _Resp:
 def test_gui_dung_ten_tham_so_employeeEmail():
     """Canh CHUỖI tên tham số, ở tầng thật sự dựng request.
 
-    Mọi test khác trong file patch client.get_by_email nên phần dựng params
-    không bao giờ chạy — gõ nhầm thành employeeId vẫn xanh hết. Mà gõ nhầm là
-    ca rất dễ xảy ra: ba tên employeeId / employee_id / employeeCode đều đã
-    được thử và đều bị API bỏ qua trong im lặng, nên bản thân eLIS sẽ KHÔNG
-    báo cho mình biết là đã gõ sai.
+    Mọi test khác patch client.get_by_email nên gõ nhầm thành employeeId vẫn
+    xanh hết, mà API bỏ qua tham số lạ trong im lặng nên eLIS cũng không báo.
     """
     with patch.object(client.requests, "get", return_value=_Resp()) as goi:
         client.get_by_email("hoabd5@fpt.com")
@@ -324,8 +300,8 @@ def test_gui_dung_ten_tham_so_employeeEmail():
 
 
 def test_hoi_theo_email_thi_KHONG_gui_kem_status():
-    """Cố ý không lọc phía server: bản ghi đã mang sẵn submitStatus, và lọc ở
-    phía mình thì không phụ thuộc vào việc API có tôn trọng tham số hay không."""
+    """Cố ý không lọc phía server: bản ghi đã mang sẵn submitStatus, lọc phía
+    mình thì không phụ thuộc việc API có tôn trọng tham số hay không."""
     with patch.object(client.requests, "get", return_value=_Resp()) as goi:
         client.get_by_email("hoabd5@fpt.com")
     assert "status" not in goi.call_args.kwargs["params"]
@@ -342,12 +318,8 @@ def test_lay_hang_doi_thi_van_gui_status_WAITING():
 def test_duyet_TU_LAU_van_tinh_la_trung(bat_luat):
     """LUẬT NGHIỆP VỤ: một khóa học chỉ được học MỘT LẦN.
 
-    Không có cửa sổ thời gian, và test này tồn tại để chặn việc thêm vào. Ai
-    sau này viết "chỉ tính nếu duyệt trong vòng N tháng" sẽ làm test đỏ, và
-    phải quay lại hỏi HR chứ không tự quyết.
-
-    Bản ghi dưới đây mang ActionDateTime từ ba năm trước — vẫn phải tính là
-    trùng y như vừa duyệt hôm qua.
+    Không có cửa sổ thời gian; ai thêm "chỉ tính trong N tháng" sẽ làm test
+    đỏ và phải quay lại hỏi HR.
     """
     cu = _row("a@fpt.com", "Python cơ bản")
     cu["ActionDateTime"] = "2023-01-15T09:00:00.000"

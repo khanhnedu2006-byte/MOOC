@@ -1,17 +1,12 @@
 """Ghi log xử lý chứng chỉ vào SQLite (database).
 
-Mỗi lần xử lý một chứng chỉ -> ghi một dòng log: thời điểm, thông tin nhận
-diện, kết quả, lý do, tầng xử lý. Dùng để xem lại / kiểm toán sau này.
+Mỗi chứng chỉ -> một dòng log. Dùng sqlite3 có sẵn trong Python; database là
+một file (.db), mặc định mooc_log.db ở gốc dự án.
 
-Dùng sqlite3 có sẵn trong Python — không cần cài server, không thêm thư viện.
-Database là một file (.db), mặc định mooc_log.db ở gốc dự án.
-
-Có HAI trường định danh người, đừng nhầm:
-  - employee_id  : mã nhân viên do ELIS cấp (vd "00332383"). Dùng để đối
-                   soát với dữ liệu nhân sự, và là thứ gửi ngược về ELIS.
-  - employee_code : username lấy từ employeeEmail (vd "hoabd3"). CHỈ dùng để
-                   đối chiếu với tên in trên chứng chỉ, vì nhiều chứng chỉ
-                   in username thay cho tên thật.
+Hai trường định danh người, đừng nhầm:
+  - employee_id  : mã ELIS cấp (vd "00332383"), gửi ngược về ELIS.
+  - employee_code : username từ employeeEmail (vd "hoabd3"), CHỈ dùng đối
+                   chiếu với tên in trên chứng chỉ.
 
 Dùng:
     from database.database import write_log, init_db
@@ -31,23 +26,20 @@ def _connect(db_path=None):
     return sqlite3.connect(str(db_path or DB_PATH))
 
 
-# Các cột thêm sau khi bảng đã tồn tại ngoài thực tế. Xem giải thích ở
-# init_db() về việc vì sao phải liệt kê riêng thay vì chỉ sửa CREATE TABLE.
+# Các cột thêm sau khi bảng đã tồn tại. Xem init_db() về lý do phải liệt kê
+# riêng thay vì chỉ sửa CREATE TABLE.
 _ADDED_COLUMNS = {
     "employee_id": "TEXT",     # mã NV của ELIS, khác employee_code (username)
     "user_course_id": "TEXT",  # id bản ghi, để cập nhật trạng thái gửi sau
     "elis_sent_ok": "INTEGER",  # 1=successList, 0=failList, NULL=chưa gửi
     "elis_message": "TEXT",    # message ELIS trả về khi từ chối
     # Nhà cung cấp chứng chỉ (getCert.providerName): Udemy, Coursera...
-    # Thêm sau nên phải nằm ở đây; dòng cũ nhận NULL, báo cáo gom vào
-    # "(không rõ)" thay vì biến mất.
+    # Dòng cũ nhận NULL, báo cáo gom vào "(không rõ)".
     "provider": "TEXT",
-    # Tên khóa học do eLIS đăng ký (getCert.courseName) — KHÁC với cột
-    # certificate_name, vốn là tên khóa mà AI ĐỌC ĐƯỢC TỪ ẢNH.
-    # Vì sao phải có: thiếu cột này thì từ DB không thể biết dòng log nào ứng
-    # với khóa học nào. Ca hỏng kỹ thuật còn tệ hơn — không đọc được ảnh nên
-    # certificate_name cũng NULL, dòng log chỉ còn một chuỗi id vô nghĩa và
-    # người vận hành phải đoán bằng cách so mốc thời gian với log console.
+    # Tên khóa do eLIS đăng ký (getCert.courseName), KHÁC cột certificate_name
+    # vốn là tên khóa AI đọc được từ ảnh. Thiếu cột này thì không biết dòng log
+    # ứng với khóa nào — ca hỏng kỹ thuật không đọc được ảnh nên
+    # certificate_name cũng NULL.
     "course_name": "TEXT",
 }
 
@@ -55,14 +47,9 @@ _ADDED_COLUMNS = {
 def init_db(db_path=None):
     """Tạo bảng log nếu chưa có, và thêm cột mới nếu bảng cũ còn thiếu.
 
-    Vì sao cần phần "thêm cột": CREATE TABLE IF NOT EXISTS chỉ chạy khi bảng
-    CHƯA tồn tại. Với máy đã chạy job trước đó, bảng đã có sẵn nên câu lệnh
-    đó bị bỏ qua HOÀN TOÀN — thêm cột vào phần CREATE cũng không có tác dụng,
-    và chương trình sẽ lỗi "no such column" dù code trông đúng.
-
-    Nên phải hỏi bảng hiện có những cột nào rồi ALTER TABLE thêm phần thiếu.
-    Cách này an toàn với cả DB mới lẫn DB đã có dữ liệu — dữ liệu cũ giữ
-    nguyên, cột mới nhận giá trị NULL.
+    CREATE TABLE IF NOT EXISTS chỉ chạy khi bảng CHƯA tồn tại, nên với DB cũ
+    thì thêm cột vào phần CREATE không có tác dụng và chương trình lỗi "no
+    such column". Phải ALTER TABLE thêm phần thiếu; cột mới nhận NULL.
     """
     conn = _connect(db_path)
     try:
@@ -99,24 +86,16 @@ def write_log(process_result, employee_id=None, user_course_id=None,
               db_path=None):
     """Ghi một dòng log từ ProcessResult. Trả về id dòng vừa ghi.
 
-    employee_id: mã nhân viên do ELIS cấp (getCert.employeeId). Truyền riêng
-    vì ProcessResult không mang theo trường này — nó chỉ giữ employee_code
-    (username dùng để đối chiếu với ảnh).
+    employee_id: mã ELIS cấp (getCert.employeeId), truyền riêng vì
+    ProcessResult chỉ giữ employee_code.
+    user_course_id: id bản ghi trên ELIS, cần để biết dòng log nào ứng với
+    item nào khi gọi API ③.
+    course_name: tên khóa do ELIS đăng ký (getCert.courseName), đừng nhầm với
+    extracted.certificate_name (tên AI đọc trên ảnh).
+    verdict_override: CHỈ dùng cho ca hỏng kỹ thuật, ghi "WAITING" vì ca đó
+    không nộp về eLIS. Không truyền thì lấy verdict của ProcessResult.
 
-    user_course_id: id bản ghi trên ELIS. Cần để sau khi gọi API ③ còn biết
-    dòng log nào ứng với item nào mà cập nhật trạng thái gửi.
-
-    course_name: tên khóa do ELIS đăng ký (getCert.courseName). Đừng nhầm với
-    extracted.certificate_name — cái đó là tên AI đọc được trên ảnh, hai giá
-    trị này lệch nhau chính là lý do chứng chỉ bị từ chối.
-
-    verdict_override: CHỈ dùng cho ca hỏng kỹ thuật, để ghi "WAITING" thay cho
-    verdict của pipeline. Những ca đó không được nộp về eLIS nên bên eLIS
-    chúng vẫn đang chờ duyệt; ghi REJECTED vào log là sai sự thật. Không
-    truyền thì lấy nguyên verdict của ProcessResult.
-
-    LƯU DẠNG CHUỖI: mã NV có thể có số 0 ở đầu ("00332383"), ép sang số là
-    mất số 0 và không đối soát được với dữ liệu nhân sự.
+    LƯU DẠNG CHUỖI: mã NV có thể có số 0 ở đầu ("00332383").
     """
     extracted = process_result.extracted
     conn = _connect(db_path)
@@ -154,14 +133,11 @@ def write_failure_log(user_course_id, employee_id, verdict, reason,
                       stage, provider=None, course_name=None, db_path=None):
     """Ghi log cho chứng chỉ KHÔNG chạy được pipeline (vd tải ZIP hỏng).
 
-    Vì sao cần riêng: những ca này không có đối tượng ProcessResult để truyền
-    vào write_log(). Nếu bỏ qua không ghi gì, chúng biến mất khỏi mọi báo cáo
-    — người đọc thấy "hôm nay xử lý 30" mà không biết thật ra có 50 cái chờ,
-    20 cái còn lại thất bại lặng lẽ.
+    Cần hàm riêng vì những ca này không có ProcessResult để truyền vào
+    write_log(); bỏ qua thì chúng biến mất khỏi mọi báo cáo.
 
-    course_name ở đây QUAN TRỌNG HƠN ở write_log: ca này không đọc được ảnh
-    nên certificate_name luôn NULL. Không ghi tên khóa thì dòng log không còn
-    manh mối nào để biết chứng chỉ nào đang hỏng.
+    course_name ở đây quan trọng hơn ở write_log: ca này không đọc được ảnh
+    nên certificate_name luôn NULL.
     """
     conn = _connect(db_path)
     try:
@@ -188,10 +164,10 @@ def write_failure_log(user_course_id, employee_id, verdict, reason,
 
 
 def update_send_result(user_course_id, succeeded, message=None, db_path=None):
-    """Ghi lại ELIS có nhận kết quả không (từ successList / failList API ③).
+    """Ghi lại ELIS có nhận kết quả không (successList / failList của API ③).
 
-    Chỉ cập nhật dòng log MỚI NHẤT của user_course_id đó, phòng khi một bản
-    ghi bị xử lý lại nhiều lần qua các vòng poll.
+    Chỉ cập nhật dòng log MỚI NHẤT của user_course_id đó, phòng khi bản ghi bị
+    xử lý lại qua nhiều vòng poll.
     """
     conn = _connect(db_path)
     try:
@@ -230,29 +206,22 @@ def read_recent_logs(row_count=20, db_path=None):
 TECHNICAL_STAGES = ("llm1_error", "stage2_error", "system_error",
                     "file_error", "download_error", "no_file", "soft_fail_zip")
 
-# Ca BỎ QUA — CỐ Ý KHÔNG nằm trong TECHNICAL_STAGES.
-# Thêm vào đó thì technical_retry_state() đếm nó như hỏng kỹ thuật: với chu kỳ
-# poll 5 giây, chỉ 25 giây sau hệ thống gửi mail báo động cho người vận hành về
-# một chứng chỉ mà hệ thống chẳng làm gì sai cả.
+# Ca BỎ QUA — CỐ Ý KHÔNG nằm trong TECHNICAL_STAGES. Thêm vào đó thì
+# technical_retry_state() đếm nó như hỏng kỹ thuật và với chu kỳ poll 5 giây,
+# chỉ 25 giây sau đã gửi mail báo động nhầm.
 SKIP_STAGE = "skipped_external_email"
 
 
 def skipped_ids(user_course_ids, db_path=None) -> set:
     """Những chứng chỉ ĐANG bị bỏ qua, để không xử lý lại.
 
-    Vì sao phải chặn bằng DB chứ không kiểm tra lại mỗi vòng: ca này chỉ lộ ra
-    SAU KHI đã chạy hết pipeline (Gemma + Azure + LLM2). Bản ghi vẫn nằm
-    WAITING nên vòng getCert sau trả về đúng nó — không chặn thì cứ 5 giây lại
-    đốt một lượt LLM cho một kết quả không bao giờ đổi.
+    Phải chặn bằng DB vì ca này chỉ lộ ra SAU KHI chạy hết pipeline, mà bản
+    ghi vẫn nằm WAITING nên vòng getCert sau trả về đúng nó. Kết quả không đổi
+    được: đường ra duy nhất là người duyệt xử lý trên eLIS, thao tác đó đưa
+    bản ghi RỜI WAITING.
 
-    Không bao giờ đổi thật: cái email cá nhân in cứng trên ảnh rồi, không ai
-    sửa được. Đường ra duy nhất là người duyệt vào eLIS xử lý, mà thao tác đó
-    đưa bản ghi RỜI WAITING nên nó không quay lại hàng đợi nữa.
-
-    Lấy dòng MỚI NHẤT (MAX(id)) chứ không phải "từng có dòng skip": nếu chứng
-    chỉ sau đó được xử lý bình thường thì dòng mới đè lên và nó tự rơi khỏi
-    danh sách này. Dùng MAX(id) chứ không MAX(created_at) vì created_at chỉ
-    chính xác tới giây — hai dòng trong cùng một giây sẽ hòa nhau.
+    Lấy dòng MỚI NHẤT (MAX(id)) để chứng chỉ sau đó xử lý được thì tự rơi khỏi
+    danh sách. Không dùng MAX(created_at) vì nó chỉ chính xác tới giây.
     """
     ids = [str(i) for i in user_course_ids if i]
     if not ids:
@@ -280,16 +249,11 @@ def skipped_ids(user_course_ids, db_path=None) -> set:
 def technical_retry_state(user_course_ids, db_path=None) -> dict:
     """Với mỗi user_course_id: đã hỏng kỹ thuật MẤY LẦN và LẦN CUỐI khi nào.
 
-    Đây là bộ đếm SỐNG QUA CÁC LẦN CHẠY. Nó tồn tại để chặn một vòng lặp đốt
-    tiền: khi ca hỏng kỹ thuật được để nguyên WAITING (không nộp eLIS), vòng
-    getCert sau sẽ trả về đúng nó, job lại tải + gọi LLM lại. Với chu kỳ 5
-    giây thì một chứng chỉ hỏng vĩnh viễn (file thật sự lỗi) sẽ quay vòng mãi
-    mãi, mỗi vòng một lượt LLM, và không có gì báo cho ai biết.
+    Bộ đếm SỐNG QUA CÁC LẦN CHẠY, chặn vòng lặp đốt tiền: ca hỏng kỹ thuật để
+    nguyên WAITING nên vòng getCert sau trả về đúng nó và job gọi LLM lại mãi.
+    Đếm từ bảng log chứ không giữ trong RAM, vì restart là mất sạch bộ đếm.
 
-    Giữ trong RAM không đủ: container restart là mất sạch bộ đếm. Bảng log
-    vốn đã ghi mọi lần thử rồi, nên đếm từ đó là nguồn duy nhất đáng tin.
-
-    Trả về {user_course_id: (so_lan, thoi_diem_lan_cuoi_iso)}. Id chưa hỏng
+    Trả về {user_course_id: (so_lan, thoi_diem_lan_cuoi_iso)}; id chưa hỏng
     lần nào thì KHÔNG có trong dict.
     """
     ids = [str(i) for i in user_course_ids if i]
@@ -320,17 +284,11 @@ def technical_retry_state(user_course_ids, db_path=None) -> dict:
 def technical_failure_detail(user_course_ids, db_path=None) -> dict:
     """Với mỗi user_course_id: (stage, reason) của lần hỏng kỹ thuật GẦN NHẤT.
 
-    Dùng để dựng email cảnh báo. technical_retry_state() chỉ trả về SỐ LẦN,
-    mà số lần một mình thì email chỉ nói được "5 chứng chỉ hỏng" — người nhận
-    vẫn phải mở log lên mới biết hỏng vì cái gì. Có stage và reason thì thư
-    nói thẳng "Azure hết hạn mức" hay "eLIS không trả file", tức là đọc xong
-    biết đi sửa ở đâu.
+    Dùng để dựng email cảnh báo: technical_retry_state() chỉ trả về SỐ LẦN.
+    Lấy theo MAX(id) chứ không MAX(created_at): id tự tăng nên luôn đúng thứ
+    tự ghi, còn created_at chỉ chính xác tới giây.
 
-    Lấy theo MAX(id) chứ không phải MAX(created_at): id tự tăng nên luôn đúng
-    thứ tự ghi, còn created_at là chuỗi và hai lần thử trong cùng một giây sẽ
-    bằng nhau, lúc đó không biết dòng nào mới hơn.
-
-    Trả về {user_course_id: (stage, reason)}. Id chưa hỏng lần nào thì KHÔNG
+    Trả về {user_course_id: (stage, reason)}; id chưa hỏng lần nào thì KHÔNG
     có trong dict.
     """
     ids = [str(i) for i in user_course_ids if i]

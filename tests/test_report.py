@@ -35,9 +35,8 @@ def test_chuoi_ly_do_khop_giua_pipeline_va_report():
                           issue_date="01/01/1999")
     nhap = InputInfo(employee_name="Bui Duc Hoa",
                      course_name="ISO 27001", employee_code="hoabd3")
-    # Tham số thứ ba là BẢN ĐỌC CÒN LẠI, không phải tên tầng. Truyền
-    # chính `trich` vào: cả hai bản đọc cùng trượt -> lý do nói chắc,
-    # đúng dạng chuỗi mà report.py đi tìm.
+    # Tham số thứ ba là bản đọc còn lại. Truyền chính `trich` vào để cả hai
+    # bản cùng trượt, lý do mới ra đúng dạng chuỗi report.py đi tìm.
     reason = pipeline._mismatch_reason(trich, nhap, trich)
 
 
@@ -50,15 +49,12 @@ def test_chuoi_ly_do_khop_giua_pipeline_va_report():
 
 
 def test_moi_ly_do_pipeline_sinh_ra_deu_duoc_report_phan_loai():
-    """Chiều NGƯỢC LẠI của test trên, và là chiều dễ hỏng hơn.
+    """Chiều ngược lại của test trên: chuỗi pipeline đẻ ra phải có người
+    nhận.
 
-    Test kia canh "chuỗi report đi tìm phải có thật". Test này canh "chuỗi
-    pipeline đẻ ra phải có người nhận": thêm một dạng lý do mới ở pipeline mà
-    quên khai ở report thì mọi ca kiểu đó rơi vào nhãn "Không rõ nguyên nhân"
-    — báo cáo ghi là không rõ trong khi ta biết rõ. Không lỗi nào được ném,
-    chỉ có một con số lặng lẽ sai.
-
-    Đã suýt xảy ra thật khi thêm dạng "hai lần đọc lệch nhau".
+    Thêm một dạng lý do mới ở pipeline mà quên khai ở report thì mọi ca kiểu
+    đó rơi vào nhãn "Không rõ nguyên nhân". Không lỗi nào được ném, chỉ có
+    một con số lặng lẽ sai.
     """
     nhap = InputInfo(employee_name="Bui Duc Hoa",
                      course_name="ISO 27001", employee_code="hoabd3")
@@ -77,8 +73,7 @@ def test_moi_ly_do_pipeline_sinh_ra_deu_duoc_report_phan_loai():
         pipeline._mismatch_reason(sai_ten, nhap, dung),
         pipeline._mismatch_reason(sai_khoa, nhap, dung),
     ]
-    # Ca mâu thuẫn không nêu trường nào, nên nó KHÔNG thuộc ba nguyên nhân —
-    # đó là chủ ý. Bỏ ra khỏi phép kiểm phân loại bên dưới.
+    # Ca mâu thuẫn không nêu trường nào nên không thuộc ba nguyên nhân.
     cac_ly_do = [ly for ly in cac_ly_do if ly != "Không khớp"]
     for ly_do in cac_ly_do:
         assert any(text in ly_do for text, _ in report.REJECTION_CAUSES), (

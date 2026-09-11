@@ -37,36 +37,31 @@ RUN pip install --no-cache-dir -r requirements-job.txt
 COPY src/ ./src/
 COPY database/ ./database/
 
-# Bốn file ở thư mục gốc, KHÔNG PHẢI MỘT.
-#   run.py           điểm vào.
-#   scheduler.py     run.py `import scheduler` ngay ở đầu file — thiếu nó là
-#                    container chết lúc khởi động, ModuleNotFoundError.
-#   send_report.py   scheduler gọi tới khi REPORT_SCHEDULE khác "off".
-#   report_layout.py send_report gọi tới để dựng nội dung thư.
+# Bốn file ở thư mục gốc:
+#   run.py           điểm vào
+#   scheduler.py     run.py import ngay ở đầu file
+#   send_report.py   scheduler gọi khi REPORT_SCHEDULE khác "off"
+#   report_layout.py send_report gọi để dựng nội dung thư
 #
-# CẨN THẬN KHI SỬA DÒNG NÀY: healthcheck bên dưới chỉ `import config`, nên
-# thiếu một trong bốn file thì container chết mà healthcheck vẫn báo khỏe.
-# Kiểm bằng cách chạy thật: docker compose up rồi đọc docker logs.
+# Healthcheck bên dưới chỉ `import config`, nên thiếu một trong bốn file thì
+# container chết mà healthcheck vẫn báo khỏe. Kiểm bằng docker compose logs.
 COPY run.py scheduler.py send_report.py report_layout.py ./
 
 # ---- Chạy bằng user thường, không phải root ----
 #
-# uid/gid PHẢI KHỚP với tài khoản chủ sở hữu các file gắn từ ngoài vào
-# (.env, mooc_log.db, .report_state.json, .alert_state.json). Mặc định 1000
-# đúng với Docker Desktop và với server mà tài khoản đầu tiên là 1000; server
-# có nhiều tài khoản thì thường không phải.
+# uid/gid phải khớp tài khoản chủ sở hữu các file gắn từ ngoài vào (.env,
+# mooc_log.db, .report_state.json, .alert_state.json). Mặc định 1000 đúng với
+# Docker Desktop và server mà tài khoản đầu tiên là 1000.
 #
-# LỆCH uid RA LỖI KHÔNG GIỐNG LỖI QUYỀN CHÚT NÀO:
-#   - đọc .env  ->  PermissionError: [Errno 13] Permission denied: '.env'
-#   - ghi DB    ->  sqlite3.OperationalError: attempt to write a readonly
-#                   database   (kể cả khi CHÍNH FILE mooc_log.db ghi được:
-#                   SQLite còn cần tạo file -journal trong CÙNG THƯ MỤC, mà
-#                   /app thuộc về user trong image chứ không phải của bạn)
+# Lệch uid ra lỗi không giống lỗi quyền:
+#   - đọc .env: PermissionError: [Errno 13] Permission denied: '.env'
+#   - ghi DB:   sqlite3.OperationalError: attempt to write a readonly database
+#     (kể cả khi mooc_log.db ghi được — SQLite còn tạo file -journal trong
+#     cùng thư mục, mà /app thuộc user trong image)
 #
-# Đổi bằng build arg, ĐỪNG dùng `user:` trong compose — `user:` chỉ đổi tiến
-# trình chứ không đổi chủ sở hữu /app, nên vẫn dính đúng lỗi SQLite ở trên:
+# Đổi bằng build arg, đừng dùng `user:` trong compose: `user:` chỉ đổi tiến
+# trình chứ không đổi chủ sở hữu /app.
 #   docker compose build --build-arg APP_UID=$(id -u) --build-arg APP_GID=$(id -g)
-# hoặc khai sẵn trong docker-compose.override.yml (xem README mục 17.2).
 ARG APP_UID=1000
 ARG APP_GID=1000
 RUN if ! getent group ${APP_GID} >/dev/null; then groupadd -g ${APP_GID} mooc; fi \

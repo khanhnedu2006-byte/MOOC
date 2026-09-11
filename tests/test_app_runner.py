@@ -1,14 +1,11 @@
 """Test phần chạy job của app desktop (test_app_runner).
 
-VÌ SAO FILE NÀY TỒN TẠI: `app_runner.JobRunner` KHÔNG gọi thẳng
-`run.process_one_round` rồi thôi. Nó tự gọi API ① để biết hàng đợi dài bao
-nhiêu — mà tự gọi API thì phải TỰ GHI SỔ `alert.api_failed/api_succeeded`,
-đúng như `run.py` làm. Quên ghi sổ thì email cảnh báo sai: eLIS chết mà không
-ai được báo, hoặc eLIS sống lại mà bộ đếm lỗi không được xóa.
+`app_runner.JobRunner` không chỉ gọi `run.process_one_round`. Nó tự gọi API ①
+để biết hàng đợi dài bao nhiêu, nên phải tự ghi sổ
+`alert.api_failed/api_succeeded` đúng như run.py làm. Quên ghi sổ thì email
+cảnh báo sai.
 
-Không có test nào ở đây gọi mạng, gọi LLM, hay động vào giao diện. Đây cũng
-là lý do JobRunner nằm ở src/app_runner.py chứ không nằm trong main_app.py:
-main_app.py `import tkinter`, máy CI Linux thường không có.
+Không test nào ở đây gọi mạng, gọi LLM, hay động vào giao diện.
 """
 
 import app_runner
@@ -69,8 +66,8 @@ def _cam_hang_doi_hong(monkeypatch, message="502 Bad Gateway"):
 # --------------------------------------------------- ghi sổ cho cảnh báo
 
 def test_API1_chay_duoc_thi_XOA_bo_dem_loi(runner, monkeypatch):
-    """Thiếu api_succeeded thì bộ đếm lỗi không bao giờ về 0: eLIS đã sống
-    lại từ lâu mà hệ thống vẫn gửi thư báo động."""
+    """Thiếu api_succeeded thì bộ đếm lỗi không bao giờ về 0: eLIS sống lại
+    rồi mà hệ thống vẫn gửi thư báo động."""
     _cam_hang_doi(monkeypatch, [{"id": "a", "employeeEmail": "x@fpt.com"}])
     runner._one_round(object(), False)
     assert runner.ghi["api_succeeded"] == [1]
@@ -124,9 +121,8 @@ def test_hang_doi_va_so_nhan_vien_dem_dung(runner, monkeypatch):
 
 
 def test_o_TU_CHOI_dem_tu_luc_mo_app_chu_khong_phai_ca_lich_su(runner, monkeypatch):
-    """DB đã có 100 bản REJECTED từ trước. Mở app lên phải hiện 0, không phải
-    100 — vì ô ngay bên cạnh ("eLIS đã nhận") đếm từ lúc mở app. Hai số cạnh
-    nhau mà khác mốc thời gian thì người đọc trừ nhẩm ra kết luận sai."""
+    """DB có 100 bản REJECTED từ trước. Mở app lên phải hiện 0, vì ô bên
+    cạnh ("eLIS đã nhận") cũng đếm từ lúc mở app."""
     runner.rejected_at_start = runner.ghi["counts"]["REJECTED"]   # 100
     _cam_hang_doi(monkeypatch, [{"id": "1", "employeeEmail": "a@fpt.com"}])
 
@@ -159,8 +155,7 @@ def test_hang_doi_rong_van_dem_ve_0_chu_khong_giu_so_cu(runner, monkeypatch):
 # --------------------------------------------------- các việc kèm theo
 
 def test_moi_vong_deu_kiem_lich_bao_cao(runner, monkeypatch):
-    """Thiếu chỗ này thì báo cáo định kỳ im lặng không bao giờ gửi — đúng như
-    run_forever gọi scheduler sau mỗi vòng."""
+    """Thiếu chỗ này thì báo cáo định kỳ không bao giờ gửi."""
     _cam_hang_doi(monkeypatch, [{"id": "1", "employeeEmail": "a@fpt.com"}])
     runner._one_round(object(), False)
     runner._one_round(object(), False)
@@ -180,8 +175,8 @@ def test_lich_bao_cao_hong_KHONG_lam_hong_vong_xu_ly(runner, monkeypatch):
 
 
 def test_db_hong_KHONG_lam_hong_vong_xu_ly(runner, monkeypatch):
-    """mooc_log.db bị khóa thì mất mấy con số trên màn hình, nhưng chứng chỉ
-    vẫn phải được xử lý."""
+    """mooc_log.db bị khóa thì mất mấy con số, nhưng chứng chỉ vẫn phải
+    được xử lý."""
     _cam_hang_doi(monkeypatch, [{"id": "1", "employeeEmail": "a@fpt.com"}])
 
     def no(*a, **k):
@@ -194,8 +189,8 @@ def test_db_hong_KHONG_lam_hong_vong_xu_ly(runner, monkeypatch):
 
 
 def test_truyen_thang_items_sang_process_one_round(runner, monkeypatch):
-    """App gọi API ① rồi ĐƯA LẠI danh sách đó. Nếu không truyền `items`,
-    process_one_round sẽ tự gọi API ① lần nữa — mỗi vòng hai request."""
+    """Không truyền `items` thì process_one_round tự gọi API ① lần nữa:
+    mỗi vòng hai request."""
     items = [{"id": "1", "employeeEmail": "a@fpt.com"}]
     _cam_hang_doi(monkeypatch, items)
     runner._one_round(object(), False)
@@ -222,8 +217,8 @@ def test_tam_dung_va_chay_tiep(runner):
 
 
 def test_dung_han_thi_go_ca_hai_chot_cho(runner):
-    """stop() phải mở cả resume_event lẫn wake_event, không thì luồng nằm chờ
-    mãi ở wait() và app không bao giờ đóng được."""
+    """stop() phải mở cả resume_event lẫn wake_event, không thì luồng nằm
+    chờ mãi ở wait() và app không đóng được."""
     runner.pause()
     runner.stop()
     assert runner.stop_event.is_set()
@@ -232,7 +227,7 @@ def test_dung_han_thi_go_ca_hai_chot_cho(runner):
 
 
 def test_run_thoat_ngay_khi_khong_tao_duoc_client_azure(runner, monkeypatch):
-    """Sai key Azure là hỏng ngay từ đầu, lặp lại mỗi 5 giây cũng vô ích."""
+    """Sai key Azure là hỏng ngay từ đầu, lặp mỗi 5 giây cũng vô ích."""
     def no():
         raise RuntimeError("401 Unauthorized")
     monkeypatch.setattr(app_runner.ocr_azure, "create_client", no)
@@ -244,12 +239,11 @@ def test_run_thoat_ngay_khi_khong_tao_duoc_client_azure(runner, monkeypatch):
 
 
 def test_khong_dung_toi_tkinter():
-    """app_runner phải sạch Tk. Lẫn vào là bộ test trên CI Linux gãy ngay ở
-    bước thu thập, trước khi chạy test nào.
+    """app_runner phải sạch Tk, nếu không bộ test trên CI Linux gãy ngay ở
+    bước thu thập.
 
-    Đọc bằng ast chứ không phải tìm chuỗi: chính docstring của app_runner.py
-    có chữ "tkinter" để giải thích vì sao file này tồn tại, nên tìm chuỗi thì
-    test đỏ vì một dòng chú thích."""
+    Đọc bằng ast chứ không tìm chuỗi: docstring của app_runner.py có chữ
+    "tkinter" để giải thích, tìm chuỗi thì test đỏ vì một dòng chú thích."""
     import ast
     import pathlib
 
@@ -264,7 +258,7 @@ def test_khong_dung_toi_tkinter():
 
 
 def test_run_module_van_dung_ham_that():
-    """Chốt cho fixture: nếu run.process_one_round bị đổi tên, fixture ở trên
-    lặng lẽ dựng một hàm giả cho một tên không còn ai gọi."""
+    """Chốt cho fixture: run.process_one_round đổi tên thì fixture ở trên
+    lặng lẽ dựng hàm giả cho một tên không còn ai gọi."""
     assert callable(run.process_one_round)
     assert callable(run.call_with_retry)

@@ -1,14 +1,20 @@
 """Phân loại lỗi gọi LLM và thử lại (llm_error).
 
-VÌ SAO TÁCH RA MODULE RIÊNG. llm_vision (LLM1 đọc ảnh) và llm_text (LLM2 đọc
-text OCR) gọi CÙNG một model qua CÙNG một endpoint, nên gặp y hệt các lỗi.
-Chép bảng phân loại làm hai bản là cách chắc chắn để hai bên lệch nhau sau lần
-sửa đầu tiên — chuyện đã xảy ra thật với prompt của hai file đó.
+VÌ SAO TÁCH RIÊNG: llm_vision (LLM1) và llm_text (LLM2) gọi cùng một model qua
+cùng một endpoint nên gặp y hệt các lỗi. Chép bảng phân loại thành hai bản thì
+hai bên lệch nhau ngay lần sửa đầu.
 
-VÌ SAO CẦN BẢNG NÀY. Trước đây mọi lỗi gọi Gemma đều ra đúng một câu
-"Lỗi gọi Gemma: <exception thô>". Người vận hành mở email cảnh báo, đọc
-"Error code: 402", rồi vẫn phải tự tra nghĩa. Trong khi Azure đã có bảng
-tương đương từ lâu (ocr_azure._explain_error) — đây là chỗ bất đối xứng.
+BA CÂU HỎI BẢNG NÀY TRẢ LỜI, theo thứ tự quan trọng:
+
+  1. CÓ TỰ KHỎI KHÔNG? Hết tiền cần người đi nạp, rate-limit chỉ cần đợi. Nói
+     sai chỗ này là tai hại nhất: email hẹn "sự cố khắc phục xong thì tự xử
+     lý" trong khi không ai đang khắc phục gì.
+  2. CÓ NÊN THỬ LẠI NGAY KHÔNG? Lỗi tạm thời thì có, sai key thì vô ích.
+  3. NGƯỜI ĐỌC PHẢI LÀM GÌ? "402" không nói gì, "hết tiền, phải nạp" thì có.
+
+CÁI BẪY CỦA MÃ 429: endpoint kiểu OpenAI dùng 429 cho cả rate-limit (tạm thời)
+lẫn insufficient_quota (hết tiền). Phân loại 429 chỉ theo mã số là sai một nửa
+số ca — phải đọc cả nội dung message.
 """
 
 from __future__ import annotations
@@ -19,20 +25,23 @@ import time
 
 logger = logging.getLogger(__name__)
 
+# Tiền tố gắn vào thông báo của lỗi KHÔNG TỰ KHỎI. alert.py đọc mốc này để đổi
+# giọng email. Dùng chuỗi mốc thay vì truyền thêm cờ: ProcessResult chỉ mang
+# `reason` là chuỗi, thêm trường mới phải sửa cả schema, database, báo cáo.
 TAG_NEEDS_HUMAN = "CẦN NGƯỜI XỬ LÝ"
 
-# Mã lỗi TẠM THỜI — thử lại thì có cơ may thành công.
+# Mã lỗi TẠM THỜI — thử lại thì có cơ may thành công. Cố ý giống hệt
+# ocr_azure.MA_LOI_TAM_THOI: cùng loại vấn đề thì hai tầng phải cư xử như nhau.
 TRANSIENT_CODES = frozenset({408, 429, 500, 502, 503, 504})
 
+# Số lần gọi tối đa cho MỘT lần trích xuất, và giãn cách giữa các lần. Ngắn
+# thôi: nằm trong vòng xử lý chứng chỉ, kéo dài thì cả hàng đợi đứng.
 MAX_ATTEMPTS = 3
 BACKOFF_SECONDS = (2, 5)
 
-# Dấu hiệu HẾT TIỀN / HẾT HẠN MỨC trong nội dung message.
-#
-# Phải dò theo chuỗi chứ không chỉ theo mã, vì hai lý do:
-#   - 429 vừa là rate-limit vừa là insufficient_quota (xem docstring đầu file).
-#   - Mỗi nhà cung cấp OpenAI-compatible dùng một mã khác nhau cho cùng một
-#     chuyện: 402, 403, hoặc 429. Dò nội dung bắt được cả ba.
+# Dấu hiệu HẾT TIỀN / HẾT HẠN MỨC trong nội dung message. Phải dò theo chuỗi
+# chứ không chỉ theo mã: 429 vừa là rate-limit vừa là insufficient_quota, và
+# mỗi nhà cung cấp dùng mã khác nhau (402, 403 hoặc 429) cho cùng chuyện đó.
 OUT_OF_CREDIT_MARKERS = (
     "insufficient_quota", "insufficient quota", "insufficient balance",
     "insufficient_user_quota", "exceeded your current quota",
@@ -49,10 +58,9 @@ CONTEXT_LIMIT_MARKERS = (
 def _status_code(e: Exception) -> int | None:
     """Rút mã HTTP ra khỏi exception của SDK.
 
-    openai/langchain-openai ném APIStatusError có sẵn .status_code. Nhưng
-    không phải đường nào cũng đi qua đó — có bản chỉ ném RuntimeError với
-    chuỗi "Error code: 402 - {...}". Dò cả hai để không phụ thuộc vào chi
-    tiết nội bộ của thư viện, thứ đã đổi vài lần giữa các phiên bản.
+    openai/langchain-openai ném APIStatusError có sẵn .status_code, nhưng có
+    bản chỉ ném RuntimeError với chuỗi "Error code: 402 - {...}". Dò cả hai vì
+    chi tiết nội bộ này đã đổi vài lần giữa các phiên bản.
     """
     code = getattr(e, "status_code", None) or getattr(e, "http_status", None)
     if isinstance(code, int):
@@ -64,8 +72,8 @@ def _status_code(e: Exception) -> int | None:
 def classify(e: Exception) -> tuple[bool, str]:
     """Trả về (co_the_thu_lai, giai_thich_bang_tieng_Viet).
 
-    co_the_thu_lai=False nghĩa là thử lại chắc chắn ra đúng kết quả đó — hoặc
-    vì cấu hình sai, hoặc vì hết tiền. Những ca này được gắn TAG_CAN_NGUOI.
+    co_the_thu_lai=False: thử lại chắc chắn ra đúng kết quả đó (sai cấu hình
+    hoặc hết tiền). Những ca này được gắn TAG_NEEDS_HUMAN.
     """
     code = _status_code(e)
     text = str(e).lower()
@@ -101,8 +109,7 @@ def classify(e: Exception) -> tuple[bool, str]:
             f"hoặc đổi model, thử lại không giải quyết được.")
 
     if code == 429:
-        # Tới được đây nghĩa là 429 mà KHÔNG có dấu hiệu hết tiền -> đúng nghĩa
-        # rate-limit, tạm thời thật.
+        # 429 mà KHÔNG có dấu hiệu hết tiền -> rate-limit thật, tạm thời.
         return True, "Bị giới hạn tốc độ gọi model. Tạm thời."
 
     if code == 408:
@@ -112,19 +119,15 @@ def classify(e: Exception) -> tuple[bool, str]:
         return True, f"Lỗi phía FPT Cloud ({code}). Tạm thời."
 
     if code is None:
-        # Không rút được mã: rớt mạng, DNS hỏng, timeout ở tầng socket. Đều là
-        # lỗi tạm thời theo nghĩa "thử lại có cơ may".
+        # Không rút được mã: rớt mạng, DNS hỏng, timeout socket — thử lại có cơ may.
         return True, "Không gọi được tới FPT Cloud (mạng hoặc timeout). Tạm thời."
 
     return False, f"Lỗi không rõ từ FPT Cloud (mã {code})."
 
 
-# Dấu ngăn giữa phần GIẢI THÍCH và phần message thô của SDK.
-#
-# KHÔNG dùng " — ": chính câu giải thích cũng chứa dấu đó ("...KHÔNG tự khỏi —
-# phải nạp thêm hạn mức"), nên alert._viec_phai_lam() cắt nhầm ngay chỗ đầu
-# tiên và mất đúng vế nói người phải làm gì. Đây là lỗi đã xảy ra thật, thấy
-# được khi dựng thử email.
+# Dấu ngăn giữa phần GIẢI THÍCH và message thô của SDK. KHÔNG dùng " — ":
+# chính câu giải thích cũng chứa dấu đó, nên alert._viec_phai_lam() cắt nhầm
+# ngay chỗ đầu tiên và mất đúng vế nói người phải làm gì.
 SEPARATOR = " | Lỗi gốc: "
 
 
@@ -134,23 +137,19 @@ def describe(e: Exception, attempts: int = 1) -> str:
     code = _status_code(e)
     prefix = f"[FPT {code}] " if code else "[FPT] "
     attempt = f" (đã thử {attempts} lần)" if attempts > 1 else ""
-    # Message của SDK hay xuống dòng nhiều lần cho cùng một nội dung; ép về
-    # một dòng để log và bảng email đọc được.
+    # Message của SDK hay xuống dòng nhiều lần; ép về một dòng cho log dễ đọc.
     raw = " ".join(str(e).split())[:300]
     return f"{prefix}{explanation}{SEPARATOR}{raw}{attempt}"
 
 
 def call_with_retry(func, label: str = "LLM"):
-    """Gọi `ham()`, tự thử lại khi gặp lỗi TẠM THỜI.
+    """Gọi `func()`, tự thử lại khi gặp lỗi TẠM THỜI.
 
-    VÌ SAO CẦN. Trước đây llm_vision và llm_text không thử lại lần nào, trong
-    khi ocr_azure thử 3 lần. Nghĩa là một cú 429 rate-limit thoáng qua ở tầng
-    LLM bị đối xử y hệt hết tiền: chứng chỉ thành hỏng kỹ thuật, chặn cả hàng
-    đợi, và phải đợi hết giãn cách 2 phút mới được thử lại. Ở tầng Azure thì
-    đúng cú đó tự khỏi sau 2 giây.
+    Một cú 429 rate-limit thoáng qua mà không thử lại thì chứng chỉ thành hỏng
+    kỹ thuật và chặn cả hàng đợi.
 
-    KHÔNG thử lại lỗi vĩnh viễn (hết tiền, sai key, sai model): thử lại chỉ
-    làm chứng chỉ kẹt lâu thêm 7 giây, kết quả không đổi.
+    KHÔNG thử lại lỗi vĩnh viễn (hết tiền, sai key, sai model): kết quả không
+    đổi, chỉ làm chứng chỉ kẹt lâu thêm 7 giây.
     """
     last_error = None
     for attempt in range(1, MAX_ATTEMPTS + 1):

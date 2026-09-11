@@ -8,13 +8,11 @@
     python -m evaluation.run_eval export-errors        # xuất Excel các ca lệch cho HR
     python -m evaluation.run_eval export-compare       # bảng HUMAN vs AI (CSV 6 cột)
 
-Chạy `check` TRƯỚC `run`: nó trả lời miễn phí hai câu "ảnh có đủ không" và
-"đã gán nhãn tới đâu". Không có nó thì cách duy nhất để biết là chạy hết cả
-bộ bằng LLM thật rồi đọc lỗi ở cuối — tốn tiền cho một câu hỏi không cần LLM.
+Chạy `check` TRƯỚC `run`: nó trả lời miễn phí "ảnh có đủ không" và "đã gán
+nhãn tới đâu", không phải chạy hết cả bộ bằng LLM thật mới biết.
 
-Chạy end-to-end: mỗi lần gọi "run_all" là một lần gọi LLM thật cho toàn bộ ca
-trong file nhãn. Cần mạng công ty và tốn phí — con số in ra ở đầu để bạn biết
-trước quy mô.
+Mỗi lệnh `run` gọi LLM thật cho toàn bộ ca trong file nhãn: cần mạng công ty
+và tốn phí, con số in ra ở đầu để biết trước quy mô.
 """
 
 from __future__ import annotations
@@ -47,15 +45,12 @@ logging.basicConfig(level=logging.WARNING,
                     format="%(levelname)s: %(message)s")
 logger = logging.getLogger("evaluation")
 
-# Thư mục này ĐÃ ĐỔI TÊN (danh_gia -> evaluation) khi chuyển định danh sang
-# tiếng Anh. Đường dẫn cũ còn sót lại làm mọi lệnh dùng mặc định đều lỗi
-# FileNotFoundError, mà thông báo lại chỉ nói "không tìm thấy file nhãn"
-# nên rất dễ tưởng là mình chưa tạo file.
+# Thư mục này ĐÃ ĐỔI TÊN: danh_gia -> evaluation. Đường dẫn cũ sót lại chỉ báo
+# "không tìm thấy file nhãn", rất dễ tưởng là mình chưa tạo file.
 DEFAULT_DATASET_FILE = PROJECT_ROOT / "evaluation" / "eval_set.csv"
 
-# Kết quả thô của lượt chạy gần nhất. Tồn tại vì một lượt chạy tốn tiền LLM
-# thật: nếu chỉ in ra màn hình thì cuộn mất là mất luôn, muốn xem lại phải
-# trả tiền chạy lại từ đầu.
+# Kết quả thô của lượt chạy gần nhất. Một lượt chạy tốn tiền LLM thật, nên
+# không thể chỉ in ra màn hình rồi để cuộn mất.
 DEFAULT_RESULT_FILE = PROJECT_ROOT / "evaluation" / "last_run.csv"
 
 
@@ -65,12 +60,9 @@ def create_from_archive(archive_root, output_path) -> int:
     """Sinh file nhãn từ kho chứng chỉ thật, điền sẵn phần ĐẦU VÀO.
 
     Điền sẵn: image_path + ba cột input_* (lấy từ getCert đã lưu kèm).
-    Để TRỐNG: toàn bộ cột gt_* — kể cả gt_verdict, dù trong kho có sẵn kết
-    luận của hệ thống.
-
-    Vì sao cố ý không điền gt_verdict: đó là câu trả lời của chính hệ thống
-    đang cần đo. Lấy nó làm đáp án chuẩn thì hệ thống luôn đúng 100% và bộ
-    đánh giá không còn đo được gì. Nhãn chuẩn phải do người nhìn ảnh mà gán.
+    Để TRỐNG: toàn bộ cột gt_*, kể cả gt_verdict dù kho có sẵn kết luận của hệ
+    thống — đó là câu trả lời của chính hệ thống đang cần đo, lấy làm đáp án
+    chuẩn thì nó luôn đúng 100%. Nhãn chuẩn phải do người nhìn ảnh mà gán.
     """
     metas = archive.read_archive(archive_root)
     if not metas:
@@ -100,7 +92,7 @@ def create_from_archive(archive_root, output_path) -> int:
 def _write_raw_results(cases, results, errors, path=None) -> None:
     """Ghi kết quả từng ca ra CSV để xem lại mà không phải chạy lại.
 
-    Một lượt chạy gọi LLM thật cho từng ca, nên mất kết quả là mất tiền.
+    Lượt chạy gọi LLM thật cho từng ca, nên mất kết quả là mất tiền.
     """
     import csv
     path = Path(path or DEFAULT_RESULT_FILE)
@@ -108,17 +100,16 @@ def _write_raw_results(cases, results, errors, path=None) -> None:
     try:
         f = path.open("w", encoding="utf-8-sig", newline="")
     except PermissionError as e:
-        # KHÔNG ném lên: tới đây thì tiền LLM đã tiêu rồi. Chết vì không ghi
-        # được file phụ là vứt cả lượt chạy chỉ vì người dùng quên đóng Excel.
-        # Báo rõ rồi đi tiếp — báo cáo vẫn in ra màn hình bình thường.
+        # KHÔNG ném lên: tới đây tiền LLM đã tiêu. Chết vì không ghi được file
+        # phụ là vứt cả lượt chạy chỉ vì người dùng quên đóng Excel.
         print(f"\nKHÔNG ghi được {path.name} ({e.strerror}). "
               f"File đang mở trong Excel? Kết quả vẫn in ở dưới.")
         return
     with f:
         w = csv.writer(f)
-        # certificate_name_alt PHẢI có: prompt yêu cầu LLM TÁCH tên khóa song
-        # ngữ làm hai phần, nên thiếu cột này thì không thể biết ca song ngữ
-        # trượt vì model đọc sai hay vì luật so sánh không ghép hai nửa lại.
+        # certificate_name_alt PHẢI có: prompt bắt LLM tách tên khóa song ngữ
+        # làm hai, thiếu cột này thì không biết ca song ngữ trượt vì model đọc
+        # sai hay vì luật so sánh không ghép hai nửa lại.
         w.writerow(["case_id", "image_path", "verdict", "stage", "reason",
                     "error", "recipient_name", "certificate_name",
                     "certificate_name_alt", "issue_date"])
@@ -162,20 +153,14 @@ def _verdict_nguoi_duyet(note: str) -> str:
 def fill_verdict_from_elis(path) -> int:
     """Điền gt_verdict bằng quyết định CỦA NGƯỜI DUYỆT (cột Submit Status).
 
-    ĐÂY KHÔNG PHẢI LẤY ĐÁP ÁN CỦA MODEL LÀM ĐÁP ÁN CHUẨN. Submit Status là
-    kết luận của người chấm thật — chính là thứ hệ thống sinh ra để thay thế
-    — nên nó là nhãn chuẩn hợp lệ, và không cần gán tay dòng nào.
-
-    Nó trả lời câu: "thay người chấm bằng hệ thống thì kết quả có giống
-    người chấm không?" Khác với câu "hệ thống đọc đúng những gì in trên ảnh
-    chưa" — câu sau vẫn cần nhãn tay vì không gì ngoài tấm ảnh biết điều đó.
+    KHÔNG PHẢI lấy đáp án của model làm chuẩn: Submit Status là kết luận của
+    người chấm thật, thứ hệ thống sinh ra để thay thế, nên là nhãn hợp lệ. Nó
+    đo "thay người chấm bằng hệ thống thì kết quả có giống không", khác với
+    "hệ thống đọc đúng những gì in trên ảnh chưa" — câu sau vẫn cần nhãn tay.
 
     Phải đọc kèm bảng "bất đồng theo lý do" ở cuối báo cáo phê duyệt: người
-    duyệt từ chối vì cả những lý do hệ thống KHÔNG kiểm (nộp trùng, HR đã ghi
-    nhận giờ, khóa ngoài danh mục MOOC). Những ca đó lệch là ĐÚNG dự đoán, và
-    chúng đo khoảng cách giữa phạm vi hệ thống và công việc thật của người
-    duyệt. Đọc con số tổng mà bỏ bảng đó thì sẽ kết luận nhầm thành "AI đọc
-    chứng chỉ kém", dẫn tới đi sửa prompt cho một vấn đề thuộc luật nghiệp vụ.
+    duyệt từ chối vì cả lý do hệ thống KHÔNG kiểm (nộp trùng, HR đã ghi nhận
+    giờ, khóa ngoài danh mục MOOC), nên những ca đó lệch là ĐÚNG dự đoán.
     """
     cases = dataset.read_dataset(path)
     da_dien = 0
@@ -191,9 +176,8 @@ def fill_verdict_from_elis(path) -> int:
 def check_dataset(cases) -> int:
     """Kiểm tra bộ dữ liệu mà KHÔNG gọi LLM — miễn phí, chạy bao nhiêu lần cũng được.
 
-    Tồn tại vì hai câu hỏi "ảnh có đủ không" và "đã gán nhãn tới đâu" không
-    cần tốn một đồng nào để trả lời, nhưng nếu chỉ có lệnh `run` thì cách duy
-    nhất để biết là chạy hết cả bộ bằng LLM thật rồi đọc lỗi ở cuối.
+    Trả lời "ảnh có đủ không" và "đã gán nhãn tới đâu" mà không phải chạy hết
+    cả bộ bằng LLM thật.
     """
     thieu = [c for c in cases if not (PROJECT_ROOT / c.image_path).is_file()]
     print(f"Bộ dữ liệu: {len(cases)} ca")
@@ -228,11 +212,9 @@ def run_pipeline(cases, azure_client, dung_khi_loi: bool = False) -> tuple[dict,
       results = {case_id: ProcessResult | None}
       errors  = {case_id: lý do KHÔNG chạy được}  — chỉ chứa ca hỏng.
 
-    VÌ SAO PHẢI GIỮ RIÊNG errors: bản trước chỉ ghi None rồi cuối cùng in ra
-    một danh sách case_id trần. Gặp 84 ca hỏng thì người đọc nhận được 84 mã
-    vô nghĩa và không có cách nào biết vì sao — thiếu file, hết quota LLM,
-    hay file hỏng là ba nguyên nhân cần ba cách xử lý hoàn toàn khác nhau.
-    Lý do có được in lúc chạy, nhưng nằm lẫn giữa hàng trăm dòng và cuộn mất.
+    VÌ SAO PHẢI GIỮ RIÊNG errors: một danh sách case_id trần không nói được vì
+    sao hỏng, mà thiếu file, hết quota LLM hay file hỏng cần ba cách xử lý khác
+    hẳn nhau. Lý do in lúc chạy thì nằm lẫn giữa hàng trăm dòng và cuộn mất.
     """
     results, errors = {}, {}
     for i, case in enumerate(cases, start=1):
@@ -269,9 +251,8 @@ def run_pipeline(cases, azure_client, dung_khi_loi: bool = False) -> tuple[dict,
             errors[case.case_id] = f"{type(e).__name__}: {e}"
             print(f"LỖI: {e}")
             if dung_khi_loi:
-                # --traceback: dừng ngay ở ca hỏng ĐẦU TIÊN và in đủ ngăn xếp.
-                # Thông báo lỗi một dòng thường chỉ nói "lỗi gọi Gemma: ..."
-                # mà không nói dòng nào ném ra, nên không sửa được gì từ nó.
+                # --traceback: dừng ở ca hỏng ĐẦU TIÊN, in đủ ngăn xếp. Thông
+                # báo một dòng không nói dòng nào ném ra nên không sửa được gì.
                 import traceback
                 print("\n--- traceback đầy đủ (dừng vì --traceback) ---")
                 traceback.print_exc()
@@ -282,9 +263,8 @@ def run_pipeline(cases, azure_client, dung_khi_loi: bool = False) -> tuple[dict,
 def _gom_theo_ly_do(errors: dict) -> list[tuple[str, list[str]]]:
     """Gom lý do hỏng thành nhóm, nhóm đông nhất lên đầu.
 
-    Gom theo lý do ĐÃ RÚT GỌN: thông báo lỗi thường kèm tên file hoặc id nên
-    mỗi ca ra một chuỗi khác nhau, gom nguyên văn thì 84 ca thành 84 nhóm và
-    không tóm tắt được gì.
+    Gom theo lý do ĐÃ RÚT GỌN: thông báo lỗi hay kèm tên file hoặc id nên gom
+    nguyên văn thì mỗi ca thành một nhóm, không tóm tắt được gì.
     """
     nhom: dict[str, list[str]] = {}
     for case_id, reason in errors.items():
@@ -337,14 +317,12 @@ def print_extraction_report(scores, max_failed_shown=10) -> None:
 
 
 # Phân loại lý do người duyệt thành nhóm thô, kèm cờ "hệ thống CÓ kiểm không".
+# Lý do viết tay nên cùng một chuyện có chục cách diễn đạt ("CB log trùng khóa",
+# "log trùng", "CB log double khóa học"); gom nguyên văn thì không tóm tắt được.
 #
-# Vì sao cần: lý do viết tay nên cùng một chuyện có chục cách diễn đạt ("CB log
-# trùng khóa", "log trùng", "CB submit trùng khoá", "CB log double khóa học").
-# Gom nguyên văn thì 133 ca ra vài chục nhóm, không tóm tắt được gì.
-#
-# Cột cuối là câu quan trọng nhất của cả bảng: hệ thống chỉ so TÊN / KHÓA HỌC /
-# NGÀY. Lý do nằm ngoài ba thứ đó thì hệ thống lệch là ĐÚNG DỰ ĐOÁN, và sửa nó
-# là việc của luật nghiệp vụ chứ không phải của prompt.
+# Cờ cuối là cột quan trọng nhất: hệ thống chỉ so TÊN / KHÓA HỌC / NGÀY, nên lý
+# do ngoài ba thứ đó lệch là ĐÚNG DỰ ĐOÁN, sửa bằng luật nghiệp vụ chứ không
+# phải bằng prompt.
 _PHAN_LOAI = (
     (("trùng", "double", "đã log", "đã được hệ thống ghi nhận", "đã ghi nhận rồi"),
      "Nộp trùng khóa", False),
@@ -371,11 +349,9 @@ def _nhom_ly_do(reason: str) -> tuple[str, bool]:
 def _print_disagreements(cases, result) -> None:
     """Gom ca bất đồng theo LÝ DO NGƯỜI DUYỆT đã ghi.
 
-    Bảng này là thứ biến một con số đáng sợ thành một con số hành động được.
-    "REJECTED recall 10%" đọc trần sẽ bị hiểu là "AI đọc chứng chỉ kém"; nhìn
-    vào đây mới thấy phần lớn là "AI không kiểm trùng lặp" — hai kết luận dẫn
-    tới hai việc hoàn toàn khác nhau, một bên sửa prompt, một bên thêm luật
-    nghiệp vụ hoặc gọi thêm API eLIS.
+    "REJECTED recall 10%" đọc trần sẽ bị hiểu là "AI đọc chứng chỉ kém"; bảng
+    này cho thấy phần lớn là "AI không kiểm trùng lặp" — một bên sửa prompt,
+    một bên thêm luật nghiệp vụ hoặc gọi thêm API eLIS.
     """
     if not result.wrong_cases:
         return
@@ -633,9 +609,8 @@ def main() -> int:
         print(f"\n{'=' * 78}")
         print(f"KHÔNG CHẠY ĐƯỢC: {len(not_run)}/{len(cases)} ca ({ty_le:.0f}%)")
         print("=" * 78)
-        # Ngưỡng 20% là chỗ số đo bắt đầu mất ý nghĩa: phần lớn bộ dữ liệu đã
-        # rơi ra ngoài phép đo, nên mọi tỷ lệ tính trên phần còn lại chỉ nói
-        # về một mẫu đã bị chọn lọc bởi chính lỗi hạ tầng.
+        # Ngưỡng 20% là chỗ số đo mất ý nghĩa: tỷ lệ tính trên phần còn lại chỉ
+        # nói về một mẫu đã bị chọn lọc bởi chính lỗi hạ tầng.
         if ty_le >= 20:
             print("Tỷ lệ này quá cao để tin vào các con số ở trên: phần lớn bộ")
             print("dữ liệu đã rơi ra ngoài phép đo. Sửa nguyên nhân dưới đây")

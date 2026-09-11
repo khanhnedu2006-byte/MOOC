@@ -1,0 +1,65 @@
+BÁO CÁO XÁC MINH CHỨNG CHỈ MOOC
+2026-09-05 -> 2026-09-11
+
+  Tổng xử lý     : 97
+  Được duyệt     : 75 (77%)
+  Từ chối        : 22
+  Tỷ lệ duyệt    : 77%
+
+XU HƯỚNG (số liệu của biểu đồ):
+  Mốc             Tổng   Duyệt  Từ chối
+  2026-09-05        14      12        2
+  2026-09-06        13      12        1
+  2026-09-07        16      11        5
+  2026-09-08        14      11        3
+  2026-09-09        15      10        5
+  2026-09-10        16      13        3
+  2026-09-11         9       6        3
+
+LÝ DO TỪ CHỐI (22 chứng chỉ):
+  Sai tên                    9  (41%)
+  Sai tên khóa học           8  (36%)
+  Sai ngày                   5  (23%)
+
+THEO NHÀ CUNG CẤP:
+  Nhà cung cấp             Tổng   Duyệt  Từ chối   Tỷ lệ
+  Udemy                      31      25        6     81%
+  Coursera                   25      19        6     76%
+  edX                        24      16        8     67%
+  LinkedIn Learning          17      15        2     88%
+
+CHỨNG CHỈ ĐÃ XỬ LÝ NGÀY 2026-09-11 (12):
+  Giờ   Nhân viên       Khóa học                          Kết quả
+  17:52 ngoctt8         Agile Project Management          APPROVED
+  17:05 tiennlx6        Cloud Essentials                  REJECTED (chưa nộp)
+        eLIS không trả về file chứng chỉ
+  16:21 lamnt5          Data Analytics                    REJECTED
+        Ngày không hợp lệ
+  15:44 hoabd3          AI for Everyone                   APPROVED (eLIS từ chối)
+  14:08 anhdn2          Cloud Essentials                  APPROVED
+  13:20 bent9           Data Analytics                    WAITING (chưa nộp)
+        Không xác minh được danh tính: chứng chỉ ghi email ngoài công ty (@gmail.com)
+  11:02 huongnm1        AI CƠ BẢN_AI FOR EVERYONE         REJECTED
+        Tên không khớp
+  10:15 ngoctt8         Machine Learning Foundations      APPROVED
+  09:31 tiennlx6        Java nâng cao                     REJECTED
+        Tên khóa học không khớp
+  09:03 minhnt4         Python cơ bản                     REJECTED
+        Cán bộ nộp trùng khóa học
+  08:47 lamnt5          AI for Everyone                   APPROVED
+  08:12 hoabd3          Agile Project Management          APPROVED
+
+CẦN CHÚ Ý:
+  - 3/100 chứng chỉ (3%) hệ thống không đọc được nên đã bị loại khỏi thống kê — lỗi kỹ thuật, không phải nhân viên khai sai.
+  - 1 kết quả bị eLIS từ chối khi nộp. Thường do bản ghi đã được duyệt trước đó, hoặc sai mã nhân viên.
+  - 2 kết quả chưa nộp được lên eLIS.
+
+KEY FINDINGS:
+  - Đã xử lý 97 chứng chỉ (2026-09-05 → 2026-09-11).
+  - 77% được duyệt (75 chứng chỉ).
+  - 23% bị từ chối (22 chứng chỉ).
+  - Lý do từ chối phổ biến nhất: sai tên — 9 ca (41% số ca bị từ chối).
+  - Chi tiết: sai tên 9, sai tên khóa học 8, sai ngày 5.
+  - Khối lượng xử lý giảm 36% từ mốc đầu kỳ (14) đến mốc cuối kỳ (9).
+  - Nhà cung cấp nhiều nhất: Udemy (31 chứng chỉ, duyệt 81%).
+  - 3 kết quả chưa về được eLIS (chưa nộp hoặc bị từ chối khi nộp).

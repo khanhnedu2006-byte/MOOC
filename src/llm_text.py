@@ -1,16 +1,9 @@
 """LLM2 trích thông tin từ text OCR (llm_text).
 
-Nhận text thô (do Azure OCR đọc ra) -> trích 4 trường -> ExtractedInfo.
+Nhận text thô của Azure OCR -> trích 4 trường -> ExtractedInfo.
 
-Khác llm_vision: nhận TEXT chứ không phải ảnh. Dùng ở nhánh backup của
-pipeline, sau khi Azure OCR đã đọc ảnh khó thành text sạch.
-
-Trả về cùng schema ExtractedInfo với llm_vision, để pipeline so được
-kết quả LLM1 (Gemma) với LLM2.
-
-Dùng trong pipeline:
-    from llm_text import extract_from_text
-    info = extract_from_text(ocr_text)
+Khác llm_vision: nhận TEXT chứ không phải ảnh, dùng ở nhánh backup của
+pipeline. Cùng schema ExtractedInfo nên pipeline so được LLM1 với LLM2.
 """
 
 import json
@@ -92,12 +85,10 @@ Trường nào không thấy thì để null, không bịa. Chỉ trả JSON.
 
 # Chỗ trong PROMPT sẽ được thay bằng text OCR thật.
 #
-# Đặt thành HẰNG SỐ chứ không viết chuỗi thẳng trong .replace(): trước đây
-# PROMPT ghi "{ocr_text}" còn code lại replace("{text_ocr}") — lệch tên nên
-# không thay gì cả, và LLM nhận nguyên chuỗi "{ocr_text}" rồi trả lời "vui
-# lòng cung cấp nội dung {ocr_text}". Không có lỗi nào được ném ra ở chỗ
-# thay thế; hỏng chỉ lộ ra ở tận bước parse JSON. Một hằng số dùng chung cho
-# cả hai nơi khiến kiểu lệch đó không xảy ra được nữa, và có test canh.
+# Đặt thành HẰNG SỐ chứ không viết chuỗi thẳng trong .replace(): lệch tên thì
+# .replace() lặng lẽ không thay gì, LLM nhận nguyên placeholder và hỏng chỉ lộ
+# ra ở bước parse JSON. Dùng chung một hằng số cho cả hai nơi thì không lệch
+# được. Có test canh.
 PLACEHOLDER = "{ocr_text}"
 
 
@@ -118,7 +109,7 @@ def _strip_json_fence(text: str) -> str:
 def extract_from_text(ocr_text: str, llm=None) -> ExtractedInfo:
     """Gửi text OCR cho LLM2, trả về ExtractedInfo.
 
-    Cho phép truyền llm sẵn (để test hoặc tái dùng client).
+    Truyền sẵn llm để test hoặc tái dùng client.
     """
     if not ocr_text or not ocr_text.strip():
         raise LlmTextError("Text OCR rỗng, không có gì để trích.")
@@ -129,10 +120,9 @@ def extract_from_text(ocr_text: str, llm=None) -> ExtractedInfo:
     prompt_content = PROMPT.replace(PLACEHOLDER, ocr_text)
     message = HumanMessage(content=prompt_content)
 
-    # Thử lại lỗi TẠM THỜI (rate-limit, 5xx, rớt mạng), KHÔNG thử lại lỗi
-    # vĩnh viễn (hết tiền, sai key). Bảng phân loại nằm ở llm_error để hai
-    # file llm_vision/llm_text dùng chung một bản — chép hai bản là cách chắc
-    # chắn để chúng lệch nhau, đúng chuyện đã xảy ra với prompt.
+    # Thử lại lỗi TẠM THỜI (rate-limit, 5xx, rớt mạng), KHÔNG thử lại lỗi vĩnh
+    # viễn (hết tiền, sai key). Bảng phân loại để chung ở llm_error cho
+    # llm_vision và llm_text dùng một bản, tránh hai bên lệch nhau.
     try:
         phan_hoi = llm_error.call_with_retry(
             lambda: llm.invoke([message]), "LLM2 (đọc text OCR)")

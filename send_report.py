@@ -5,17 +5,12 @@
     python send_report.py --from 2026-08-01 --to 2026-08-31 --bucket week
     python send_report.py --send                 # gửi thật
 
-Mặc định là XEM TRƯỚC — phải thêm --send mới gửi. Cố ý như vậy để chạy thử
-không lỡ gửi mail cho mentor.
+Mặc định là XEM TRƯỚC — phải thêm --send mới gửi, để chạy thử không lỡ gửi
+mail cho mentor.
 
-CHỈ CÒN MỘT BỘ DỰNG BÁO CÁO: report_layout.py. Trước đây file này có bộ dựng
-HTML riêng cho báo cáo NGÀY, song song với report_layout lo báo cáo kỳ — hai
-bản phải sửa đồng bộ bằng tay, và đúng như dự đoán, sửa một bên là bên kia
-lệch ngay. Giờ báo cáo ngày chỉ là báo cáo kỳ với from = to.
-
-Phần dựng nội dung và phần gửi tách rời nhau: đổi cách gửi (SMTP relay nội
-bộ, Microsoft Graph...) chỉ cần viết thêm một hàm gửi, không đụng tới chỗ
-dựng nội dung.
+CHỈ MỘT BỘ DỰNG BÁO CÁO: report_layout.py — báo cáo ngày chỉ là báo cáo kỳ với
+from = to. Phần dựng nội dung tách rời phần gửi, nên đổi cách gửi (SMTP relay
+nội bộ, Microsoft Graph...) chỉ cần viết thêm một hàm gửi.
 """
 
 import os
@@ -36,35 +31,27 @@ class MailSendError(Exception):
     """Không gửi được báo cáo.
 
     Lỗi RIÊNG chứ không dùng Exception chung: scheduler bắt nó để biết "gửi
-    hỏng, thử lại vòng sau" thay vì coi như lỗi lập trình. Thông điệp của
-    exception này viết cho người vận hành đọc, không phải cho lập trình viên
-    — nên nó liệt kê luôn nguyên nhân thường gặp và cách xử lý.
+    hỏng, thử lại vòng sau" thay vì coi như lỗi lập trình. Thông điệp viết cho
+    người vận hành, nên có kèm nguyên nhân thường gặp và cách xử lý.
     """
 
 def _send_smtp(title: str, html_body: str, text_body: str,
                images: list | None = None, mail_to: str | None = None) -> None:
     """Gửi một email qua SMTP (mặc định Office 365).
 
-    Gửi email nhiều phần (multipart/alternative): bản chữ thuần và bản HTML
-    trong cùng một thư. Ứng dụng mail nào đọc được HTML thì hiện bản đẹp,
-    không thì rơi về bản chữ. Outlook luôn chọn HTML.
+    multipart/alternative: bản chữ thuần và bản HTML trong cùng một thư. Client
+    không đọc được HTML thì rơi về bản chữ; Outlook luôn chọn HTML.
 
-    images: [(cid, png_bytes)] — biểu đồ, đính kèm INLINE theo Content-ID.
-    Phải đính kèm chứ không được để link http: Outlook mặc định chặn ảnh tải
-    từ internet, người đọc sẽ thấy một ô trống kèm dòng "Click here to
-    download pictures". Ảnh nằm trong thư thì không bị chặn.
+    images: [(cid, png_bytes)] — biểu đồ, đính kèm INLINE theo Content-ID. Không
+    được để link http: Outlook mặc định chặn ảnh tải từ internet.
 
-    mail_to: người nhận. Rỗng = dùng settings.mail_to (báo cáo định kỳ).
-    Tham số này có mặt vì alert.py gửi cảnh báo tới một địa chỉ KHÁC. Viết
-    thêm một hàm gửi thứ hai cho cảnh báo là cách hỏng chắc chắn: toàn bộ
-    phần chẩn đoán lỗi SMTP bên dưới (App Password, MFA, chặn cổng 587) sẽ
-    phải nhân đôi, và bản thứ hai sẽ lạc hậu ngay lần sửa đầu tiên.
+    mail_to: người nhận, rỗng = settings.mail_to. Có tham số này vì alert.py gửi
+    cảnh báo tới địa chỉ KHÁC; tách hàm gửi thứ hai thì phần chẩn đoán lỗi SMTP
+    bên dưới phải nhân đôi.
 
-    LƯU Ý VỀ HẠN SỬ DỤNG: Microsoft đang khai tử Basic Auth cho SMTP AUTH
-    trên Exchange Online, mốc hiện tại là 31/12/2026. Sau đó cách này ngừng
-    hoạt động và phải chuyển sang Microsoft Graph API hoặc SMTP relay nội
-    bộ. Phần dựng nội dung ở trên không phụ thuộc cách gửi nên lúc đó chỉ
-    cần viết thêm một hàm gửi khác.
+    HẠN SỬ DỤNG: Microsoft đang khai tử Basic Auth cho SMTP AUTH trên Exchange
+    Online, mốc hiện tại 31/12/2026 — sau đó phải chuyển sang Microsoft Graph
+    API hoặc SMTP relay nội bộ.
     """
     import smtplib
     from email.message import EmailMessage
@@ -99,9 +86,8 @@ def _send_smtp(title: str, html_body: str, text_body: str,
     candidate.set_content(text_body)                      # bản chữ thuần
     candidate.add_alternative(html_body, subtype="html")  # bản HTML
 
-    # Gắn ảnh vào ĐÚNG phần HTML (payload cuối), không phải vào thư gốc —
-    # gắn nhầm chỗ thì cid: trong HTML không phân giải được và Outlook hiện
-    # ảnh vỡ.
+    # Gắn ảnh vào ĐÚNG phần HTML (payload cuối), không vào thư gốc: gắn nhầm
+    # chỗ thì cid: không phân giải được và Outlook hiện ảnh vỡ.
     for cid, png in (images or []):
         candidate.get_payload()[-1].add_related(
             png, maintype="image", subtype="png", cid=f"<{cid}>",
@@ -175,15 +161,11 @@ def send_period_report(from_day: str, to_day: str, bucket: str = "day") -> None:
 def _parse_day(text: str, flag_name: str) -> str:
     """Đọc ngày từ dòng lệnh, chuẩn hóa về YYYY-MM-DD.
 
-    CHẤP NHẬN thiếu số 0 ("2026-8-5") và dấu gạch chéo ("2026/08/05"), rồi tự
-    chuẩn hóa. Người gõ tay rất hay bỏ số 0, và bắt họ gõ lại chỉ vì thiếu một
-    ký tự là phiền vô ích.
+    CHẤP NHẬN thiếu số 0 ("2026-8-5") và dấu gạch chéo ("2026/08/05").
 
     NHƯNG PHẢI CHUẨN HÓA chứ không chỉ chấp nhận: truy vấn so ngày bằng CHUỖI
-    (substr(created_at,1,10) BETWEEN ...), nên '2026-8-25' sẽ không khớp với
+    (substr(created_at,1,10) BETWEEN ...), nên '2026-8-25' không khớp
     '2026-08-25' trong DB — báo cáo ra rỗng mà không có lỗi nào.
-
-    Sai thật thì báo một dòng rõ ràng, không đổ traceback vào mặt người dùng.
     """
     raw = (text or "").strip().replace("/", "-").replace(".", "-")
     part = raw.split("-")
@@ -193,9 +175,8 @@ def _parse_day(text: str, flag_name: str) -> str:
     try:
         return date.fromisoformat(raw).isoformat()
     except ValueError:
-        # from None: cố ý KHÔNG kèm traceback của ValueError. Đây là lỗi gõ
-        # sai tham số dòng lệnh, người dùng cần một câu hướng dẫn chứ không
-        # cần thấy ruột của date.fromisoformat.
+        # from None: cố ý KHÔNG kèm traceback của ValueError — đây là lỗi gõ
+        # sai tham số, người dùng cần câu hướng dẫn chứ không cần ruột hàm.
         raise SystemExit(
             f"{flag_name} không hợp lệ: {text!r}\n"
             f"  Định dạng: YYYY-MM-DD, ví dụ 2026-08-25\n"
@@ -207,12 +188,11 @@ def _parse_day(text: str, flag_name: str) -> str:
 def _default_period() -> tuple[str, str]:
     """7 ngày gần nhất, kết thúc HÔM QUA.
 
-    Vì sao không phải một ngày: biểu đồ đường một điểm thì vô nghĩa, và con
-    số một ngày không cho biết nó cao hay thấp so với bình thường. Bảy ngày
-    vừa đủ để thấy xu hướng mà vẫn là "báo cáo gần đây".
+    Bảy ngày vì biểu đồ đường một điểm thì vô nghĩa, và con số một ngày không
+    cho biết nó cao hay thấp so với bình thường.
 
-    Kết thúc hôm qua vì hôm nay chưa chạy hết — số liệu ngày đang dở luôn
-    thấp hơn thực tế và làm người đọc tưởng khối lượng đang giảm.
+    Kết thúc hôm qua vì hôm nay chưa chạy hết: số liệu ngày đang dở luôn thấp
+    hơn thực tế, làm người đọc tưởng khối lượng đang giảm.
     """
     end = date.today() - timedelta(days=1)
     return (end - timedelta(days=6)).isoformat(), end.isoformat()
@@ -248,8 +228,7 @@ def main():
         print(f"--from ({from_day}) sau --to ({to_day}).")
         return 1
 
-    # Mốc tự chọn theo độ dài kỳ: khoảng dài mà gom theo ngày thì biểu đồ
-    # thành một rừng cột không đọc được.
+    # Mốc tự chọn theo độ dài kỳ: kỳ dài mà gom theo ngày là rừng cột khó đọc.
     bucket = args.bucket
     if not bucket:
         so_ngay = (date.fromisoformat(to_day)
@@ -272,9 +251,8 @@ def main():
             return 1
     else:
         html_body, images = report_layout.build_html(stats)
-        # Bản xem trước: nhúng ảnh thẳng vào HTML dưới dạng data URI để mở
-        # bằng trình duyệt là thấy ngay. Email thật KHÔNG dùng cách này —
-        # ở đó ảnh đi kèm theo Content-ID (xem _send_smtp).
+        # Bản xem trước nhúng ảnh dạng data URI để mở bằng trình duyệt là thấy.
+        # Email thật KHÔNG dùng cách này — ở đó ảnh đi theo Content-ID.
         import base64
         for cid, png in images:
             html_body = html_body.replace(

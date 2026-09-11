@@ -12,17 +12,14 @@ services:
     image: mooc-elis:latest
     container_name: mooc-elis-job
 
-    # ---- CHẠY TRÊN SERVER LINUX THÌ ĐỌC ĐOẠN NÀY ----
-    # User trong image mang uid 1000 (xem Dockerfile). File gắn từ ngoài vào
-    # GIỮ NGUYÊN chủ sở hữu của host, nên tài khoản Linux của bạn không phải
-    # uid 1000 — chuyện thường gặp trên server nhiều tài khoản — là hỏng,
-    # bằng hai lỗi chẳng gợi gì tới quyền file:
+    # ---- Chạy trên server Linux ----
+    # User trong image mang uid 1000 (xem Dockerfile). File gắn từ ngoài giữ
+    # chủ sở hữu của host, nên tài khoản không phải uid 1000 thì hỏng:
     #     PermissionError: [Errno 13] Permission denied: '.env'
     #     sqlite3.OperationalError: attempt to write a readonly database
     #
-    # Kiểm:  id -u
-    # Ra 1000 thì bỏ qua. KHÁC 1000 thì tạo docker-compose.override.yml
-    # (compose tự nạp, và file đó đã gitignore nên mỗi máy một bản):
+    # Kiểm `id -u`. Khác 1000 thì tạo docker-compose.override.yml (compose tự
+    # nạp, file đó đã gitignore):
     #
     #     printf 'services:\n  job:\n    build:\n      args:\n' \
     #         > docker-compose.override.yml
@@ -30,13 +27,10 @@ services:
     #         "$(id -u)" "$(id -g)" >> docker-compose.override.yml
     #     docker compose build
     #
-    # ĐỪNG dùng `user:` trong compose. Nó đổi uid của TIẾN TRÌNH nhưng không
-    # đổi chủ sở hữu thư mục /app trong image — .env đọc được, nhưng SQLite
-    # vẫn không tạo nổi file -journal cạnh mooc_log.db và báo đúng câu
-    # "readonly database" ở trên. Phải sửa từ lúc BUILD.
+    # Đừng dùng `user:`: nó đổi uid tiến trình nhưng không đổi chủ sở hữu
+    # /app, nên vẫn dính lỗi SQLite ở trên. Phải sửa từ lúc build.
     #
-    # Trên Docker Desktop (Windows/macOS) không cần gì cả — bind mount ở đó
-    # đã tự lo phần quyền.
+    # Docker Desktop (Windows/macOS) không cần gì cả.
 
     # Nạp biến trong .env vào container. File nằm ngoài image nên đổi key
     # chỉ cần sửa .env rồi `docker compose restart`, không build lại.

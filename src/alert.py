@@ -12,17 +12,16 @@ from config import settings
 logger = logging.getLogger("alert")
 
 # Đặt ở gốc dự án, cạnh .report_state.json, để docker-compose gắn ra ngoài
-# được — nằm trong container thì mốc mất mỗi lần dựng lại.
+# được; nằm trong container thì mốc mất mỗi lần dựng lại.
 STATE_FILE = Path(__file__).resolve().parent.parent / ".alert_state.json"
 
-# Gửi thư hỏng thì đợi ngần này phút mới thử lại. Không có mốc này thì một
-# mật khẩu SMTP sai sẽ thành một lần đăng nhập mỗi hai phút, liên tục — Gmail
-# khóa tài khoản vì nghi brute-force, và log ngập traceback tới mức che hết
-# thông tin xử lý chứng chỉ.
+# Gửi thư hỏng thì đợi ngần này phút mới thử lại. Không có mốc này thì một mật
+# khẩu SMTP sai thành một lần đăng nhập mỗi hai phút và Gmail khóa tài khoản
+# vì nghi brute-force.
 RETRY_SEND_MINUTES = 15
 
-# Giải thích stage bằng tiếng người. Người nhận thư là người vận hành, không
-# phải người viết code: "stage2_error" không nói cho họ biết phải đi đâu sửa.
+# Giải thích stage bằng tiếng người: người nhận thư là người vận hành, không
+# phải người viết code.
 STAGE_DESCRIPTION = {
     "llm1_error": "Gọi AI đọc ảnh (Gemma/FPT) thất bại — key hết hạn, "
                   "hết hạn mức, hoặc dịch vụ lỗi",
@@ -35,11 +34,8 @@ STAGE_DESCRIPTION = {
     "system_error": "Lỗi hệ thống chưa phân loại",
 }
 
-# Ba API của eLIS: (tên gọi, việc nó làm, hệ quả khi nó chết).
-#
-# CỘT HỆ QUẢ LÀ PHẦN QUAN TRỌNG NHẤT. Người nhận thư biết "API ① lỗi" thì vẫn
-# chưa biết có phải bỏ việc đang làm để xử lý ngay hay không. Ba API hỏng cho
-# ra ba mức khẩn cấp KHÁC HẲN nhau:
+# Ba API của eLIS: (tên gọi, việc nó làm, hệ quả khi nó chết). Ba API hỏng cho
+# ba mức khẩn cấp khác hẳn nhau:
 #   ① chết -> hệ thống đứng im hoàn toàn, không xử lý được cái nào.
 #   ② chết -> chứng chỉ ở lại WAITING, tự khỏi khi eLIS sống lại. Nhẹ nhất.
 #   ③ chết -> ĐANG ĐỐT TIỀN: quét xong rồi mất kết quả, vòng sau quét lại.
@@ -64,8 +60,8 @@ def _read_state() -> dict:
     try:
         return json.loads(STATE_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        # Chưa có file, hoặc file hỏng. Coi như chưa gửi lần nào — thà gửi
-        # thừa một thư còn hơn im lặng vì một file trạng thái hỏng.
+        # Chưa có file hoặc file hỏng: coi như chưa gửi lần nào, thà gửi thừa
+        # một thư còn hơn im lặng.
         return {}
 
 
@@ -74,20 +70,17 @@ def _write_state(state: dict) -> None:
         STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2),
                               encoding="utf-8")
     except OSError as e:
-        # Không ghi được mốc thì chỉ mất khả năng chặn gửi trùng. Ném lỗi ra
-        # ngoài ở đây sẽ giết vòng xử lý chứng chỉ vì một việc phụ.
+        # Không ghi được mốc thì chỉ mất khả năng chặn gửi trùng; ném lỗi ra
+        # ngoài sẽ giết vòng xử lý chứng chỉ vì một việc phụ.
         logger.warning("Không ghi được %s: %s", STATE_FILE.name, e)
 
 
 def api_failed(api_code: int, reason: str, now: datetime | None = None) -> None:
     """Ghi nhận MỘT lần gọi API eLIS thất bại (sau khi call_with_retry hết lượt).
 
-    Chỉ ĐẾM, không gửi thư. Việc gửi do send_alert() quyết định, để cả sự cố
-    API lẫn sự cố chứng chỉ cùng đi trong MỘT thư — xem giải thích ở đó.
-
-    Bộ đếm nằm trong file trạng thái nên sống qua restart. Cần vậy vì đúng
-    loại sự cố này (eLIS đổi IP allowlist, hết hạn API key) hay đi kèm việc
-    container bị dựng lại, mà mỗi lần dựng lại là mất bộ đếm trong RAM.
+    Chỉ ĐẾM, không gửi thư; send_alert() quyết định gửi, để sự cố API và sự cố
+    chứng chỉ cùng đi trong MỘT thư. Bộ đếm nằm trong file trạng thái nên sống
+    qua restart — loại sự cố này hay đi kèm việc dựng lại container.
     """
     now = now or datetime.now()
     state = _read_state()
@@ -105,9 +98,8 @@ def api_failed(api_code: int, reason: str, now: datetime | None = None) -> None:
 def api_succeeded(api_code: int) -> None:
     """Ghi nhận API gọi được -> xóa bộ đếm thất bại của nó.
 
-    CHỈ GHI FILE KHI THẬT SỰ CÓ THAY ĐỔI. Hàm này chạy sau MỌI lần gọi API
-    thành công, tức mỗi vài giây; ghi file mỗi lần là hàng chục nghìn lượt
-    ghi đĩa mỗi ngày cho một việc không đổi gì.
+    CHỈ GHI FILE KHI CÓ THAY ĐỔI: hàm chạy sau mọi lần gọi API thành công,
+    ghi mỗi lần là hàng chục nghìn lượt ghi đĩa mỗi ngày.
     """
     state = _read_state()
     api = state.get("api") or {}
@@ -123,21 +115,18 @@ def _actions_required(failing_certs: list[dict]) -> list[str]:
 
     Hai nguồn:
       - Lý do có mốc llm_error.TAG_NEEDS_HUMAN: hết tiền, sai key, sai model,
-        hết quota Azure. Chính module sinh ra lỗi tự gắn mốc, nên bảng này
-        không phải đoán theo mã lỗi ở nơi cách xa chỗ lỗi xảy ra.
-      - stage "file_error": file chứng chỉ thật sự hỏng. Đây là ca của RIÊNG
-        một chứng chỉ, không phải lỗi hạ tầng — và với luật chặn đầu hàng nó
-        khóa cả hàng đợi vô thời hạn, nên phải nói to.
+        hết quota Azure. Module sinh lỗi tự gắn mốc nên không phải đoán.
+      - stage "file_error": file hỏng thật của riêng một chứng chỉ, nhưng với
+        luật chặn đầu hàng nó khóa cả hàng đợi vô thời hạn.
 
-    Trả về danh sách câu đã bỏ trùng, giữ thứ tự gặp. Bỏ trùng là bắt buộc:
-    Azure hết quota làm 40 chứng chỉ cùng hỏng vì đúng MỘT lý do, in 40 dòng
-    giống hệt nhau thì không ai đọc hết.
+    Bỏ trùng, giữ thứ tự gặp: Azure hết quota làm hàng chục chứng chỉ hỏng
+    cùng MỘT lý do.
     """
     out, seen = [], set()
     for c in failing_certs:
         reason = str(c.get("reason") or "")
         if llm_error.TAG_NEEDS_HUMAN in reason:
-            # Cắt lấy đúng phần giải thích, bỏ phần thông báo thô của SDK.
+            # Cắt lấy phần giải thích, bỏ thông báo thô của SDK.
             sentence = reason.split(llm_error.TAG_NEEDS_HUMAN, 1)[1].lstrip(": ")
             sentence = sentence.split(llm_error.SEPARATOR)[0].strip()
         elif c.get("stage") == "file_error":
@@ -178,10 +167,9 @@ def _apis_past_threshold(state: dict) -> dict:
 def fingerprint(failing_certs: list[dict], failing_apis: dict | None = None) -> str:
     """Định danh MỘT loại sự cố, sắp xếp cho ổn định.
 
-    Gồm tập stage của chứng chỉ đang hỏng CỘNG mã những API đang chết. Phải có
-    vế thứ hai: nếu chỉ lấy stage thì lúc API ① chết (không có chứng chỉ nào
-    để mà hỏng) khóa sẽ là chuỗi rỗng — trùng với mọi sự cố rỗng khác, và
-    chống gửi trùng sẽ nuốt luôn thư báo API hỏng.
+    Gồm tập stage của chứng chỉ đang hỏng CỘNG mã những API đang chết. Thiếu
+    vế thứ hai thì lúc API ① chết khóa là chuỗi rỗng, trùng mọi sự cố rỗng
+    khác, và chống gửi trùng nuốt luôn thư báo API hỏng.
     """
     part = sorted({(c.get("stage") or "?") for c in failing_certs})
     part += [f"api{code}" for code in sorted(failing_apis or {})]
@@ -192,8 +180,8 @@ def _may_send(state: dict, key: str, now: datetime) -> bool:
     """Đã tới lượt gửi cho loại sự cố này chưa."""
     last_failure = state.get("last_failure")
     if last_failure:
-        # Lần gửi trước hỏng (SMTP lỗi). Đợi RETRY_SEND_MINUTES rồi thử lại,
-        # bất kể loại sự cố nào — vấn đề nằm ở đường gửi, không ở sự cố.
+        # Lần gửi trước hỏng (SMTP lỗi): đợi RETRY_SEND_MINUTES rồi thử lại,
+        # bất kể loại sự cố, vì vấn đề nằm ở đường gửi.
         try:
             at = datetime.fromisoformat(last_failure["at"])
         except (KeyError, TypeError, ValueError):
@@ -224,12 +212,8 @@ def _subject_line(failing_certs: list[dict], failing_apis: dict) -> str:
 
 
 def _api_block_text(failing_apis: dict) -> str:
-    """Bảng trạng thái CẢ BA API, dạng chữ thuần.
-
-    In đủ ba dòng kể cả khi chỉ một API hỏng. Chỉ in cái đang hỏng thì người
-    đọc không biết hai cái kia đã được kiểm tra hay chưa — "không nhắc tới"
-    và "vẫn tốt" là hai chuyện khác nhau, và ở giữa một sự cố thì suy đoán
-    nhầm chỗ đó rất tốn thời gian.
+    """Bảng trạng thái CẢ BA API, dạng chữ thuần. In đủ ba dòng kể cả khi chỉ
+    một API hỏng: "không nhắc tới" và "vẫn tốt" là hai chuyện khác nhau.
     """
     lines = ["", "TRẠNG THÁI 3 API CỦA eLIS:"]
     for code in (1, 2, 3):
@@ -261,10 +245,9 @@ def _build_content(failing_certs: list[dict], now: datetime,
     stages = sorted({(c.get("stage") or "?") for c in failing_certs})
     title = _subject_line(failing_certs, failing_apis)
 
-    # "0 chứng chỉ bị ảnh hưởng" là SAI khi API ① chết: lúc đó CẢ hàng đợi bị
-    # ảnh hưởng, chỉ là không lấy được danh sách nên không đếm được. In số 0 ở
-    # đó khiến người nhận tưởng sự cố vô hại và để tới mai mới xem — đúng ca
-    # nặng nhất thì lại bị hạ mức khẩn cấp.
+    # "0 chứng chỉ bị ảnh hưởng" là SAI khi API ① chết: CẢ hàng đợi bị ảnh
+    # hưởng, chỉ là không lấy được danh sách nên không đếm được. In số 0 ở đó
+    # làm người nhận tưởng sự cố vô hại.
     if 1 in failing_apis:
         affected = ("TOÀN BỘ hàng đợi (không lấy được danh sách nên "
                      "không đếm được)")
@@ -282,11 +265,9 @@ def _build_content(failing_certs: list[dict], now: datetime,
         f"{settings.technical_retry_cooldown_minutes} phút.\n\n"
     )
     if actions:
-        # ĐỔI GIỌNG khi sự cố không tự khỏi. Câu mặc định "sự cố khắc phục
-        # xong thì tự được xử lý" đúng với Azure quá tải hay eLIS chập, nhưng
-        # SAI với hết tiền / sai key: sẽ không có ai khắc phục gì cả nếu không
-        # được nói là phải đi làm gì. Đó là ca người nhận dễ đọc lướt rồi để
-        # tới hôm sau nhất, mà cũng là ca mất mát nhiều nhất.
+        # ĐỔI GIỌNG khi sự cố không tự khỏi. Câu mặc định "khắc phục xong thì
+        # tự được xử lý" đúng với Azure quá tải hay eLIS chập, nhưng SAI với
+        # hết tiền / sai key: phải nói rõ người nhận cần làm gì.
         header += ("*** SỰ CỐ NÀY KHÔNG TỰ KHỎI — CẦN NGƯỜI XỬ LÝ ***\n"
                    + "".join(f"  - {a}\n" for a in actions)
                    + "\nHệ thống vẫn thử lại đều nhưng sẽ hỏng y như vậy cho "
@@ -432,8 +413,8 @@ def send_alert(failing_certs: list[dict], now: datetime | None = None,
     try:
         send(title, html, text, None, settings.alert_mail_to)
     except Exception as e:
-        # Ghi mốc THẤT BẠI, không ghi mốc đã gửi: lần sau vẫn phải thử lại,
-        # nhưng không được thử ngay ở vòng kế tiếp (hai phút nữa).
+        # Ghi mốc THẤT BẠI, không ghi mốc đã gửi: vẫn phải thử lại, nhưng
+        # không thử ngay ở vòng kế tiếp.
         state["last_failure"] = {"at": now.isoformat(timespec="seconds"),
                              "key": key}
         _write_state(state)
