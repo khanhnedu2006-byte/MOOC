@@ -355,13 +355,8 @@ Ca hỏng kỹ thuật
    │
    └─ Không có nhánh nào khác. Chứng chỉ ở lại WAITING trên eLIS cho tới khi
       sự cố khắc phục xong — lúc đó nó tự được xử lý, không cần thao tác tay.
-```
-
-**Số lần đếm được lưu trong `mooc_log.db`**, nên nó sống qua các lần khởi động
-lại container.
 
 ### 5.2b. Chặn đầu hàng: chưa xong 1 thì chưa tới lượt 2
-```
 Hàng đợi: 1, 2, 3, ... 10     — chứng chỉ 1 lỗi hệ thống
 
 Vòng 1   : thử 1 → hỏng.  DỪNG VÒNG, không đụng 2, 3, 4.
@@ -371,73 +366,6 @@ Sau 2'   : thử 1 → hỏng lần 2. Lại dừng.
 Lần 5    : hỏng lần 5 → GỬI EMAIL, và vẫn thử tiếp mãi.
 Khi 1 xong: vòng đó chạy tiếp luôn 2, 3, 4...
 Sau lần 5 mà vẫn hỏng thì gửi Email mới sau mỗi 1 tiếng
-```
-
-> ### ⚠️ Cái giá của chặn đầu hàng
-> Luật này an toàn khi ca đứng đầu hỏng vì **hạ tầng** — lúc đó cả lô hỏng nên
-> chặn không mất gì. Nhưng nếu nó hỏng vì **lý do của riêng nó**, cụ thể là
-> `stage = file_error` (file chứng chỉ thật sự lỗi), thì thử lại bao nhiêu lần
-> cũng vẫn lỗi và **nó chặn cả hàng đợi vô thời hạn**. Một nhân viên nộp nhầm
-> file hỏng có thể làm cả phòng không được duyệt chứng chỉ.
->
-> Nếu muốn `file_error` **không** chặn hàng (vì nó là lỗi của riêng một chứng
-> chỉ, không phải lỗi hệ thống), đó là một thay đổi nhỏ — hỏi khi cần.
-
-### 5.3. Email cảnh báo (`src/alert.py`)
-
-Gửi tới `ALERT_MAIL_TO` — **khác** `MAIL_TO` của báo cáo định kỳ. Cảnh báo là việc phải xử lý ngay; báo cáo là số liệu đọc cuối ngày. Trộn hai luồng vào một hộp thư thì cảnh báo bị chìm giữa báo cáo.
-
-Nội dung thư:
-
-- Nói rõ ngay đầu thư rằng những chứng chỉ này **không bị từ chối**, hệ thống
-  vẫn đang thử lại, và sự cố khỏi thì chúng tự được xử lý. Thiếu câu này thì
-  người nhận đọc "lỗi hệ thống, 40 chứng chỉ" rồi đi báo học viên rằng chứng
-  chỉ bị từ chối — đúng thứ luật HR sinh ra để tránh.
-- **Nguyên nhân theo `stage`, dịch ra tiếng người**: `stage2_error` không nói
-  cho người vận hành biết đi sửa ở đâu, nên thư viết thẳng "hết hạn mức Azure
-  (gói F0 chỉ 500 trang/tháng), sai key, hoặc dịch vụ lỗi".
-- **Bảng liệt kê từng chứng chỉ**: nhân viên, khóa học, tầng lỗi, số lần hỏng,
-  chi tiết lỗi.
-
-### Khối "Trạng thái 3 API của eLIS"
-
-Thư **luôn in đủ ba API**, kể cả khi chỉ một cái hỏng — "không nhắc tới" và
-"vẫn tốt" là hai chuyện khác nhau, và ở giữa một sự cố thì suy đoán nhầm chỗ
-đó rất tốn thời gian.
-
-| API | Việc nó làm | Hệ quả khi chết |
-|---|---|---|
-| ① `getCert` | Lấy danh sách chờ duyệt | **Hệ thống đứng im** — không lấy được hàng đợi nên không xử lý được cái nào |
-| ② `download-certificates` | Tải file chứng chỉ | Chứng chỉ ở lại WAITING, tự khỏi khi eLIS sống lại. **Nhẹ nhất** |
-| ③ `ProcessUserCourseStatus` | Nộp kết quả duyệt | **Đang đốt tiền** — đã quét xong (đã trả phí Gemma + Azure) nhưng kết quả không nộp được, vòng sau quét lại từ đầu |
-
-Cột "hệ quả" là phần quan trọng nhất: biết "API ① lỗi" vẫn chưa biết có phải
-bỏ việc đang làm để xử lý ngay hay không. Ba API hỏng cho ra **ba mức khẩn cấp
-khác hẳn nhau**.
-
-**Trước đây hai trong ba API không bao giờ báo được.** Cơ chế cảnh báo đếm số
-dòng log có `stage` kỹ thuật, mà chỉ API ② mới ghi ra loại dòng đó:
-
-Khi API ① chết, thư ghi *"Bị ảnh hưởng: TOÀN BỘ hàng đợi (không lấy được danh
-sách nên không đếm được)"* — không phải `0`. In số 0 ở đó khiến người nhận
-tưởng sự cố vô hại và để tới mai mới xem: đúng ca nặng nhất lại bị hạ mức
-khẩn cấp.
-
-### Khối "Sự cố này KHÔNG tự khỏi"
-
-Thư mặc định viết *"sự cố khắc phục xong thì chứng chỉ tự được xử lý, không
-cần thao tác gì thêm"*. Câu đó đúng với Azure quá tải hay eLIS chập, nhưng
-**sai** với hết tiền / sai key / file hỏng — sẽ không có ai khắc phục gì nếu
-không được nói là phải đi làm gì.
-
-
-```
-*** SỰ CỐ NÀY KHÔNG TỰ KHỎI — CẦN NGƯỜI XỬ LÝ ***
-  - HẾT TIỀN hoặc hết hạn mức FPT AI Marketplace. Thử lại sẽ KHÔNG tự khỏi
-    — phải nạp thêm hạn mức cho tài khoản thì hệ thống mới chạy lại được.
-
-Hệ thống vẫn thử lại đều nhưng sẽ hỏng y như vậy cho tới khi việc trên
-được làm xong.
 
 ### Bảng phân loại lỗi LLM (`src/llm_error.py`)
 
@@ -470,13 +398,6 @@ chừng nào sự cố còn (`ALERT_COOLDOWN_HOURS`, mặc định 1).
 | Danh sách chứng chỉ đổi, cùng loại lỗi | Không |
 | Xuất hiện `stage` **mới** | **Gửi ngay**, không đợi hết giãn cách |
 | Lần gửi trước hỏng (SMTP lỗi) | Thử lại sau 15 phút, không phải ở vòng kế tiếp |
-
-"Loại sự cố" nhận diện bằng **tập `stage` đang hỏng cộng mã những API đang
-chết**, không phải bằng danh sách chứng chỉ. Thiếu vế thứ hai thì lúc API ①
-chết (không có chứng chỉ nào để hỏng) khóa sẽ là chuỗi rỗng, và cơ chế chống
-trùng nuốt luôn thư báo API hỏng. Danh sách đổi mỗi vòng (ca cũ xong, ca mới vào), nên lấy nó
-làm mốc thì thư nào cũng là "sự cố mới" và cơ chế chặn thành vô dụng trong khi
-vẫn trông như đang hoạt động.
 
 ### 5.4. Thử lại ngay bằng tay
 
