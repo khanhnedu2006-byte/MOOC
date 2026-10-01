@@ -4,6 +4,8 @@ Nối các module theo đúng sơ đồ ba lần so:
 
   1. Gemma (LLM1) đọc ảnh -> so tên + khóa học với input người nhập.
      Cả hai khớp -> APPROVED (dừng, không tốn Azure).
+     Cả hai khớp nhưng NGÀY trượt -> Azure OCR + LLM2 đọc lại ngày; ngày LLM2
+     trong khoảng -> APPROVED, ngoài khoảng -> REJECTED.
 
   2. Không khớp -> Azure OCR + LLM2 đọc lại từ ảnh.
 
@@ -56,6 +58,30 @@ def _date_in_range(extracted: ExtractedInfo) -> bool:
         settings.valid_from,
         settings.valid_to,
     )
+
+
+def _date_reason(extracted: ExtractedInfo, other: ExtractedInfo | None = None) -> str:
+    """Câu lý do cho trường NGÀY, tách ba trường hợp.
+
+    Bản đọc chính không có ngày mà bản kia có -> nói theo bản kia: "không có
+    ngày" là sai sự thật khi một máy vẫn đọc ra được một ngày.
+    """
+    source = extracted
+    if (not (extracted.issue_date or "").strip() and other is not None
+            and (other.issue_date or "").strip()):
+        source = other
+
+    status = process_data.date_status(source.issue_date, settings.valid_from,
+                                      settings.valid_to)
+    if status == process_data.DATE_MISSING:
+        return "Không tìm thấy ngày hoàn thành chứng chỉ"
+    return f"Ngày không hợp lệ"
+   
+
+
+def _vn_date(iso: str) -> str:
+    y, m, d = iso.split("-")
+    return f"{d}/{m}/{y}"
 
 
 def _llms_agree(t1: ExtractedInfo, t2: ExtractedInfo) -> bool:
@@ -112,11 +138,37 @@ def _field_matches(extracted: ExtractedInfo, given: InputInfo) -> dict[str, bool
     }
 
 
+# Tên trên ảnh trượt vì THIẾU họ/tên đệm hoặc là EMAIL CÁ NHÂN — cùng hai dấu
+# hiệu _unverifiable_identity dùng. Đây là "chưa xác minh được", không phải
+# "sai tên", nên KHÔNG nêu "Tên không khớp" trong comment gửi người học:
+# ca "Hieu Tran" / "Trần Trung Hiếu" là đúng người, chỉ thiếu tên đệm.
+def _name_unverifiable(extracted: ExtractedInfo, given: InputInfo) -> bool:
+    name = extracted.recipient_name
+    return bool(compare.external_email(name)
+                or compare.name_missing_words(name, given.employee_name))
+
+
+def _name_reason(extracted: ExtractedInfo, other: ExtractedInfo | None = None) -> str:
+    """Câu lý do cho trường TÊN.
+
+    CẢ HAI bản đọc đều không ra tên -> "không tìm thấy tên" (thường là ảnh chụp
+    trang khóa học, chưa phải chứng chỉ). Chỉ cần một máy đọc ra tên thì tên đó
+    là tên khác -> "Tên không khớp".
+    """
+    reads = [extracted] + ([other] if other is not None else [])
+    if all(not (r.recipient_name or "").strip() for r in reads):
+        return "Không tìm thấy tên người học trên chứng chỉ"
+    return "Tên không khớp"
+
+
 def _mismatch_reason(extracted: ExtractedInfo, given: InputInfo,
                      other: ExtractedInfo | None = None) -> str:
     """Lý do từ chối: nêu trường nào không khớp (tên / khóa học / thời gian).
     Không đổi phán quyết: APPROVED/REJECTED do _both_fields_match quyết, và
     nó không gọi tới đây.
+
+    Tên thiếu họ/tên đệm hoặc là email cá nhân thì KHÔNG nêu lỗi tên — chỉ
+    nêu các trường còn lại (khóa học, ngày) là lý do từ chối thật.
     """
     primary = _field_matches(extracted, given)
     backup = _field_matches(other, given) if other is not None else None
@@ -127,9 +179,47 @@ def _mismatch_reason(extracted: ExtractedInfo, given: InputInfo,
             continue
         if backup is not None and backup[field]:
             continue        # bản kia đọc khớp, chưa chắc sai
-        errors.append("Ngày không hợp lệ" if field == "Ngày"
-                      else f"{field} không khớp")
+        if field == "Tên" and (_name_unverifiable(extracted, given) or (
+                other is not None and _name_unverifiable(other, given))):
+            continue        # chưa xác minh được, không phải sai tên
+        if field == "Tên":
+            errors.append(_name_reason(extracted, other))
+        elif field == "Ngày":
+            errors.append(_date_reason(extracted, other))
+        else:
+            errors.append(f"{field} không khớp")
     return "; ".join(errors) if errors else "Không khớp"
+
+
+# Tên + khóa học đã khớp ở LLM1, chỉ NGÀY trượt -> đọc lại ngày bằng Azure OCR
+# + LLM2 trước khi từ chối.
+#
+# VÌ SAO: ngày in chữ nhỏ (bảng xác thực, ảnh chụp màn hình) và Gemma từng đọc
+# "Sept. 29, 2026" thành "Sep. 29, 2020" -> chứng chỉ hợp lệ bị từ chối oan.
+# Tên và khóa đã có LLM1 xác nhận; ở đây CHỈ hỏi LLM2 về ngày, không so lại
+# tên/khóa của LLM2 (LLM2 đọc tên kém hơn thì đã có LLM1 đứng ra).
+#
+# Tầng 2 hỏng -> stage2_error (hỏng kỹ thuật, WAITING, thử lại sau), không
+# từ chối dựa trên một bản đọc ngày duy nhất.
+def _recheck_date(llm1, given, images, ocr_images, extract_from_text,
+                  azure_client, verdict) -> ProcessResult:
+    logger.info("LLM1 khớp tên + khóa nhưng ngày %r ngoài khoảng -> đọc lại "
+                "ngày bằng OCR + LLM2.", llm1.issue_date)
+    try:
+        llm2 = extract_from_text(ocr_images(azure_client, images))
+    except Exception as e:
+        logger.warning("Tầng 2 lỗi khi đọc lại ngày: %s", e)
+        return verdict(Verdict.REJECTED, f"Tầng 2 lỗi (đọc lại ngày): {e}",
+                       "stage2_error", llm1)
+
+    # Log ghi tên/khóa của LLM1 (bản đã khớp) kèm ngày của LLM2 (bản quyết định).
+    merged = llm1.model_copy(update={"issue_date": llm2.issue_date})
+    if _date_in_range(llm2):
+        return verdict(Verdict.APPROVED,
+                       "Tên, khóa học khớp (LLM1); thời gian khớp khi Azure đọc "
+                       f"lại (LLM1 đọc ngày sai: {llm1.issue_date!r})",
+                       "llm2", merged)
+    return verdict(Verdict.REJECTED, _date_reason(llm2, llm1), "llm2", merged)
 
 
 def process(
@@ -165,10 +255,10 @@ def process(
         return verdict(Verdict.REJECTED, f"LLM1 lỗi: {e}", "llm1_error")
 
     if _both_fields_match(llm1, given):
-        if not _date_in_range(llm1):
-            return verdict(Verdict.REJECTED,
-                           _mismatch_reason(llm1, given), "llm1", llm1)
-        return verdict(Verdict.APPROVED, "Tên, khóa học và thời gian đều khớp (LLM1)", "llm1", llm1)
+        if _date_in_range(llm1):
+            return verdict(Verdict.APPROVED, "Tên, khóa học và thời gian đều khớp (LLM1)", "llm1", llm1)
+        return _recheck_date(llm1, given, images, ocr_images, extract_from_text,
+                             azure_client, verdict)
 
     # ===== Tầng 2: Azure OCR + LLM2 =====
     logger.info(

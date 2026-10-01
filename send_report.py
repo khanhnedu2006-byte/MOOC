@@ -17,6 +17,7 @@ import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 import argparse
+import re
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -31,6 +32,22 @@ class MailSendError(Exception):
     """
     Không gửi được báo cáo.
     """
+
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+# Tách danh sách người nhận: nhận cả "," lẫn ";" (Outlook copy ra dạng
+# "a@fpt.com; b@fpt.com") và xuống dòng. Bỏ trùng, không phân biệt hoa/thường,
+# giữ thứ tự nhập.
+def parse_recipients(raw: str | None) -> list[str]:
+    out, seen = [], set()
+    for part in re.split(r"[,;\n]", raw or ""):
+        email = part.strip()
+        if email and email.lower() not in seen:
+            seen.add(email.lower())
+            out.append(email)
+    return out
+
 
 def _send_smtp(title: str, html_body: str, text_body: str,
                images: list | None = None, mail_to: str | None = None) -> None:
@@ -69,7 +86,13 @@ def _send_smtp(title: str, html_body: str, text_body: str,
             "  Bỏ --send để xem trước nội dung mà không cần cấu hình."
         )
 
-    recipient = [e.strip() for e in dia_chi.split(",") if e.strip()]
+    recipient = parse_recipients(dia_chi)
+    invalid = [e for e in recipient if not _EMAIL_RE.fullmatch(e)]
+    if invalid:
+        raise MailSendError(
+            f"{ten_bien} có địa chỉ không hợp lệ: {', '.join(invalid)}\n"
+            f"  Nhiều người nhận: cách nhau bằng dấu phẩy hoặc chấm phẩy, vd\n"
+            f"  {ten_bien}=a@fpt.com, b@fpt.com; c@fpt.com")
     sender = settings.mail_from or settings.smtp_user
 
     candidate = EmailMessage()

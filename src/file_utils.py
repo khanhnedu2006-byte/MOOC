@@ -32,6 +32,21 @@ class InvalidFileError(Exception):
 _MAGIC_BYTES = 8192
 
 
+def unsupported_mime(data: bytes) -> str | None:
+    """MIME thật của file nếu hệ thống KHÔNG đọc được loại này, None nếu đọc được.
+
+    Cùng luật với check_mime(), nhưng nhận bytes để client.py gắn cờ ngay khi
+    tải về từ API ②. None cũng có nghĩa "chưa kết luận được" (bytes rỗng) —
+    để check_mime() báo lỗi như cũ.
+    """
+    if not data:
+        return None
+    mime = magic.from_buffer(data[:_MAGIC_BYTES], mime=True)
+    if mime in MIME_IMAGE or mime == MIME_PDF:
+        return None
+    return mime
+
+
 def check_mime(path: str | Path) -> str:
     """Trả về MIME thật của file. Ném InvalidFileError nếu không hỗ trợ.
 

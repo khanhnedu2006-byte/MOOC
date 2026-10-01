@@ -157,7 +157,8 @@ def test_khac_khoa_thi_KHONG_tinh_la_trung(bat_luat):
 
 def _item(uc_id: str, course: str = "Python cơ bản",
           email: str = "hoabd5@fpt.com") -> dict:
-    return {"id": uc_id, "certificate_id": f"c-{uc_id}", "courseId": f"k-{course}",
+    return {"id": uc_id, "certificate_id": f"c-{uc_id}", "courseLink": "https://learn.example.com/k",
+            "courseId": f"k-{course}",
             "employeeId": "00332383", "employeeName": "Bùi Đức Hòa",
             "employeeEmail": email, "courseName": course,
             "providerName": "Coursera"}

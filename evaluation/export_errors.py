@@ -94,7 +94,9 @@ def nguyen_nhan_tu_choi_oan(e: dict, r: dict) -> str:
     reason = r.get("reason") or ""
     ra = []
 
-    if "Ngày không hợp lệ" in reason:
+    if "ngày hoàn thành" in reason:
+        ra.append("Không đọc được ngày, hệ thống đang xử như ngày sai")
+    elif "Ngày không hợp lệ" in reason:
         if (r.get("issue_date") or "").strip() in NGAY_KHONG_DOC_DUOC:
             ra.append("Không đọc được ngày, hệ thống đang xử như ngày sai")
         else:

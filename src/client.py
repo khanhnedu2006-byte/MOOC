@@ -14,6 +14,7 @@ import logging
 
 import requests
 
+import file_utils
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -135,7 +136,8 @@ def download_certificates(pairs: list[dict]) -> list[dict]:
     """POST download-certificates — tải file chứng chỉ.
 
     pairs: list dict {"UserCourseId": ..., "certificate_id": ...}, tối đa 20.
-    Trả list dict {"userCourseId", "certificate_id", "anh_bytes", "ten_file"};
+    Trả list dict {"userCourseId", "certificate_id", "anh_bytes", "ten_file",
+    "unsupported_mime"} (unsupported_mime = MIME thật nếu file sai định dạng);
     item lỗi bị bỏ qua (run.py đã ghi log). KHÔNG hardcode tên trường base64:
     eLIS từng đổi hợp đồng API nên _find_base64_in_item() dò theo NỘI DUNG.
     """
@@ -300,6 +302,28 @@ def _find_base64_in_item(item: dict) -> bytes | None:
     return None
 
 
+def _find_unknown_file_in_item(item: dict) -> bytes | None:
+    """Base64 của một file KHÔNG nằm trong _FILE_SIGNATURES (WebP, HEIC, GIF...).
+
+    Chỉ dò các trường có tên gợi ý file (base64/file/content/data) và giải
+    CHẶT (validate=True): không có chữ ký file để đối chiếu thì phải dựa vào
+    tên trường, nếu không một chuỗi văn bản dài bất kỳ cũng thành "file".
+    """
+    for name, value in item.items():
+        if not isinstance(value, str) or len(value) < 64:
+            continue
+        if not any(x in _normalize_key(name) for x in ("base64", "file", "content", "data")):
+            continue
+        text_value = value.strip()
+        if text_value.startswith("data:") and "," in text_value:
+            text_value = text_value.split(",", 1)[1]
+        try:
+            return base64.b64decode("".join(text_value.split()), validate=True)
+        except (ValueError, binascii.Error):
+            continue
+    return None
+
+
 def _find_item_list(body) -> list[dict]:
     """Tìm mảng item trong response, dù nó nằm ở gốc hay trong 'data'/'items'."""
     if isinstance(body, list):
@@ -329,7 +353,7 @@ def _read_files_from_json(body) -> list[dict]:
         if item.get("success") is False:
             continue
 
-        content = _find_base64_in_item(item)
+        content = _find_base64_in_item(item) or _find_unknown_file_in_item(item)
         if content is None:
             continue
 
@@ -338,6 +362,9 @@ def _read_files_from_json(body) -> list[dict]:
             "certificate_id": _get_by_key(item, _CERT_ID_KEYS),
             "anh_bytes": content,
             "ten_file": _get_by_key(item, _FILENAME_KEYS),
+            # Người học nộp file hệ thống không đọc được (WebP, HEIC, DOCX...).
+            # Thử lại không bao giờ khỏi -> run.py xếp vào ca BỎ QUA.
+            "unsupported_mime": file_utils.unsupported_mime(content),
             # Cho _attach_ids() ghi log khi phải đoán id; bị xoá ngay sau đó.
             "_cac_truong": list(item.keys()),
         })

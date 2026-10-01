@@ -211,6 +211,14 @@ TECHNICAL_STAGES = ("llm1_error", "stage2_error", "system_error",
 # technical_retry_state() đếm nó như hỏng kỹ thuật và với chu kỳ poll 5 giây,
 # chỉ 25 giây sau đã gửi mail báo động nhầm.
 SKIP_STAGE = "skipped_external_email"
+# Người học nộp file sai định dạng (WebP, HEIC, DOCX...) — phát hiện ngay ở
+# API ②, chưa tốn lượt LLM nào. Cùng lý do không nằm trong TECHNICAL_STAGES:
+# thử lại không bao giờ khỏi, chỉ người học nộp lại file mới xong.
+SKIP_UNSUPPORTED_FILE_STAGE = "skipped_unsupported_file"
+# courseLink trên eLIS không phải URL (vd "Tiếng Anh Vstep") — khóa không có
+# nguồn để đối chiếu, chờ người duyệt. Chặn TRƯỚC API ②, không tốn lượt nào.
+SKIP_INVALID_LINK_STAGE = "skipped_invalid_course_link"
+SKIP_STAGES = (SKIP_STAGE, SKIP_UNSUPPORTED_FILE_STAGE, SKIP_INVALID_LINK_STAGE)
 
 
 def skipped_ids(user_course_ids, db_path=None) -> set:
@@ -234,13 +242,14 @@ def skipped_ids(user_course_ids, db_path=None) -> set:
         for i in range(0, len(ids), 500):
             part = ids[i:i + 500]
             placeholders = ",".join("?" * len(part))
+            cho_stage = ",".join("?" * len(SKIP_STAGES))
             rows = conn.execute(
                 f"SELECT p.user_course_id FROM process_log p "
                 f"WHERE p.user_course_id IN ({placeholders}) "
-                f"  AND p.stage = ? "
+                f"  AND p.stage IN ({cho_stage}) "
                 f"  AND p.id = (SELECT MAX(q.id) FROM process_log q "
                 f"              WHERE q.user_course_id = p.user_course_id)",
-                (*part, SKIP_STAGE)).fetchall()
+                (*part, *SKIP_STAGES)).fetchall()
             out.update(r[0] for r in rows)
         return out
     finally:

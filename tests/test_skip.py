@@ -160,7 +160,8 @@ def test_ca_TU_CHOI_binh_thuong_KHONG_bi_doi_thanh_bo_qua():
 # ===== Hành vi ở run.py =====
 
 def _item(uc_id: str) -> dict:
-    return {"id": uc_id, "certificate_id": f"c-{uc_id}", "courseId": "K1",
+    return {"id": uc_id, "certificate_id": f"c-{uc_id}", "courseLink": "https://learn.example.com/k",
+            "courseId": "K1",
             "employeeId": "003", "employeeName": "Bùi Đức Hòa",
             "employeeEmail": "hoabd3@fpt.com", "courseName": "ISO 27001",
             "providerName": "Coursera"}

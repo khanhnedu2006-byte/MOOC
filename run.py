@@ -6,6 +6,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import NamedTuple
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -64,9 +65,24 @@ def is_technical_failure(result: ProcessResult) -> bool:
     return result.stage in TECHNICAL_STAGES
 
 
-# Ca BỎ QUA: đọc được ảnh nhưng không xác minh được danh tính (email ngoài công ty).
+# Ca BỎ QUA: đọc được ảnh nhưng không xác minh được danh tính (email ngoài công
+# ty), hoặc file nộp lên sai định dạng (phát hiện ở API ②).
 def is_skip(result: ProcessResult) -> bool:
-    return result.stage == database.SKIP_STAGE
+    return result.stage in database.SKIP_STAGES
+
+# courseLink có phải URL http(s) hợp lệ không. eLIS có khóa nhập tay mà ô link
+# ghi chữ ("Tiếng Anh Vstep") -> không có nguồn khóa học để đối chiếu.
+def is_valid_course_link(link) -> bool:
+    text = str(link or "").strip()
+    if not text or any(c.isspace() for c in text):
+        return False
+    try:
+        parts = urlparse(text)
+    except ValueError:
+        return False
+    host = parts.hostname or ""
+    return parts.scheme in ("http", "https") and "." in host.strip(".")
+
 
 # Gọi eLIS, thử lại khi lỗi tạm thời (502, timeout).
 # Tối đa RETRY_COUNT lần, cách nhau RETRY_DELAY_SECONDS giây.
@@ -360,6 +376,11 @@ def handle_one_certificate(info: dict, azure_client,
                            position: int, total: int) -> CertOutcome:
     uc_id = info["id"]
 
+    # Link khóa học không hợp lệ -> BỎ QUA trước mọi lời gọi (trùng, tải, LLM).
+    if not is_valid_course_link(info.get("courseLink")):
+        skip_invalid_course_link(info, position, total)
+        return CertOutcome(False, False)
+
     # Kiểm nộp trùng TRƯỚC khi tải file để ca trùng không tốn lượt LLM.
     try:
         duplicate = is_duplicate(info)
@@ -396,6 +417,10 @@ def handle_one_certificate(info: dict, azure_client,
         log_technical_failure(info, "eLIS không trả về file cho chứng chỉ này",
                               stage="no_file")
         return CertOutcome(True, False)
+
+    if downloaded.get("unsupported_mime"):
+        skip_unsupported_file(info, downloaded, position, total)
+        return CertOutcome(False, False)
 
     archive_path = None
     if settings.save_certificates:
@@ -437,6 +462,48 @@ def handle_one_certificate(info: dict, azure_client,
             str(info.get("employeeEmail") or "").strip().lower(),
             normalize(info.get("courseName"))))
     return CertOutcome(False, accepted)
+
+
+# Ca BỎ QUA vì file sai định dạng (WebP, HEIC, DOCX...): KHÔNG gọi LLM, KHÔNG
+# nộp API ③ — bản ghi ở lại WAITING chờ người duyệt / người học nộp lại.
+# KHÔNG coi là hỏng kỹ thuật: thử lại không bao giờ khỏi, mà hỏng kỹ thuật
+# chặn đầu hàng -> một file WebP đứng im cả hàng đợi mãi mãi.
+def skip_unsupported_file(info: dict, downloaded: dict,
+                          position: int, total: int) -> None:
+    reason = (f"File định dạng không hỗ trợ ({downloaded['unsupported_mime']}"
+              + (f", tên file {downloaded['ten_file']!r}" if downloaded.get("ten_file") else "")
+              + ") — chờ người duyệt; chỉ nhận PDF, JPEG, PNG, BMP, TIFF")
+    logger.info("[%d/%d] [BỎ QUA] %s (%s) | %s | stage: %s",
+                position, total, info.get("employeeName") or "?",
+                info.get("employeeId") or info.get("id"), reason,
+                database.SKIP_UNSUPPORTED_FILE_STAGE)
+    try:
+        database.write_failure_log(
+            user_course_id=info["id"], employee_id=info.get("employeeId"),
+            verdict=Verdict.WAITING.value, reason=reason,
+            stage=database.SKIP_UNSUPPORTED_FILE_STAGE,
+            provider=info.get("providerName"), course_name=info.get("courseName"))
+    except Exception as e:
+        logger.warning("Ghi log ca file sai định dạng lỗi: %s", e)
+
+
+# Ca BỎ QUA vì courseLink không phải URL: KHÔNG tra trùng, KHÔNG tải file,
+# KHÔNG gọi LLM, KHÔNG nộp API ③ — ở lại WAITING chờ người duyệt.
+def skip_invalid_course_link(info: dict, position: int, total: int) -> None:
+    reason = (f"Link khóa học không hợp lệ ({str(info.get('courseLink') or '')[:80]!r})"
+              " — chờ người duyệt")
+    logger.info("[%d/%d] [BỎ QUA] %s (%s) | %s | stage: %s",
+                position, total, info.get("employeeName") or "?",
+                info.get("employeeId") or info.get("id"), reason,
+                database.SKIP_INVALID_LINK_STAGE)
+    try:
+        database.write_failure_log(
+            user_course_id=info["id"], employee_id=info.get("employeeId"),
+            verdict=Verdict.WAITING.value, reason=reason,
+            stage=database.SKIP_INVALID_LINK_STAGE,
+            provider=info.get("providerName"), course_name=info.get("courseName"))
+    except Exception as e:
+        logger.warning("Ghi log ca link khóa học không hợp lệ lỗi: %s", e)
 
 
 #4. Nộp kết quả, ghi log, gọi pipeline
@@ -560,6 +627,7 @@ def build_result_dto(result: ProcessResult, info: dict) -> dict:
         "courseId": info["courseId"],
         "employeeId": info["employeeId"],
         "comment": learner_comment(result),
+        "comment_cer": "AI Moocs xử lý tự động"
     }
 
 

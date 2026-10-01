@@ -45,15 +45,45 @@ def normalize(text: str | None) -> str:
     return text
 
 
-from datetime import date
+from datetime import date, timedelta
 
 import dateparser
 
 
+_MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July",
+                "August", "September", "October", "November", "December")
+
+# "tháng 9" / "Thang 10" -> tên tháng tiếng Anh. dateparser không hiểu chữ
+# "tháng", nên "tháng 9 2026" (Coursera tiếng Việt) và "tháng 10 8, 2026"
+# (bản dịch máy của "Oct 8, 2026") đều ra None. Đổi sang tên tháng thì thứ tự
+# ngày/tháng hết mơ hồ.
+_VN_MONTH = re.compile(r"\bth[aá]ng\s*(\d{1,2})\b", re.IGNORECASE)
+# "ngày 8 tháng 10 năm 2026": bỏ chữ "ngày", "năm" cho dateparser đọc.
+_VN_FILLER = re.compile(r"\b(ng[aà]y|n[aă]m)\b", re.IGNORECASE)
+
+
+def _vietnamese_to_english(date_string: str) -> str | None:
+    """None khi có "tháng N" với N ngoài 1-12: để nguyên thì dateparser tự
+    đoán bừa ("tháng 13 2026" -> 03/01/2026)."""
+    text = unicodedata.normalize("NFC", date_string)
+    if any(not 1 <= int(m.group(1)) <= 12 for m in _VN_MONTH.finditer(text)):
+        return None
+
+    def month(m):
+        return f" {_MONTH_NAMES[int(m.group(1)) - 1]} "
+
+    text = _VN_MONTH.sub(month, text)
+    text = _VN_FILLER.sub(" ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _parse_with_order(date_string: str, order: str):
     """Parse ngày theo một thứ tự cụ thể (DMY hoặc MDY). Trả date hoặc None."""
+    text = _vietnamese_to_english(date_string)
+    if text is None:
+        return None
     result = dateparser.parse(
-        date_string,
+        text,
         settings={
             "DATE_ORDER": order,
             # Bắt buộc đủ ngày+tháng+năm; thiếu phần nào -> None.
@@ -61,6 +91,27 @@ def _parse_with_order(date_string: str, order: str):
         },
     )
     return result.date() if result else None
+
+
+def _parse_month_year(date_string: str):
+    """Chuỗi CHỈ có tháng + năm ("tháng 9 2026", "Sep 2026", "09/2026").
+
+    Trả (ngày đầu tháng, ngày cuối tháng) hoặc None. Chỉ gọi khi đã thử đọc
+    đủ ngày-tháng-năm mà không được.
+    """
+    text = _vietnamese_to_english(date_string)
+    if text is None:
+        return None
+    result = dateparser.parse(
+        text,
+        settings={"REQUIRE_PARTS": ["month", "year"],
+                  "PREFER_DAY_OF_MONTH": "first"},
+    )
+    if not result:
+        return None
+    first = result.date().replace(day=1)
+    next_month = date(first.year + first.month // 12, first.month % 12 + 1, 1)
+    return first, next_month - timedelta(days=1)
 
 
 def parse_date(date_string: str | None):
@@ -74,6 +125,49 @@ def parse_date(date_string: str | None):
     return _parse_with_order(date_string, "DMY")
 
 
+# Kết quả kiểm ngày, tách rõ để lý do từ chối nói đúng chuyện gì xảy ra:
+#   DATE_OK           trong khoảng
+#   DATE_MISSING      chứng chỉ không có ngày (AI trả null / chuỗi rỗng)
+#   DATE_UNREADABLE   có chữ nhưng không ra được ngày đủ ngày-tháng-năm
+#   DATE_OUT_OF_RANGE ra được ngày nhưng nằm ngoài [start, end]
+DATE_OK = "ok"
+DATE_MISSING = "missing"
+DATE_UNREADABLE = "unreadable"
+DATE_OUT_OF_RANGE = "out_of_range"
+
+
+def date_status(date_string: str | None, start: str, end: str) -> str:
+    """Như date_in_range() nhưng trả về VÌ SAO không hợp lệ.
+
+    Cùng luật thử cả DMY và MDY: một cách hiểu rơi vào khoảng là DATE_OK.
+    """
+    if not date_string or not date_string.strip():
+        return DATE_MISSING
+
+    day_from = date.fromisoformat(start)
+    day_to = date.fromisoformat(end)
+
+    parsed = False
+    for order in ("DMY", "MDY"):
+        day = _parse_with_order(date_string, order)
+        if day is None:
+            continue
+        parsed = True
+        if day_from <= day <= day_to:
+            return DATE_OK
+    if parsed:
+        return DATE_OUT_OF_RANGE
+
+    # Chỉ có tháng + năm: hợp lệ khi CẢ THÁNG nằm trong khoảng. Tháng chạm
+    # biên (vd tháng 10 khi hạn là 15/10) không biết ngày thật trước hay sau
+    # hạn -> không nhận.
+    month = _parse_month_year(date_string)
+    if month is None:
+        return DATE_UNREADABLE
+    first, last = month
+    return DATE_OK if day_from <= first and last <= day_to else DATE_OUT_OF_RANGE
+
+
 def date_in_range(date_string: str | None, start: str, end: str) -> bool:
     """Kiểm tra ngày hoàn thành có nằm trong khoảng [start, end] không.
 
@@ -84,8 +178,7 @@ def date_in_range(date_string: str | None, start: str, end: str) -> bool:
 
     start, end: chuỗi "YYYY-MM-DD" lấy từ config.
     """
-    if not date_string or not date_string.strip():
-        return False
+    return date_status(date_string, start, end) == DATE_OK
 
     day_from = date.fromisoformat(start)
     day_to = date.fromisoformat(end)

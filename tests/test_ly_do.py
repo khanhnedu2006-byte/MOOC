@@ -96,3 +96,96 @@ def test_LY_DO_KHONG_DUOC_DOI_PHAN_QUYET():
     assert pipeline._both_fields_match(DOC_TOT, dung_ten) is True
     # Bản đọc kém vẫn trượt dù tên đã đúng — đúng như trước khi sửa.
     assert pipeline._both_fields_match(DOC_KEM, dung_ten) is False
+
+
+# ===== Tên thiếu họ/tên đệm, email cá nhân: KHÔNG nêu lỗi tên =====
+
+GIVEN_HIEU = InputInfo(employee_name="Trần Trung Hiếu", employee_code="hieutt126",
+                       course_name="Intro to Agent Skills")
+
+
+def test_thieu_ten_dem_KHONG_ghi_ten_khong_khop():
+    """Ca thật: 'Hieu Tran' là đúng người, chỉ thiếu tên đệm. Bị từ chối vì
+    không có ngày thì comment chỉ được nói chuyện ngày."""
+    doc = ExtractedInfo(recipient_name="Hieu Tran",
+                        certificate_name="Introduction to agent skills",
+                        issue_date=None)
+    ly_do = pipeline._mismatch_reason(doc, GIVEN_HIEU, doc)
+    assert ly_do == "Không tìm thấy ngày hoàn thành chứng chỉ"
+
+
+def test_email_ca_nhan_KHONG_ghi_ten_khong_khop():
+    doc = ExtractedInfo(recipient_name="hieu.tran@gmail.com",
+                        certificate_name="Khóa khác", issue_date="10/09/2026")
+    ly_do = pipeline._mismatch_reason(doc, GIVEN_HIEU, doc)
+    assert ly_do == "Tên khóa học không khớp"
+    assert "gmail" not in ly_do
+
+
+def test_ten_khac_han_VAN_ghi_ten_khong_khop():
+    doc = ExtractedInfo(recipient_name="Nguyen Van B",
+                        certificate_name="Khóa khác", issue_date="10/09/2026")
+    ly_do = pipeline._mismatch_reason(doc, GIVEN_HIEU, doc)
+    assert ly_do == "Tên không khớp; Tên khóa học không khớp"
+
+
+def test_email_cong_ty_sai_nguoi_VAN_ghi_ten_khong_khop():
+    doc = ExtractedInfo(recipient_name="nguoikhac@fpt.com",
+                        certificate_name="Khóa khác", issue_date="10/09/2026")
+    assert pipeline._mismatch_reason(doc, GIVEN_HIEU, doc).startswith("Tên không khớp")
+
+
+def test_KHONG_doi_phan_quyet():
+    """Chỉ đổi câu chữ: thiếu tên đệm + thiếu ngày vẫn REJECTED."""
+    doc = ExtractedInfo(recipient_name="Hieu Tran",
+                        certificate_name="Introduction to agent skills",
+                        issue_date=None)
+    r = pipeline.process(images=[b"x"], given=GIVEN_HIEU,
+                         extract_from_image=lambda i: doc,
+                         ocr_images=lambda c, i: "ocr",
+                         extract_from_text=lambda t: doc, azure_client=None)
+    assert r.verdict.value == "REJECTED"
+    assert r.reason == "Không tìm thấy ngày hoàn thành chứng chỉ"
+
+
+# ===== Không tìm thấy tên người học =====
+
+GIVEN_ANH = InputInfo(employee_name="Nguyễn Bá Anh", employee_code="anhnb2",
+                      course_name="Building with the Claude API")
+
+
+def test_ca_hai_ban_khong_co_ten_thi_KHONG_TIM_THAY_TEN():
+    """Ca thật: ảnh chụp trang khóa học Coursera, không in tên người học."""
+    doc = ExtractedInfo(recipient_name=None,
+                        certificate_name="Building with the Claude API",
+                        issue_date="10/09/2026")
+    assert pipeline._mismatch_reason(doc, GIVEN_ANH, doc) == \
+        "Không tìm thấy tên người học trên chứng chỉ"
+
+
+def test_mot_ban_doc_ra_ten_khac_thi_van_TEN_KHONG_KHOP():
+    khong_ten = ExtractedInfo(recipient_name="  ", certificate_name="Building with the Claude API",
+                              issue_date="10/09/2026")
+    ten_khac = khong_ten.model_copy(update={"recipient_name": "Tran Van C"})
+    assert pipeline._mismatch_reason(khong_ten, GIVEN_ANH, ten_khac) == "Tên không khớp"
+    assert pipeline._mismatch_reason(ten_khac, GIVEN_ANH, khong_ten) == "Tên không khớp"
+
+
+def test_khong_ten_va_khong_ngay_ghep_ca_hai():
+    doc = ExtractedInfo(recipient_name=None,
+                        certificate_name="Building with the Claude API", issue_date=None)
+    assert pipeline._mismatch_reason(doc, GIVEN_ANH, doc) == (
+        "Không tìm thấy tên người học trên chứng chỉ; "
+        "Không tìm thấy ngày hoàn thành chứng chỉ")
+
+
+def test_khong_ten_qua_pipeline_van_REJECTED():
+    doc = ExtractedInfo(recipient_name=None,
+                        certificate_name="Building with the Claude API",
+                        issue_date="10/09/2026")
+    r = pipeline.process(images=[b"x"], given=GIVEN_ANH,
+                         extract_from_image=lambda i: doc,
+                         ocr_images=lambda c, i: "ocr",
+                         extract_from_text=lambda t: doc, azure_client=None)
+    assert r.verdict.value == "REJECTED"
+    assert r.reason == "Không tìm thấy tên người học trên chứng chỉ"

@@ -11,6 +11,7 @@ trước khi so, nên ở đây không chuẩn hóa lại.
 """
 
 import re
+from itertools import permutations
 
 from process_data import normalize
 
@@ -64,9 +65,35 @@ def match_code(name_on_image, employee_code):
     return False
 
 
+# Tên dài hơn mức này thì không thử hoán vị (n! cách ghép): 6 từ = 720 lượt,
+# đủ cho mọi tên người Việt thực tế.
+_MAX_JOINED_NAME_WORDS = 6
+
+
+def match_joined_name(llm_value, input_value) -> bool:
+    """Tên trên ảnh là các từ của tên eLIS VIẾT LIỀN, theo thứ tự bất kỳ.
+
+    "Bùi Đức Hoà" khớp "buiduchoa", "duchoabui", "hoabuiduc", "HoaBuiDuc",
+    "duchoa bui". Đòi ĐỦ mọi từ và KHÔNG thừa ký tự nào: "buiduc" (thiếu
+    "hoa") hay "buiduchoa97" (thừa số) đều không khớp — username có số là việc
+    của match_code.
+    """
+    image = "".join(normalize(llm_value).split())
+    words = normalize(input_value).split()
+    if not image or not words or len(words) > _MAX_JOINED_NAME_WORDS:
+        return False
+    if len(image) != sum(len(w) for w in words):
+        return False                    # lọc nhanh trước khi hoán vị
+    return any("".join(order) == image for order in permutations(words))
+
+
 def match_name(llm_value, input_value):
-    """So TÊN NGƯỜI với input: tập hợp từ, bỏ qua thứ tự, chặt từng từ."""
-    return same_word_set(llm_value, input_value)
+    """So TÊN NGƯỜI với input: tập hợp từ, bỏ qua thứ tự, chặt từng từ.
+
+    Thêm đường khớp tên VIẾT LIỀN không dấu (xem match_joined_name).
+    """
+    return (same_word_set(llm_value, input_value)
+            or match_joined_name(llm_value, input_value))
 
 
 def match_name_or_code(name_on_image, employee_name, employee_code):
@@ -91,17 +118,103 @@ def input_is_subset(input_value, image_value):
     return input_words.issubset(image_words)
 
 
+# ===== Từ viết tắt trong tên khóa học =====
+# eLIS hay lưu tên khóa viết tắt ("Intro to Agent Skills") trong khi chứng chỉ
+# in đầy đủ ("Introduction to Agent Skills"), hoặc ngược lại.
+#
+# BẢNG TƯỜNG MINH, KHÔNG so theo tiền tố: tiền tố thì "java" khớp nhầm
+# "javascript", "python" khớp "pythonic" — duyệt oan. Muốn nhận thêm dạng viết
+# tắt nào thì thêm một dòng vào đây (khóa và giá trị ở dạng ĐÃ normalize:
+# chữ thường, không dấu).
+#
+# Chỉ áp cho TÊN KHÓA HỌC, không áp cho tên người hay mã nhân viên.
+COURSE_ABBREVIATIONS = {
+    "intro": "introduction",
+    "ai": "al",
+    "AioT": "AloT",
+    "in": "with"
+}
+
+
+def expand_abbreviations(text: str | None) -> str:
+    """Chuẩn hóa rồi thay từng từ viết tắt bằng dạng đầy đủ.
+
+    Áp cho CẢ HAI phía (ảnh và eLIS) nên khớp được cả hai chiều: eLIS viết tắt
+    còn ảnh đầy đủ, hoặc ảnh viết tắt còn eLIS đầy đủ.
+    "Intro to AI" -> "introduction to artificial intelligence".
+    """
+    return " ".join(COURSE_ABBREVIATIONS.get(word, word)
+                    for word in normalize(text).split())
+
+
 def match_course(image_value, input_value, mode="strict"):
     """So TÊN KHÓA HỌC với input.
 
     "strict": trùng khớp hoàn toàn. "loose": nhập là TẬP CON của tên trên ảnh.
+    Từ viết tắt trong COURSE_ABBREVIATIONS được mở rộng trước khi so.
     """
+    image_value = expand_abbreviations(image_value)
+    input_value = expand_abbreviations(input_value)
     if mode == "loose":
         return input_is_subset(input_value, image_value)
     return same_word_set(image_value, input_value)
 
 
+# ===== Tên khóa bị nhà cung cấp đổi / in khác =====
+# NGOẠI LỆ do phía Course Provider: tên khóa đăng ký trên eLIS khác hẳn tên in
+# trên chứng chỉ, không phải viết tắt hay lỗi đọc. Vd Anthropic đăng khóa
+# "Building with Claude API" nhưng chứng chỉ in "Claude with the Anthropic API".
+#
+# Khóa = tên eLIS, giá trị = các tên được chấp nhận trên chứng chỉ. Viết như
+# người đọc thấy; so bằng normalize() nên hoa/thường, dấu, dấu câu không quan
+# trọng. Tên eLIS phải trùng TUYỆT ĐỐI (cùng tập từ) mới áp ngoại lệ — khóa
+# "Building with the Claude API by Anthropic" là khóa KHÁC, không ăn theo.
+# Tên eLIS gốc vẫn được so như thường; bảng này chỉ thêm đường khớp.
+COURSE_ALIASES = {
+    "Building with Claude API": ["Claude with the Anthropic API", "Building with the Claude API"],
+    "AI Capabilities and Limitations": ["AI Fluency: AI Capabilities & Limitations"],
+    "ISTQB Certified Tester Foundation Level (CTFL) v4.0": ["Certified Tester Foundation Level"]
+}
+
+
+def course_aliases(input_value) -> list[str]:
+    """Các tên chứng chỉ được chấp nhận thay cho tên eLIS này (rỗng nếu không có)."""
+    for elis_name, accepted in COURSE_ALIASES.items():
+        if same_word_set(elis_name, input_value):
+            return list(accepted)
+    return []
+
+
+# Mã khóa eLIS gắn ở CUỐI tên, trong ngoặc: "SAP Certified - ... (C_DBADM_2601)".
+# Chứng chỉ không in mã này, nên thử thêm bản tên đã bỏ mã.
+#
+# CHỈ nhận là mã khi trong ngoặc: không có khoảng trắng, có "_" hoặc "-", và
+# có chữ số. Tên thật như "(Phần 1)", "(Materials Management)", "(ENGLISH
+# VERSION)" KHÔNG bị bỏ — bỏ "(Phần 2)" là chứng chỉ Phần 1 khớp khóa Phần 2.
+_TRAILING_COURSE_CODE = re.compile(
+    r"\s*\(\s*(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9]+(?:[_\-.][A-Za-z0-9]+)+\s*\)\s*$")
+
+
+def strip_course_code(input_value) -> str | None:
+    """Tên khóa eLIS đã bỏ mã khóa ở cuối, hoặc None nếu không có mã."""
+    if not input_value:
+        return None
+    stripped = _TRAILING_COURSE_CODE.sub("", str(input_value))
+    return stripped if stripped != str(input_value) and stripped.strip() else None
+
+
 def match_course_bilingual(primary, secondary, input_value, mode="strict"):
+    """Như _match_course_bilingual_one, thử thêm tên thay thế trong COURSE_ALIASES
+    và tên đã bỏ mã khóa ở cuối (strip_course_code)."""
+    names = [input_value, *course_aliases(input_value)]
+    without_code = strip_course_code(input_value)
+    if without_code:
+        names += [without_code, *course_aliases(without_code)]
+    return any(_match_course_bilingual_one(primary, secondary, name, mode)
+               for name in names)
+
+
+def _match_course_bilingual_one(primary, secondary, input_value, mode="strict"):
     """So tên khóa học với input, chấp nhận cả hai ngôn ngữ VÀ bản ghép hai nửa.
 
     Ảnh in tên khóa song ngữ -> LLM tách làm hai phần (primary/secondary),

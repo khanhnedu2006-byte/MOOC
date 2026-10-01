@@ -47,3 +47,12 @@ config_changes.log
 # server Linux). Compose tự nạp file này nếu có. Không commit: mỗi
 # máy một uid khác nhau.
 docker-compose.override.yml
+
+# Log của dry_run.py: chứa ảnh chứng chỉ + tên, email, mã nhân viên thật.
+dry_run_logs/
+
+# Thư mục của run_with_manual_approve.py: file chứng chỉ + quyết định, dữ liệu thật.
+manual_review/
+
+# Bản sao lưu DB log (dữ liệu nhân viên thật).
+*.db.bak*

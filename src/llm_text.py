@@ -50,6 +50,7 @@ QUY TẮC certificate_name / certificate_name_alt — TÁCH THEO NGÔN NGỮ:
   thì tên khóa là "Python cơ bản" và "Python fundamentals" — KHÔNG phải cả
   câu "Đã hoàn thành khoá học...". Tên khóa thường nằm trong dấu ngoặc kép,
   in đậm, hoặc trên một dòng riêng cỡ chữ lớn hơn.
+- Lấy thêm suffix BY PROVIDER NAME nếu có, ví dụ "Python cơ bản by akabot"
 - BỎ các cụm chung chung: "Certificate of Completion", "Chứng nhận hoàn
   thành", "Đã hoàn thành khóa học", "Has successfully completed the course",
   "Giấy chứng nhận".

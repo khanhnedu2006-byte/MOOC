@@ -38,7 +38,13 @@ def test_chuoi_ly_do_khop_giua_pipeline_va_report():
     # Tham số thứ ba là bản đọc còn lại. Truyền chính `trich` vào để cả hai
     # bản cùng trượt, lý do mới ra đúng dạng chuỗi report.py đi tìm.
     reason = pipeline._mismatch_reason(trich, nhap, trich)
-
+    # "Không có ngày" và "Ngày không hợp lệ" loại trừ nhau — một bản đọc chỉ
+    # sinh được một trong hai, nên gọi thêm một lần với ngày null.
+    khong_ngay = trich.model_copy(update={"issue_date": None})
+    reason += "; " + pipeline._mismatch_reason(khong_ngay, nhap, khong_ngay)
+    # Tương tự với tên: "không tìm thấy tên" chỉ sinh ra khi tên null.
+    khong_ten = trich.model_copy(update={"recipient_name": None})
+    reason += "; " + pipeline._mismatch_reason(khong_ten, nhap, khong_ten)
 
     for text, _nhan in report.REJECTION_CAUSES:
         assert text in reason, (

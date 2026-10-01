@@ -107,6 +107,10 @@ REJECTION_CAUSES = (
     ("Tên không khớp", "Sai tên"),
     ("Tên khóa học không khớp", "Sai tên khóa học"),
     ("Ngày không hợp lệ", "Sai ngày"),
+    # Phần chung của câu cũ "Không có ngày hoàn thành..." và câu hiện tại
+    # "Không tìm thấy ngày hoàn thành..." — dòng log cũ trong DB vẫn được đếm.
+    ("ngày hoàn thành", "Thiếu ngày"),
+    ("Không tìm thấy tên người học", "Thiếu tên"),
 )
 
 

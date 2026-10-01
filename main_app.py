@@ -533,7 +533,7 @@ class ConsoleWindow(tk.Tk):
             return
         seen = set()
         for row in rows:
-            if row.get("stage") != database.SKIP_STAGE:
+            if row.get("stage") not in database.SKIP_STAGES:
                 continue
             key = row.get("user_course_id")
             if key in seen:
@@ -541,8 +541,9 @@ class ConsoleWindow(tk.Tk):
             seen.add(key)
             self.skip_view.insert("", "end", values=(
                 str(row.get("created_at") or "")[:19],
-                row.get("name_on_image") or "?",
-                (row.get("certificate_name") or "?")[:60],
+                # Ca file sai định dạng không đọc ảnh -> lấy mã NV / khóa eLIS.
+                row.get("name_on_image") or row.get("employee_id") or "?",
+                (row.get("certificate_name") or row.get("course_name") or "?")[:60],
                 (row.get("reason") or "")[:160],
             ))
 
