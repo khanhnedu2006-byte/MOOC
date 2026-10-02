@@ -48,14 +48,19 @@ for M in pydantic_settings langchain_openai azure.ai.documentintelligence \
     fi
 done
 
-# python-magic cần thư viện hệ thống libmagic, không có trong pip. Thiếu nó
-# thì src/file_utils.py chết lúc import.
-if $PY -c "import magic" 2>/dev/null; then
-    ok "import magic (libmagic có sẵn)"
+# Trước đây là python-magic, cần thư viện hệ thống libmagic. Đã đổi sang
+# puremagic (thuần Python) vì cú nạp DLL libmagic làm SẬP tiến trình trên máy
+# Windows có phần mềm bảo mật doanh nghiệp — không traceback, rất khó lần.
+if $PY -c "import puremagic" 2>/dev/null; then
+    ok "import puremagic"
 else
-    loi "python-magic không nạp được. Cần thư viện hệ thống:
-           sudo apt install -y libmagic1
-           (không có quyền sudo thì phải nhờ quản trị server)"
+    loi "thiếu puremagic — chạy: $PY -m pip install -r requirements-job.txt"
+fi
+
+# Chốt: còn gói cũ trên máy là còn nguy cơ ai đó import nhầm.
+if $PY -c "import magic" 2>/dev/null; then
+    canh "python-magic vẫn còn cài. Không dùng nữa, gỡ cho sạch:
+           $PY -m pip uninstall -y python-magic python-magic-bin"
 fi
 
 echo

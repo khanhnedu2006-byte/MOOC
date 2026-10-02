@@ -10,11 +10,10 @@
 FROM python:3.13-slim
 
 # ---- Gói hệ thống ----
-# libmagic1: python-magic cần thư viện này để đoán loại file theo NỘI DUNG.
-#            Thiếu nó, src/file_utils.py chết ngay lúc import.
-# tzdata   : để log in đúng giờ Việt Nam thay vì UTC.
+# tzdata: để log in đúng giờ Việt Nam thay vì UTC.
+#
+# KHÔNG còn libmagic1: đã đổi python-magic sang puremagic (thuần Python).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libmagic1 \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
 

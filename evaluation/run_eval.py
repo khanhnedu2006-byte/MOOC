@@ -33,7 +33,7 @@ import file_utils                                   # noqa: E402
 import archive                                      # noqa: E402
 import llm_text                                     # noqa: E402
 import llm_vision                                   # noqa: E402
-import ocr_azure                                    # noqa: E402
+import ocr                                          # noqa: E402
 import pipeline                                     # noqa: E402
 from config import settings                         # noqa: E402
 from process_data import code_from_email          # noqa: E402
@@ -205,7 +205,7 @@ def check_dataset(cases) -> int:
 
 # ===================== chạy pipeline trên bộ dữ liệu =====================
 
-def run_pipeline(cases, azure_client, dung_khi_loi: bool = False) -> tuple[dict, dict]:
+def run_pipeline(cases, ocr_client, dung_khi_loi: bool = False) -> tuple[dict, dict]:
     """Chạy pipeline thật cho từng ca.
 
     Trả về (results, errors):
@@ -237,9 +237,9 @@ def run_pipeline(cases, azure_client, dung_khi_loi: bool = False) -> tuple[dict,
                     employee_code=case.input_employee_code,
                 ),
                 extract_from_image=llm_vision.extract_from_image,
-                ocr_images=ocr_azure.ocr_images,
+                ocr_images=ocr.ocr_images,
                 extract_from_text=llm_text.extract_from_text,
-                azure_client=azure_client,
+                ocr_client=ocr_client,
             )
             results[case.case_id] = result
             print(f"{result.verdict.value} ({result.stage})")
@@ -424,7 +424,8 @@ def print_decision_report(result) -> None:
         for stage, (correct, total) in sorted(result.by_stage.items()):
             print(f"{stage:<16}{total:>7}{correct:>7}{_pct(correct / total):>9}")
         print("-" * 39)
-        print("Tầng llm2 / llm1_vs_llm2 là những ca phải gọi Azure OCR (tốn tiền).")
+        print(f"Tầng llm2 / llm1_vs_llm2 là những ca phải gọi OCR "
+              f"({ocr.provider_name()}) — tốn tiền hoặc tốn hạn mức.")
         print("Nếu tỷ lệ đúng ở đó không cao hơn llm1 thì tầng 2 chưa đáng giá tiền.")
 
     if result.wrong_cases:
@@ -591,10 +592,13 @@ def main() -> int:
         cases = cases[:args.limit]
 
     print(f"Bộ dữ liệu: {len(cases)} ca từ {args.file}")
+    # In rõ nhà cung cấp OCR: cả bộ đánh giá này sinh ra để SO hai bên, mà
+    # không ghi lại thì xem số liệu một tuần sau không ai biết nó của bên nào.
+    print(f"OCR tầng 2: {ocr.provider_name()}")
     print(f"Sắp gọi LLM thật wait {len(cases)} ca. Ctrl+C để hủy.\n")
 
-    azure_client = ocr_azure.create_client()
-    results, errors = run_pipeline(cases, azure_client, dung_khi_loi=args.traceback)
+    ocr_client = ocr.create_client()
+    results, errors = run_pipeline(cases, ocr_client, dung_khi_loi=args.traceback)
     _write_raw_results(cases, results, errors)
 
     predicted_extractions = {

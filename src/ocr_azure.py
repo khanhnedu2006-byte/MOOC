@@ -1,9 +1,4 @@
 """OCR bằng Azure Document Intelligence (ocr_azure).
-
-Chỉ lo một việc: nhận ảnh (bytes) -> trả text thô.
-
-KHÔNG kiểm tra định dạng file hay render PDF — file_utils đã làm việc đó và
-đưa vào đây ảnh bytes sạch sẽ.
 """
 
 import logging
@@ -36,7 +31,17 @@ class OcrError(Exception):
 
 
 def create_client() -> DocumentIntelligenceClient:
-    """Tạo client Azure Document Intelligence từ cấu hình .env."""
+    """Tạo client Azure Document Intelligence từ cấu hình .env.
+
+    Tự kiểm key: từ khi có hai nhà cung cấp OCR, hai trường này không còn bắt
+    buộc ở config.py nữa (chạy OCR.space thì không cần). Thiếu mà vẫn chọn
+    azure thì phải chết ngay tại đây, chứ không phải lúc chứng chỉ đầu tiên
+    rơi xuống tầng 2.
+    """
+    if not settings.azure_endpoint or not settings.azure_key:
+        raise OcrError(
+            f"{llm_error.TAG_NEEDS_HUMAN}: OCR_PROVIDER=azure nhưng thiếu "
+            f"AZURE_ENDPOINT hoặc AZURE_KEY.")
     return DocumentIntelligenceClient(
         endpoint=settings.azure_endpoint,
         credential=AzureKeyCredential(settings.azure_key),

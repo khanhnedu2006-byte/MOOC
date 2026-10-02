@@ -29,7 +29,8 @@ BIEN = "KMP_DUPLICATE_LIB_OK"
 
 # Import kéo theo thư viện tính toán/DLL. Phải nạp SAU khi đặt biến.
 IMPORT_NANG = {
-    "file_utils", "llm_vision", "llm_text", "ocr_azure", "pipeline",
+    "file_utils", "llm_vision", "llm_text", "ocr", "ocr_azure",
+    "ocr_ocrspace", "pipeline",
     "client", "archive", "scheduler", "charts", "gradio", "PIL",
     "pypdfium2", "openpyxl",
 }

@@ -69,9 +69,30 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.2)
     llm_max_tokens: int = Field(default=2048)
 
-    # ===== Azure Document Intelligence (OCR) =====
-    azure_endpoint: str = Field(description="Endpoint Azure Document Intelligence")
-    azure_key: str = Field(description="Key Azure Document Intelligence")
+    # ===== OCR tầng 2 =====
+    # Tầng 2 chỉ chạy khi tầng 1 (Gemma) đọc không khớp, nên lượng gọi thấp.
+    # "azure"    : Azure Document Intelligence, bậc F0 cho 500 trang/tháng.
+    # "ocrspace" : OCR.space, bậc miễn phí 25.000 lượt/tháng, không cần thẻ —
+    #              NHƯNG ảnh chứng chỉ (có tên, mã, email nhân viên) đi ra máy
+    #              chủ bên thứ ba. Đổi sang đây là quyết định về dữ liệu.
+    ocr_provider: str = Field(default="azure")
+
+    # ===== Azure Document Intelligence =====
+    azure_endpoint: str = Field(default="", description="Endpoint Azure Document Intelligence")
+    azure_key: str = Field(default="", description="Key Azure Document Intelligence")
+
+    # ===== OCR.space =====
+    ocrspace_api_key: str = Field(
+        default="", description="API key OCR.space (ocr.space/ocrapi)")
+
+    # Engine 1 KHÔNG đọc được tiếng Việt (trả lỗi E201).
+    # Engine 2 khai ngôn ngữ; engine 3 tự nhận diện 200+ ngôn ngữ.
+    ocrspace_engine: int = Field(default=2)
+
+    # Mã ngôn ngữ cho engine 2. OCR.space chỉ nhận MỘT mã mỗi lần gọi, không
+    # có "vnm+eng" như Tesseract; chứng chỉ song ngữ thì thử "auto".
+    # Engine 3 bỏ qua trường này.
+    ocrspace_language: str = Field(default="vnm")
 
     # ===== API ELIS =====
     # Base URL cho API nghiệp vụ (getCert, ProcessUserCourseStatus).

@@ -135,7 +135,7 @@ def _process(llm1_name, llm2_name, given=None):
         extract_from_image=lambda img: llm1,
         ocr_images=lambda cli, imgs: "text",
         extract_from_text=lambda t: llm2,
-        azure_client=None)
+        ocr_client=None)
 
 
 def test_hai_llm_dong_thuan_doc_ra_email_ngoai_thi_BO_QUA():
@@ -343,7 +343,7 @@ def test_sai_ca_NGAY_thi_TU_CHOI_chu_khong_bo_qua():
         extract_from_image=lambda img: llm,
         ocr_images=lambda cli, imgs: "text",
         extract_from_text=lambda t: llm,
-        azure_client=None)
+        ocr_client=None)
     assert result.verdict == Verdict.REJECTED
     assert result.stage != database.SKIP_STAGE
     assert "Ngày không hợp lệ" in result.reason

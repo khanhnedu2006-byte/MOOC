@@ -18,7 +18,7 @@ import client
 import file_utils
 import llm_text
 import llm_vision
-import ocr_azure
+import ocr
 import pipeline
 import scheduler
 from config import settings
@@ -296,7 +296,7 @@ def alert_operator(needs_alert: list[tuple]) -> None:
 # Xử lý hàng đợi MỘT vòng: API ① lấy hàng đợi -> lọc giãn cách -> chạy tuần tự.
 # Gặp ca hỏng kỹ thuật là DỪNG cả vòng (chặn đầu hàng).
 # ignore_cooldown=True dành cho lệnh tay `python run.py retry`.
-def process_one_round(azure_client, items: list[dict] | None = None,
+def process_one_round(ocr_client, items: list[dict] | None = None,
                       ignore_cooldown: bool = False) -> RoundResult:
     # ---- API 1: fetch the queue ----
     if items is None:
@@ -334,7 +334,7 @@ def process_one_round(azure_client, items: list[dict] | None = None,
     scanned = accepted = 0
     blocked_by = None
     for position, info in enumerate(items, start=1):
-        outcome = handle_one_certificate(info, azure_client, position, len(items))
+        outcome = handle_one_certificate(info, ocr_client, position, len(items))
         if outcome.technical_failure:
             blocked_by = info
             break
@@ -356,7 +356,7 @@ def process_one_round(azure_client, items: list[dict] | None = None,
 
 # Tải -> quét -> ghi log -> nộp cho ĐÚNG MỘT chứng chỉ.
 # Trả technical_failure=True khi cả vòng phải dừng tại đây.
-def handle_one_certificate(info: dict, azure_client,
+def handle_one_certificate(info: dict, ocr_client,
                            position: int, total: int) -> CertOutcome:
     uc_id = info["id"]
 
@@ -402,7 +402,7 @@ def handle_one_certificate(info: dict, azure_client,
         archive_path = archive.save(downloaded["anh_bytes"], info,
                                     PROJECT_ROOT / settings.archive_dir)
 
-    result = scan_certificate(downloaded["anh_bytes"], info, azure_client)
+    result = scan_certificate(downloaded["anh_bytes"], info, ocr_client)
     archive.write_verdict(archive_path, result)
     technical = is_technical_failure(result)
     displayed = Verdict.WAITING if technical else result.verdict
@@ -504,7 +504,7 @@ def record_send_status(user_course_id, succeeded: bool, message=None) -> None:
 
 
 # Chạy pipeline ba tầng (Gemma -> Azure OCR + LLM2 -> so đồng thuận)
-def scan_certificate(image_bytes: bytes, info: dict, azure_client) -> ProcessResult:
+def scan_certificate(image_bytes: bytes, info: dict, ocr_client) -> ProcessResult:
     """Run the pipeline for one certificate."""
     import tempfile
     with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as tmp:
@@ -539,9 +539,9 @@ def scan_certificate(image_bytes: bytes, info: dict, azure_client) -> ProcessRes
         images=images,
         given=given,
         extract_from_image=llm_vision.extract_from_image,
-        ocr_images=ocr_azure.ocr_images,
+        ocr_images=ocr.ocr_images,
         extract_from_text=llm_text.extract_from_text,
-        azure_client=azure_client,
+        ocr_client=ocr_client,
     )
 
 #5. Chuyển kết quả thành câu chữ cho elis
@@ -564,7 +564,7 @@ def build_result_dto(result: ProcessResult, info: dict) -> dict:
 
 
 #6. chạy chương trình
-def run_forever(azure_client) -> None:
+def run_forever(ocr_client) -> None:
     sleep_seconds = max(1, settings.poll_interval_seconds)
     logger.info("Chạy liên tục. Hết việc thì hỏi lại mỗi %d giây. Ctrl+C để dừng.",
                 sleep_seconds)
@@ -572,7 +572,7 @@ def run_forever(azure_client) -> None:
     idle = False        # so the "idle" line prints once per idle spell
     while True:
         try:
-            result = process_one_round(azure_client)
+            result = process_one_round(ocr_client)
         except Exception as e:
             logger.exception("Lỗi trong vòng xử lý: %s", e)
             result = RoundResult(0, 0)
@@ -671,20 +671,20 @@ def main() -> int:
     if mode == "status":
         return print_status()
 
-    azure_client = ocr_azure.create_client()
+    ocr_client = ocr.create_client()
 
     if mode in ("once", "retry"):
         if mode == "retry":
             logger.info("Chế độ retry: bỏ qua giãn cách, thử lại NGAY mọi ca "
                         "hỏng kỹ thuật.")
-        result = process_one_round(azure_client,
+        result = process_one_round(ocr_client,
                                    ignore_cooldown=(mode == "retry"))
         logger.info("Xong. Đã xử lý %d chứng chỉ, eLIS nhận %d.",
                     result.scanned_count, result.accepted_count)
         return 0
 
     try:
-        run_forever(azure_client)
+        run_forever(ocr_client)
     except KeyboardInterrupt:
         # Ctrl+C is the normal way to stop, not a crash — no traceback.
         logger.info("Đã dừng theo yêu cầu (Ctrl+C).")

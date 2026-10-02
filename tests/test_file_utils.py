@@ -81,7 +81,7 @@ def test_khong_doc_ca_file_chi_de_doan_loai(tmp_path, monkeypatch):
         da_nhan["so_byte"] = len(buf)
         return "image/png"
 
-    monkeypatch.setattr(file_utils.magic, "from_buffer", gia)
+    monkeypatch.setattr(file_utils.puremagic, "from_string", gia)
     file_utils.check_mime(p)
 
     assert da_nhan["so_byte"] <= file_utils._MAGIC_BYTES
@@ -119,26 +119,41 @@ def test_read_as_images_ten_co_dau(tmp_path):
     assert len(images) == 1 and images[0]
 
 
-def test_khong_bao_gio_dua_duong_dan_cho_libmagic(tmp_path, monkeypatch):
+def test_khong_bao_gio_dua_TEN_FILE_cho_bo_doan_loai(tmp_path, monkeypatch):
     """Guard THẬT của bản sửa này, và là test duy nhất chạy được trên Linux.
 
     Lỗi gốc chỉ tái hiện trên Windows (libmagic + bảng mã hệ thống), nên các
-    test tên-có-dấu ở trên vẫn XANH trên Linux/CI kể cả khi code quay lại
-    dùng from_file — chúng không bảo vệ được gì ngoài Windows.
+    test tên-có-dấu ở trên vẫn XANH trên Linux/CI kể cả khi code quay lại đưa
+    đường dẫn — chúng không bảo vệ được gì ngoài Windows.
 
-    Test này thì có: nó chặn ở mức API. Chỉ cần ai đó đổi về from_file là đỏ,
-    trên mọi hệ điều hành, vì tên file KHÔNG được phép tới tay libmagic.
+    Test này thì có: nó soi đúng thứ được truyền vào. Đưa tên file cho bộ đoán
+    loại là đỏ, trên mọi hệ điều hành. Luật giữ nguyên sau khi đổi libmagic
+    sang puremagic — thư viện đoán loại file không có việc gì phải biết tên.
     """
     p = tmp_path / "Tên có dấu.png"
     p.write_bytes(PNG_1X1)
 
-    def cam(*a, **kw):
-        raise AssertionError(
-            "check_mime đã gọi magic.from_file — đường dẫn lại tới tay libmagic, "
-            "tên file có dấu sẽ hỏng trên Windows (xem docstring đầu file).")
+    def soi(gi, mime=False, **kw):
+        assert isinstance(gi, bytes), (
+            f"check_mime đưa {type(gi).__name__} cho bộ đoán loại thay vì bytes "
+            f"— tên file có dấu sẽ hỏng trên Windows (xem docstring đầu file).")
+        return "image/png"
 
-    monkeypatch.setattr(file_utils.magic, "from_file", cam)
+    monkeypatch.setattr(file_utils.puremagic, "from_string", soi)
     assert file_utils.check_mime(p) == "image/png"
+
+
+def test_khong_nap_DLL_nao(tmp_path):
+    """Lý do đổi khỏi python-magic: nó nạp libmagic qua ctypes, và trên máy
+    Windows có phần mềm bảo mật doanh nghiệp, cú nạp đó TREO VÔ HẠN — mọi
+    script chạm tới src/ đứng im, không in gì, không traceback.
+
+    Chặn ở mức import: quay lại python-magic là đỏ ngay."""
+    import sys
+    assert "magic" not in sys.modules, (
+        "python-magic đã được nạp lại — nó nạp DLL libmagic và có thể treo.")
+    nguon = (GOC / "src" / "file_utils.py").read_text(encoding="utf-8")
+    assert "import magic" not in nguon
 
 
 def test_render_pdf_khong_dua_duong_dan_cho_pdfium(tmp_path, monkeypatch):
@@ -245,7 +260,7 @@ def test_PDF_hong_thanh_file_error_chu_KHONG_giet_ca_vong(tmp_path):
                                    "employeeEmail": "nv1@fpt.com",
                                    "employeeName": "Nguyễn Văn A",
                                    "courseName": "Python"},
-                                  azure_client=None)
+                                  ocr_client=None)
 
     assert result.stage == "file_error"
     assert run.is_technical_failure(result)

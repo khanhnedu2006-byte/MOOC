@@ -1,17 +1,14 @@
 """Tiện ích xử lý file (file_utils).
 
   1. Kiểm tra file có phải ảnh hoặc PDF hợp lệ không, dựa trên NỘI DUNG thật
-     (python-magic đọc byte đầu), không tin đuôi file — bắt được cả file
-     HEIC/WebP bị đổi đuôi thành .jpg.
+     (đọc byte đầu), không tin đuôi file — bắt được cả file HEIC/WebP bị đổi
+     đuôi thành .jpg.
   2. Chuyển file thành ảnh bytes cho Gemma; PDF render ra PNG bằng pypdfium2.
-
-LƯU Ý WINDOWS: python-magic cần libmagic. Nếu import lỗi 'failed to find
-libmagic', cài: pip install python-magic-bin
 """
 
 from pathlib import Path
 
-import magic
+import puremagic
 import pypdfium2 as pdfium
 
 # MIME chấp nhận: Azure và Gemma đều đọc được.
@@ -27,23 +24,32 @@ class InvalidFileError(Exception):
     """File không phải ảnh/PDF hợp lệ, hoặc không đọc được."""
 
 
-# libmagic chỉ cần vài trăm byte đầu (magic number); 8 KB là dư, mà không
-# phải đọc cả file cho mỗi chứng chỉ.
+# Chỉ cần vài trăm byte đầu (magic number); 8 KB là dư, mà không phải đọc cả
+# file cho mỗi chứng chỉ.
 _MAGIC_BYTES = 8192
+
+# puremagic gọi tên vài loại khác libmagic. Quy về tên trong MIME_IMAGE, nếu
+# không BMP hợp lệ bị từ chối oan.
+_DONG_NGHIA = {
+    "image/x-ms-bmp": "image/bmp",
+    "image/x-bmp": "image/bmp",
+}
+
+
+def _doan_mime(dau_file: bytes) -> str:
+    """MIME đoán từ byte đầu. Trả "" khi không nhận ra loại nào.
+
+    puremagic ném PureError thay vì trả "text/plain" như libmagic; nuốt ở đây
+    để tầng trên vẫn báo "loại file không hỗ trợ" như cũ.
+    """
+    try:
+        mime = puremagic.from_string(dau_file, mime=True)
+    except Exception:
+        return ""
+    return _DONG_NGHIA.get(mime, mime or "")
 
 
 def check_mime(path: str | Path) -> str:
-    """Trả về MIME thật của file. Ném InvalidFileError nếu không hỗ trợ.
-
-    DÙNG from_buffer CHỨ KHÔNG from_file: trên Windows libmagic nhận đường dẫn
-    dưới dạng byte theo bảng mã hệ thống (CP1258/CP1252), nên MỌI file có dấu
-    tiếng Việt trong tên đều hỏng với thông báo khó lần:
-
-        'utf-8' codec can't decode bytes in position 74-75: invalid continuation byte
-
-    Đọc byte bằng Python rồi mới đưa cho libmagic thì libmagic không bao giờ
-    nhìn thấy tên file.
-    """
     path = Path(path)
     if not path.is_file():
         raise InvalidFileError(f"Không tìm thấy file: {path}")
@@ -57,7 +63,7 @@ def check_mime(path: str | Path) -> str:
     if not dau_file:
         raise InvalidFileError(f"File rỗng: {path.name}")
 
-    mime = magic.from_buffer(dau_file, mime=True)
+    mime = _doan_mime(dau_file)
 
     if mime in MIME_IMAGE or mime == MIME_PDF:
         return mime
@@ -71,7 +77,8 @@ def check_mime(path: str | Path) -> str:
         raise InvalidFileError(
             f"File là WebP, không hỗ trợ. Chuyển sang JPEG. ({path.name})"
         )
-    raise InvalidFileError(f"Loại file không hỗ trợ: {mime} ({path.name})")
+    raise InvalidFileError(
+        f"Loại file không hỗ trợ: {mime or 'không nhận ra'} ({path.name})")
 
 
 def read_as_images(path: str | Path) -> list[bytes]:
@@ -148,13 +155,6 @@ _EDGE_STEPS = (2400, 2000, 1600, 1400, 1200, 1000)
 
 
 def compress_to_fit(image_bytes: bytes, limit: int = IMAGE_SIZE_LIMIT) -> bytes:
-    """Ép ảnh xuống dưới ngưỡng byte, giữ độ nét nhiều nhất có thể.
-
-    Hy sinh thứ ít ảnh hưởng tới việc đọc chữ trước: đủ nhỏ thì giữ nguyên,
-    rồi đổi JPEG giữ nguyên độ phân giải, rồi thu nhỏ cạnh dài, cuối cùng mới
-    hạ chất lượng JPEG vì nó làm nhòe chữ nhiều nhất. KHÔNG ném lỗi nếu vẫn
-    không đạt, mà trả bản nhỏ nhất làm được.
-    """
     if len(image_bytes) <= limit:
         return image_bytes
 

@@ -3,9 +3,10 @@
 Nối các module theo đúng sơ đồ ba lần so:
 
   1. Gemma (LLM1) đọc ảnh -> so tên + khóa học với input người nhập.
-     Cả hai khớp -> APPROVED (dừng, không tốn Azure).
+     Cả hai khớp -> APPROVED (dừng, không tốn lượt OCR).
 
-  2. Không khớp -> Azure OCR + LLM2 đọc lại từ ảnh.
+  2. Không khớp -> OCR + LLM2 đọc lại từ ảnh. Nhà cung cấp OCR do
+     OCR_PROVIDER chọn (Azure hoặc OCR.space) — xem src/ocr.py.
 
   3. So LLM1 với LLM2 (chặt tuyệt đối):
      Giống nhau -> REJECTED (hai máy đồng thuận: ảnh khác input).
@@ -136,9 +137,9 @@ def process(
     images: list[bytes],
     given: InputInfo,
     extract_from_image,   # hàm llm_vision.extract_from_image
-    ocr_images,  # hàm ocr_azure.ocr_images
+    ocr_images,  # hàm ocr.ocr_images
     extract_from_text,  # hàm llm_text.extract_from_text
-    azure_client,
+    ocr_client,
 ) -> ProcessResult:
     """Xử lý một chứng chỉ, trả về ProcessResult (APPROVED / REJECTED).
 
@@ -178,7 +179,7 @@ def process(
         given.employee_name, given.course_name)
 
     try:
-        ocr_text = ocr_images(azure_client, images)
+        ocr_text = ocr_images(ocr_client, images)
         llm2 = extract_from_text(ocr_text)
     except Exception as e:
         logger.warning("Tầng 2 lỗi: %s", e)
@@ -201,7 +202,7 @@ def process(
             return verdict(Verdict.REJECTED,
                            _mismatch_reason(llm2, given, llm1), "llm2", llm2)
         return verdict(Verdict.APPROVED,
-                       "Khớp ở LLM2 (Azure đọc lại, LLM1 đọc sai)", "llm2", llm2)
+                       "Khớp ở LLM2 (OCR đọc lại, LLM1 đọc sai)", "llm2", llm2)
 
     skip = _unverifiable_identity(llm2, given)
     if skip:
