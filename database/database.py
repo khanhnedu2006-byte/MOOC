@@ -218,7 +218,11 @@ SKIP_UNSUPPORTED_FILE_STAGE = "skipped_unsupported_file"
 # courseLink trên eLIS không phải URL (vd "Tiếng Anh Vstep") — khóa không có
 # nguồn để đối chiếu, chờ người duyệt. Chặn TRƯỚC API ②, không tốn lượt nào.
 SKIP_INVALID_LINK_STAGE = "skipped_invalid_course_link"
-SKIP_STAGES = (SKIP_STAGE, SKIP_UNSUPPORTED_FILE_STAGE, SKIP_INVALID_LINK_STAGE)
+# Người vận hành bấm `s` trong run_with_manual_approve.py: đã xem và chủ động
+# không nộp. Vòng sau (kể cả job thật run.py) không tải/quét lại.
+SKIP_MANUAL_STAGE = "skipped_manual"
+SKIP_STAGES = (SKIP_STAGE, SKIP_UNSUPPORTED_FILE_STAGE, SKIP_INVALID_LINK_STAGE,
+               SKIP_MANUAL_STAGE)
 
 
 def skipped_ids(user_course_ids, db_path=None) -> set:

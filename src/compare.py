@@ -132,7 +132,8 @@ COURSE_ABBREVIATIONS = {
     "intro": "introduction",
     "ai": "al",
     "AioT": "AloT",
-    "in": "with"
+    "in": "with",
+    "mcp": "model context protocol",
 }
 
 

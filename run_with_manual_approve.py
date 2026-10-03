@@ -5,19 +5,27 @@ eLIS, in kết luận + thứ AI đọc được rồi chờ người gõ:
 
     y  nộp kết quả này về eLIS
     e  sửa comment gửi người học, rồi hỏi lại
-    n  KHÔNG nộp — chứng chỉ ở lại WAITING, vòng sau sẽ quét lại
+    s  bỏ qua, KHÔNG nộp — chứng chỉ ở lại WAITING và được ĐÁNH DẤU bỏ qua
+       (stage skipped_manual): các lần chạy sau, kể cả job thật run.py, KHÔNG
+       tải/quét lại. Gõ n cũng được, như trước.
     q  dừng hẳn: không nộp cái này, không xử lý các cái phía sau
+
+Thêm --auto-approve: ca HỢP LỆ (APPROVED) tự nộp luôn, không hỏi — decisions.csv
+ghi `auto_submit`. Không có cờ thì ca nào cũng hỏi.
 
 Mọi thứ còn lại GIỐNG HỆT job thật (dùng lại chính code của run.py): chống nộp
 trùng, giãn cách ca hỏng kỹ thuật, ghi mooc_log.db, gửi email cảnh báo. Chọn
 `n` thì dòng log trong DB giữ elis_sent_ok = NULL ("chưa nộp") — đúng sự thật.
 
-KHÔNG có chế độ loop: chọn `n` thì chứng chỉ vẫn WAITING, vòng sau quét lại và
-hỏi lại mãi.
+Mặc định chạy LIÊN TỤC (loop): hết hàng đợi thì hỏi lại API ① và xử lý tiếp
+những chứng chỉ mới vào. Luật nghỉ như run.py loop: eLIS vừa nhận được cái nào
+thì làm vòng kế ngay, không thì nghỉ POLL_INTERVAL_SECONDS. Ca bấm `s` đã được
+đánh dấu nên vòng sau không hỏi lại. Ctrl+C hoặc `q` để dừng.
 
 TRƯỚC KHI HỎI, mỗi chứng chỉ có một thư mục riêng để mở xem:
     manual_review/<thời điểm>/
         decisions.csv                   tổng hợp mọi quyết định của lần chạy
+        [vong_<NN>/]                    chỉ ở chế độ loop: mỗi vòng một thư mục
         <NN>_<user_course_id>/
             00_info.json                dữ liệu getCert (API ①)
             certificate.<đuôi>          file chứng chỉ tải về (API ②)
@@ -35,8 +43,11 @@ qua không gọi API ③ nên không hỏi, thư mục chỉ có 00_info, file v
 Thư mục này chứa dữ liệu nhân viên thật — không commit.
 
 Cách dùng (BẮT BUỘC chạy trong terminal):
-    python run_with_manual_approve.py           # như run.py once
-    python run_with_manual_approve.py retry     # như run.py retry (bỏ giãn cách)
+    python run_with_manual_approve.py           # chạy liên tục (loop)
+    python run_with_manual_approve.py once      # một vòng rồi thoát, như run.py once
+    python run_with_manual_approve.py retry     # một vòng, bỏ giãn cách, như run.py retry
+    python run_with_manual_approve.py --include-skipped   # xem lại cả ca đã bấm s
+    python run_with_manual_approve.py --auto-approve      # ca hợp lệ tự nộp, chỉ hỏi ca từ chối
 """
 
 import os
@@ -92,10 +103,16 @@ def _safe_name(value) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in str(value))[:40]
 
 
+# Thư mục đang ghi. Chế độ loop đổi sang vong_<NN>/ đầu mỗi vòng, để chứng chỉ
+# được hỏi lại ở vòng sau (vd hết giãn cách) không đè thư mục vòng trước.
+_round_dir: dict = {}
+
+
 def _wrap_handle(original, review_dir: Path):
     def wrapper(info, azure_client, position, total):
         _current.clear()
-        folder = review_dir / f"{position:02d}_{_safe_name(info['id'])}"
+        base = _round_dir.get("dir", review_dir)
+        folder = base / f"{position:02d}_{_safe_name(info['id'])}"
         folder.mkdir(parents=True, exist_ok=True)
         _current.update(info=info, position=position, total=total, folder=folder)
         _save_json("00_info.json", info)
@@ -271,12 +288,14 @@ def _ask() -> str:
     while True:
         try:
             answer = input("Nộp kết quả này? [y] nộp  [e] sửa comment  "
-                           "[n] không nộp (giữ WAITING)  [q] dừng: ").strip().lower()
+                           "[s] bỏ qua (giữ WAITING)  [q] dừng: ").strip().lower()
         except EOFError:
             return "q"
-        if answer in ("y", "e", "n", "q"):
+        if answer == "n":                # phím cũ, vẫn nhận
+            answer = "s"
+        if answer in ("y", "e", "s", "q"):
             return answer
-        print("  Gõ y, e, n hoặc q.")
+        print("  Gõ y, e, s hoặc q.")
 
 
 # API ③ bắt buộc có comment, nên bỏ trống = giữ comment hiện tại.
@@ -293,7 +312,7 @@ def _edit_comment(current: str) -> str:
     return new
 
 
-def _wrap_submit(original, decisions_path: Path):
+def _wrap_submit(original, decisions_path: Path, auto_approve: bool = False):
     def wrapper(dto: dict) -> bool:
         if "result" not in _current:            # ca nộp trùng: không qua pipeline
             _save_json("01_result.json", {"result": {
@@ -318,11 +337,17 @@ def _wrap_submit(original, decisions_path: Path):
         print(text, flush=True)
 
         original_comment = dto.get("comment")
-        while True:
+        # --auto-approve: ca hợp lệ (APPROVED) tự nộp, không hỏi; ca từ chối vẫn hỏi.
+        auto = auto_approve and dto["status"] == "APPROVED"
+        if auto:
+            answer = "y"
+            print("  -> Hợp lệ: tự nộp, không hỏi.")
+        while not auto:
             answer = _ask()
             if answer != "e":
                 break
             dto = {**dto, "comment": _edit_comment(dto.get("comment") or "")}
+        decision = "auto_submit" if auto else {"y": "submit", "s": "skip", "q": "stop"}[answer]
         edited = dto.get("comment") != original_comment
         if edited:
             _save_json("02_payload.json", {
@@ -335,14 +360,16 @@ def _wrap_submit(original, decisions_path: Path):
         if answer == "y":
             accepted = original(dto)
             print(f"  -> {'eLIS ĐÃ NHẬN' if accepted else 'eLIS KHÔNG NHẬN (xem log)'}")
-        elif answer == "n":
-            print("  -> KHÔNG nộp. Chứng chỉ ở lại WAITING.")
+        elif answer == "s":
+            _mark_manual_skip(info, dto)
+            print("  -> KHÔNG nộp. Chứng chỉ ở lại WAITING, đã đánh dấu bỏ qua "
+                  "(lần chạy sau không quét lại).")
         else:
             print("  -> Dừng vòng.")
 
         _save_json("03_decision.json", {
             "time": datetime.now().isoformat(timespec="seconds"),
-            "decision": {"y": "submit", "n": "skip", "q": "stop"}[answer],
+            "decision": decision,
             "elis_accepted": accepted,
             "comment": dto.get("comment"),
             "original_comment": original_comment if edited else None,
@@ -357,7 +384,7 @@ def _wrap_submit(original, decisions_path: Path):
             "stage": result.stage if result is not None else "duplicate",
             "comment": dto.get("comment"),
             "original_comment": original_comment if edited else None,
-            "decision": {"y": "submit", "n": "skip", "q": "stop"}[answer],
+            "decision": decision,
             "elis_accepted": accepted,
         })
 
@@ -365,6 +392,23 @@ def _wrap_submit(original, decisions_path: Path):
             raise StopRound()
         return bool(accepted)
     return wrapper
+
+
+# Ghi một dòng log MỚI NHẤT với stage skipped_manual: database.skipped_ids()
+# đọc dòng mới nhất của mỗi chứng chỉ, nên vòng sau tự loại nó trước API ②.
+# Dòng log kết luận của pipeline vẫn giữ nguyên phía trước để tra cứu.
+def _mark_manual_skip(info: dict, dto: dict) -> None:
+    try:
+        database.write_failure_log(
+            user_course_id=dto["id"], employee_id=info.get("employeeId"),
+            verdict="WAITING",
+            reason=f"Người vận hành bỏ qua khi duyệt tay (hệ thống đề xuất "
+                   f"{dto['status']}: {dto.get('comment')})",
+            stage=database.SKIP_MANUAL_STAGE,
+            provider=info.get("providerName"), course_name=info.get("courseName"))
+    except Exception as e:
+        logger.warning("Không đánh dấu bỏ qua được cho %s: %s — lần sau sẽ quét lại.",
+                       dto["id"], e)
 
 
 DECISION_COLUMNS = ("time", "id", "employeeName", "employeeEmail", "courseName",
@@ -383,10 +427,53 @@ def _record(path: Path, row: dict) -> None:
 
 #3. Điểm vào
 
+# Lặp process_one_round như run.run_forever, có hỏi tay ở mỗi lần nộp.
+# Luật nghỉ GIỐNG run_forever: chỉ làm vòng kế NGAY khi eLIS vừa nhận ít nhất
+# một kết quả. Mốc khác (vd số đã quét) thì ca eLIS từ chối nhận (failList)
+# vẫn WAITING, bị quét + hỏi lại liên tục không nghỉ, đốt tiền LLM.
+def _run_loop(azure_client, review_dir: Path) -> None:
+    sleep_seconds = max(1, settings.poll_interval_seconds)
+    logger.info("Chạy liên tục: hết việc thì hỏi lại eLIS mỗi %d giây. "
+                "Ctrl+C hoặc q để dừng.", sleep_seconds)
+    round_no, idle = 0, False
+    total_scanned = total_accepted = 0
+    while True:
+        round_no += 1
+        _round_dir["dir"] = review_dir / f"vong_{round_no:02d}"
+        try:
+            result = run.process_one_round(azure_client)
+        except StopRound:
+            raise
+        except Exception as e:
+            logger.exception("Lỗi trong vòng %d: %s", round_no, e)
+            result = run.RoundResult(0, 0)
+
+        total_scanned += result.scanned_count
+        total_accepted += result.accepted_count
+        if result.scanned_count:
+            logger.info("Hết vòng %d: xử lý %d, eLIS nhận %d (tổng: %d / %d).",
+                        round_no, result.scanned_count, result.accepted_count,
+                        total_scanned, total_accepted)
+
+        if result.accepted_count > 0:
+            idle = False
+            continue
+        if not idle:
+            logger.info("Chưa có việc làm được ngay%s. Hỏi lại eLIS mỗi %d giây...",
+                        f" ({result.deferred_count} ca chờ hết giãn cách)"
+                        if result.deferred_count else "", sleep_seconds)
+            idle = True
+        time.sleep(sleep_seconds)
+
+
 def main() -> int:
-    mode = sys.argv[1] if len(sys.argv) > 1 else "once"
-    if mode not in ("once", "retry"):
-        print("Usage: python run_with_manual_approve.py [once|retry]")
+    args = sys.argv[1:]
+    include_skipped = "--include-skipped" in args
+    auto_approve = "--auto-approve" in args
+    args = [a for a in args if a not in ("--include-skipped", "--auto-approve")]
+    mode = args[0] if args else "loop"
+    if mode not in ("loop", "once", "retry") or len(args) > 1:
+        print("Usage: python run_with_manual_approve.py [loop|once|retry] [--include-skipped] [--auto-approve]")
         return 1
     if not sys.stdin.isatty():
         print("Phải chạy trong terminal để trả lời y/n/q.")
@@ -405,7 +492,33 @@ def main() -> int:
         llm_text.extract_from_text, "01c_llm2", _save_extracted("01c_llm2"))
     run.skip_unsupported_file = _wrap_skip_file(run.skip_unsupported_file)
     run.skip_invalid_course_link = _wrap_skip_link(run.skip_invalid_course_link)
-    run.submit_result = _wrap_submit(run.submit_result, decisions_path)
+    run.submit_result = _wrap_submit(run.submit_result, decisions_path, auto_approve)
+
+    if auto_approve:
+        logger.info("--auto-approve: ca hợp lệ tự nộp, chỉ hỏi ca từ chối.")
+
+    if include_skipped:
+        # Chỉ mở lại ca bấm `s`; ca bỏ qua tự động (email ngoài, file sai định
+        # dạng, link sai) vẫn bị lọc như cũ.
+        original_skipped_ids = database.skipped_ids
+
+        def skipped_ids_without_manual(ids, db_path=None):
+            manual = set()
+            if ids:
+                conn = database._connect(db_path)
+                try:
+                    for i in ids:
+                        row = conn.execute(
+                            "SELECT stage FROM process_log WHERE user_course_id = ? "
+                            "ORDER BY id DESC LIMIT 1", (str(i),)).fetchone()
+                        if row and row[0] == database.SKIP_MANUAL_STAGE:
+                            manual.add(str(i))
+                finally:
+                    conn.close()
+            return original_skipped_ids(ids, db_path) - manual
+
+        database.skipped_ids = skipped_ids_without_manual
+        logger.info("--include-skipped: xem lại cả các ca đã bấm s trước đó.")
 
     logger.warning("CHẠY THẬT với eLIS %s — mỗi lần nộp API ③ đều hỏi trước.",
                    settings.elis_base_url)
@@ -414,9 +527,12 @@ def main() -> int:
     database.init_db()
     azure_client = ocr_azure.create_client()
     try:
-        result = run.process_one_round(azure_client, ignore_cooldown=(mode == "retry"))
-        logger.info("Xong. Đã xử lý %d chứng chỉ, eLIS nhận %d.",
-                    result.scanned_count, result.accepted_count)
+        if mode == "loop":
+            _run_loop(azure_client, review_dir)
+        else:
+            result = run.process_one_round(azure_client, ignore_cooldown=(mode == "retry"))
+            logger.info("Xong. Đã xử lý %d chứng chỉ, eLIS nhận %d.",
+                        result.scanned_count, result.accepted_count)
     except StopRound:
         logger.info("Đã dừng theo lựa chọn của người vận hành.")
     except KeyboardInterrupt:

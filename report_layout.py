@@ -186,8 +186,12 @@ def key_findings(stats: dict) -> list[str]:
     ra = []
     tong = stats["total"]
     if not tong:
-        return ["Không có chứng chỉ nào được xử lý trong kỳ này. "
-                "Có thể không ai nộp, cũng có thể job không chạy — nên kiểm tra."]
+        ra = ["Không có chứng chỉ nào được xử lý trong kỳ này. "
+              "Có thể không ai nộp, cũng có thể job không chạy — nên kiểm tra."]
+        if stats.get("skipped"):
+            ra.append(f"{_n(stats['skipped'])} chứng chỉ bỏ qua, không xử lý được — "
+                      f"chờ người duyệt trên eLIS.")
+        return ra
 
     ra.append(f"Đã xử lý {_n(tong)} chứng chỉ "
               f"({stats['from_day']} → {stats['to_day']}).")
@@ -195,6 +199,9 @@ def key_findings(stats: dict) -> list[str]:
               f"({_n(stats['approved'])} chứng chỉ).")
     ra.append(f"{100 - stats['approval_rate']:.0f}% bị từ chối "
               f"({_n(stats['rejected'])} chứng chỉ).")
+    if stats.get("skipped"):
+        ra.append(f"{_n(stats['skipped'])} chứng chỉ bỏ qua, không xử lý được — "
+                  f"chờ người duyệt trên eLIS.")
 
     rc = stats["rejection_causes"]
     if rc["total_rejected"]:
@@ -234,11 +241,6 @@ def key_findings(stats: dict) -> list[str]:
                             for x in kem[:3])
             ra.append(f"Tỷ lệ duyệt thấp bất thường ở: {name}. "
                       f"Nên xem mẫu chứng chỉ của họ có định dạng lạ không.")
-
-    chua_gui = stats["elis"]["unsent"] + stats["elis"]["rejected_by_elis"]
-    if chua_gui:
-        ra.append(f"{_n(chua_gui)} kết quả chưa về được eLIS "
-                  f"(chưa nộp hoặc bị từ chối khi nộp).")
     return ra
 
 

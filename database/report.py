@@ -12,7 +12,7 @@ Dùng:
 
 from datetime import date, timedelta
 
-from database.database import _connect, init_db
+from database.database import SKIP_STAGES, _connect, init_db
 
 def _default_day() -> str:
     """Hôm qua, dạng YYYY-MM-DD.
@@ -29,13 +29,13 @@ def _count(conn, day, condition="", params=()):
     return conn.execute(sql, (day, *params)).fetchone()[0]
 
 
-def _warning_block(total, excluded, send_failed, unsent, rejected) -> list[str]:
+def _warning_block(total, excluded, send_failed, rejected) -> list[str]:
     """Những điều người đọc cần chú ý, diễn giải sẵn thành câu.
 
     Báo cáo "0 xử lý" có thể là ngày nghỉ hoặc job chết, phải nói rõ.
 
     excluded = ca bị loại vì hỏng kỹ thuật, KHÔNG nằm trong `total` (xem
-    period_report) nhưng vẫn phải cảnh báo khi lớn.
+    period_report). Chỉ dùng để phân biệt "0 xử lý" với "toàn ca hỏng".
     """
     output = []
     if total == 0 and not excluded:
@@ -43,23 +43,9 @@ def _warning_block(total, excluded, send_failed, unsent, rejected) -> list[str]:
                       "cũng có thể job không chạy — nên kiểm tra job còn sống không.")
         return output
 
-    if excluded:
-        mau_so = total + excluded
-        ratio = excluded / mau_so * 100
-        output.append(
-            f"{excluded}/{mau_so} chứng chỉ ({ratio:.0f}%) hệ thống không đọc "
-            f"được nên đã bị loại khỏi thống kê — lỗi kỹ thuật, không phải "
-            f"nhân viên khai sai.")
-        if ratio >= 50:
-            output.append("Quá nửa số chứng chỉ không đọc được file — nhiều khả "
-                          "năng API tải file của eLIS đang hỏng.")
-
     if send_failed:
         output.append(f"{send_failed} kết quả bị eLIS từ chối khi nộp. Thường do "
                       f"bản ghi đã được duyệt trước đó, hoặc sai mã nhân viên.")
-
-    if unsent:
-        output.append(f"{unsent} kết quả chưa nộp được lên eLIS.")
 
     if total and rejected / total >= 0.9 and rejected > 3:
         output.append(f"Tỷ lệ từ chối rất cao ({rejected}/{total}). Nếu phần lớn "
@@ -96,8 +82,25 @@ def _rows(conn, sql, params=()):
     return list(conn.execute(sql, params))
 
 
+# MỘT CHỨNG CHỈ = MỘT DÒNG trong báo cáo. Job quét lại cùng chứng chỉ qua
+# nhiều vòng (hỏng kỹ thuật thử lại, API ③ hỏng, duyệt tay bấm s...) và mỗi
+# lần ghi một dòng log; đếm thẳng thì một chứng chỉ thành nhiều "job". Chỉ lấy
+# dòng MỚI NHẤT (MAX(id)) của mỗi user_course_id TRONG KỲ — kết luận cuối cùng.
+#
+# Dòng đánh dấu skipped_manual (người vận hành bấm s) chỉ là ghi chú, không
+# phải kết quả xử lý: bỏ ra khi chọn dòng mới nhất để chứng chỉ vẫn được đếm
+# theo kết luận của pipeline (chưa nộp).
+#
+# Dòng thiếu user_course_id (log rất cũ) không gom được -> mỗi dòng tự là một.
+_MANUAL_SKIP_STAGE = "skipped_manual"
+
+
 def _period_where(from_day: str, to_day: str) -> tuple[str, tuple]:
-    return "substr(created_at,1,10) BETWEEN ? AND ?", (from_day, to_day)
+    in_period = "substr(created_at,1,10) BETWEEN ? AND ?"
+    latest = (f"id IN (SELECT MAX(id) FROM process_log "
+              f"WHERE {in_period} AND stage IS NOT '{_MANUAL_SKIP_STAGE}' "
+              f"GROUP BY COALESCE(user_course_id, 'row-' || id))")
+    return f"{in_period} AND {latest}", (from_day, to_day, from_day, to_day)
 
 
 # Ba nguyên nhân từ chối NGHIỆP VỤ. Chuỗi phải khớp CHÍNH XÁC với chuỗi
@@ -293,19 +296,19 @@ def certificates_on_day(day: str, limit: int = MAX_CERT_ROWS,
     init_db(db_path)
     conn = _connect(db_path)
     try:
+        w, p = _period_where(day, day)
         total = conn.execute(
-            "SELECT COUNT(*) FROM process_log WHERE substr(created_at,1,10)=?",
-            (day,)).fetchone()[0]
-        rows = _rows(conn, """
+            f"SELECT COUNT(*) FROM process_log WHERE {w}", p).fetchone()[0]
+        rows = _rows(conn, f"""
             SELECT substr(created_at, 12, 5) AS gio,
                    employee_code, employee_id, name_on_image,
                    course_name, certificate_name,
                    verdict, reason, stage, elis_sent_ok
             FROM process_log
-            WHERE substr(created_at,1,10)=?
+            WHERE {w}
             ORDER BY id DESC
             LIMIT ?
-        """, (day, limit))
+        """, (*p, limit))
     finally:
         conn.close()
 
@@ -348,7 +351,11 @@ def period_report(from_day: str, to_day: str, bucket: str = "day",
         total = dem(nghiep_vu)
         approved = dem(f"{nghiep_vu} AND verdict='APPROVED'")
         rejected = dem(f"{nghiep_vu} AND verdict='REJECTED'")
-        failed = dem(f"stage NOT IN {BUSINESS_STAGES}")
+        # Ca BỎ QUA (danh tính chưa xác minh, file sai định dạng, link khóa
+        # học sai): không phải hỏng kỹ thuật, không phải kết luận — chỉ báo
+        # một con số chung "chờ người xử lý".
+        skipped = dem(f"stage IN {SKIP_STAGES}")
+        failed = dem(f"stage NOT IN {BUSINESS_STAGES} AND stage NOT IN {SKIP_STAGES}")
         sent_ok = dem("elis_sent_ok=1")
         send_failed = dem("elis_sent_ok=0")
         unsent = dem("elis_sent_ok IS NULL")
@@ -366,9 +373,10 @@ def period_report(from_day: str, to_day: str, bucket: str = "day",
         # Ca bị LOẠI vì hỏng kỹ thuật; chỉ hiện thành một dòng chú thích ở
         # chân báo cáo.
         "excluded_technical": failed,
+        "skipped": skipped,
         "elis": {"accepted": sent_ok, "rejected_by_elis": send_failed,
                  "unsent": unsent},
-        "warnings": _warning_block(total, failed, send_failed, unsent, rejected),
+        "warnings": _warning_block(total, failed, send_failed, rejected),
         "rejection_causes": rejection_causes(from_day, to_day, db_path),
         "by_provider": by_provider(from_day, to_day, db_path),
         "trend": trend(from_day, to_day, bucket, db_path),

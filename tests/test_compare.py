@@ -113,6 +113,20 @@ class TestCourseAbbreviation:
         assert match_course("Introduction to agent skills",
                             "Intro to Agent Tools") is False
 
+    # "MCP" là viết tắt của "Model Context Protocol", khớp cả hai chiều
+    def test_mcp_equals_model_context_protocol(self):
+        assert match_course("Introduction to Model Context Protocol",
+                            "Intro to MCP") is True
+        assert match_course("Introduction to MCP",
+                            "Introduction to Model Context Protocol") is True
+        assert match_course("Model Context Protocol (MCP)",
+                            "Model Context Protocol") is True
+
+    # Mở rộng MCP không làm khớp khóa khác nội dung
+    def test_mcp_expansion_keeps_other_words_strict(self):
+        assert match_course("Model Context Protocol: Advanced Topics",
+                            "MCP Basics") is False
+
 
 # ===== match_code (chặt tuyệt đối, cụm từ liên tiếp) =====
 

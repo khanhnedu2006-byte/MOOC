@@ -404,3 +404,78 @@ def test_doc_ngay_sai_bao_loi_ro_khong_traceback():
         with pytest.raises(SystemExit) as e:
             send_report._parse_day(xau, "--day")
         assert "YYYY-MM-DD" in str(e.value), f"thông báo lỗi không nói định dạng: {xau!r}"
+
+
+# ===== Một chứng chỉ xử lý nhiều lần chỉ tính MỘT =====
+
+def _them_day_du(db_path, rows):
+    conn = sqlite3.connect(db_path)
+    for created_at, uc_id, verdict, stage, reason in rows:
+        conn.execute(
+            "INSERT INTO process_log (created_at,user_course_id,verdict,stage,reason)"
+            " VALUES (?,?,?,?,?)", (created_at, uc_id, verdict, stage, reason))
+    conn.commit()
+    conn.close()
+
+
+def test_chung_chi_xu_ly_nhieu_lan_chi_dem_lan_cuoi(db):
+    _them_day_du(db, [
+        ("2026-08-10T09:00:00", "A", "WAITING", "stage2_error", "Azure 503"),
+        ("2026-08-10T09:05:00", "A", "WAITING", "stage2_error", "Azure 503"),
+        ("2026-08-10T09:10:00", "A", "REJECTED", "llm2", "Tên không khớp"),
+        ("2026-08-10T09:20:00", "A", "APPROVED", "llm1", "Khớp"),
+        ("2026-08-10T09:30:00", "B", "REJECTED", "llm1", "Tên không khớp"),
+    ])
+    kq = report.period_report("2026-08-10", "2026-08-10", db_path=db)
+    assert kq["certificates"]["total"] == 2
+    assert [r["verdict"] for r in kq["certificates"]["rows"]] == ["REJECTED", "APPROVED"]
+    assert report.failure_breakdown("2026-08-10", "2026-08-10", db) == []
+    rc = report.rejection_causes("2026-08-10", "2026-08-10", db)
+    assert rc["total_rejected"] == 1
+
+
+def test_dong_danh_dau_bam_s_khong_thay_ket_luan(db):
+    _them_day_du(db, [
+        ("2026-08-10T09:00:00", "A", "APPROVED", "llm1", "Khớp"),
+        ("2026-08-10T09:00:01", "A", "WAITING", "skipped_manual", "Người vận hành bỏ qua"),
+    ])
+    kq = report.certificates_on_day("2026-08-10", db_path=db)
+    assert kq["total"] == 1
+    assert kq["rows"][0]["verdict"] == "APPROVED"
+    assert report.failure_breakdown("2026-08-10", "2026-08-10", db) == []
+
+
+def test_lan_cuoi_NGOAI_ky_thi_lay_lan_cuoi_TRONG_ky(db):
+    """Báo cáo ngày 10 vẫn thấy chứng chỉ dù ngày 11 nó được quét lại."""
+    _them_day_du(db, [
+        ("2026-08-10T09:00:00", "A", "REJECTED", "llm1", "Tên không khớp"),
+        ("2026-08-11T09:00:00", "A", "APPROVED", "llm1", "Khớp"),
+    ])
+    ngay_10 = report.certificates_on_day("2026-08-10", db_path=db)
+    assert ngay_10["total"] == 1 and ngay_10["rows"][0]["verdict"] == "REJECTED"
+    ca_hai = report.certificates_on_day("2026-08-11", db_path=db)
+    assert ca_hai["rows"][0]["verdict"] == "APPROVED"
+
+
+def test_ca_bo_qua_dem_rieng_KHONG_tinh_la_hong_ky_thuat(db):
+    import report_layout
+    _them(db, [
+        ("APPROVED", "llm1", None),
+        ("WAITING", "skipped_external_email", "thiếu tên đệm"),
+        ("WAITING", "skipped_unsupported_file", "WebP"),
+        ("WAITING", "skipped_invalid_course_link", "link sai"),
+        ("WAITING", "download_error", "eLIS 502"),
+    ])
+    r = report.period_report("2026-08-10", "2026-08-10", "day", db)
+    assert r["skipped"] == 3
+    assert r["excluded_technical"] == 1
+    assert r["total"] == 1
+    assert any("3 chứng chỉ bỏ qua" in b for b in report_layout.key_findings(r))
+
+
+def test_khong_co_ca_bo_qua_thi_KHONG_ghi_dong_nay(db):
+    import report_layout
+    _them(db, [("APPROVED", "llm1", None)])
+    r = report.period_report("2026-08-10", "2026-08-10", "day", db)
+    assert r["skipped"] == 0
+    assert not any("bỏ qua" in b for b in report_layout.key_findings(r))

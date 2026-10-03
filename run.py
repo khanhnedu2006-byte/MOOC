@@ -249,7 +249,9 @@ def report_skipped(items: list[dict], skipped: set) -> None:
         return
     _last_skipped_ids = frozenset(skipped)
 
-    logger.info("Bỏ qua %d chứng chỉ KHÔNG XÁC MINH ĐƯỢC DANH TÍNH "
+    # Gồm mọi loại trong database.SKIP_STAGES: không xác minh được danh tính,
+    # file sai định dạng, link khóa học sai, người vận hành bấm `s`.
+    logger.info("Bỏ qua %d chứng chỉ đã đánh dấu BỎ QUA "
                 "(chờ người duyệt xử lý trên eLIS):", len(skipped))
     for item in items:
         if str(item["id"]) in skipped:

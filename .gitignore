@@ -56,3 +56,6 @@ manual_review/
 
 # Bản sao lưu DB log (dữ liệu nhân viên thật).
 *.db.bak*
+
+# Báo cáo PDF xuất tay: có username nhân viên thật.
+reports/
