@@ -139,6 +139,16 @@ def _wrap_skip_file(original):
     return wrapper
 
 
+def _wrap_skip_provider(original):
+    def wrapper(info, position, total):
+        _save_json("01_result.json", {"result": {
+            "verdict": "WAITING", "stage": run.database.SKIP_PROVIDER_STAGE,
+            "reason": f"Nhà cung cấp {info.get('providerName')!r} không xử lý tự động"},
+            "skip": True})
+        return original(info, position, total)
+    return wrapper
+
+
 def _wrap_skip_link(original):
     def wrapper(info, position, total):
         _save_json("01_result.json", {"result": {
@@ -495,6 +505,7 @@ def main() -> int:
         llm_text.extract_from_text, "01c_llm2", _save_extracted("01c_llm2"))
     run.skip_unsupported_file = _wrap_skip_file(run.skip_unsupported_file)
     run.skip_invalid_course_link = _wrap_skip_link(run.skip_invalid_course_link)
+    run.skip_provider = _wrap_skip_provider(run.skip_provider)
     run.submit_result = _wrap_submit(run.submit_result, decisions_path, auto_approve)
 
     if auto_approve:

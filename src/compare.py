@@ -62,6 +62,33 @@ def match_code(name_on_image, employee_code):
     for i in range(len(image_words) - n + 1):
         if image_words[i:i + n] == code_words:
             return True
+    return _match_spaced_code(image_words, "".join(code_words))
+
+
+# Mã dài tối thiểu bao nhiêu ký tự mới thử ghép cụm từ: mã quá ngắn ("an",
+# "le1") dễ trùng tình cờ khi ghép các từ ngắn liền nhau.
+_MIN_SPACED_CODE_LEN = 4
+# Mã bị tách tối đa thành mấy từ ("hoa bd5" = 2, "hoa bd 5" = 3).
+_MAX_SPACED_CODE_WORDS = 4
+
+
+def _match_spaced_code(image_words: list[str], code: str) -> bool:
+    """Mã nhân viên bị in TÁCH bằng dấu cách: "hoa bd5" / "hoa bd 5" = "hoabd5".
+
+    Người học đặt tên tài khoản theo username công ty nhưng có dấu cách. Ghép
+    một CỤM TỪ LIỀN NHAU trên ảnh rồi so TUYỆT ĐỐI với mã: vẫn so trọn từ ở
+    hai mép, nên "hoa bd5" không khớp "hoabd55" và "xhoa bd5" không khớp.
+    """
+    if len(code) < _MIN_SPACED_CODE_LEN:
+        return False
+    for i in range(len(image_words)):
+        joined = ""
+        for word in image_words[i:i + _MAX_SPACED_CODE_WORDS]:
+            joined += word
+            if joined == code:
+                return True
+            if len(joined) >= len(code):
+                break
     return False
 
 

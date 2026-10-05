@@ -403,3 +403,28 @@ class TestTrailingCourseCode:
     def test_phan_1_KHONG_khop_phan_2(self):
         assert match_course_bilingual("Tiếng Anh theo chủ đề", None,
                                       "Tiếng Anh theo chủ đề (Phần 2)", "loose") is False
+
+
+# ===== Mã nhân viên in tách bằng dấu cách =====
+
+class TestSpacedCode:
+    @pytest.mark.parametrize("on_image", [
+        "hoa bd5", "Hoa BD5", "hoa bd 5", "hoa-bd5", "Certificate hoa bd5 completed",
+    ])
+    def test_ma_tach_van_khop(self, on_image):
+        assert match_code(on_image, "hoabd5") is True
+        assert match_name_or_code(on_image, "Bùi Đức Hòa", "hoabd5") is True
+
+    @pytest.mark.parametrize("on_image", [
+        "hoa bd55",     # thừa ký tự
+        "hoa bd",       # thiếu ký tự
+        "xhoa bd5",     # thừa ở mép trái
+        "hoa x bd5",    # không liền nhau
+        "hoa bd6",      # khác số
+    ])
+    def test_sai_lech_KHONG_khop(self, on_image):
+        assert match_code(on_image, "hoabd5") is False
+
+    def test_ma_qua_ngan_KHONG_thu_ghep(self):
+        assert match_code("l e1", "le1") is False
+        assert match_code("le1", "le1") is True   # đúng nguyên từ thì vẫn khớp

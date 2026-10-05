@@ -224,8 +224,10 @@ SKIP_MANUAL_STAGE = "skipped_manual"
 # Ảnh nộp lên là DANH SÁCH nhiều khóa học (trang "Registrations",
 # "Enrollments"...), không phải chứng chỉ riêng — phát hiện trước LLM1.
 SKIP_MULTI_COURSE_STAGE = "skipped_multi_course"
+# Nhà cung cấp nằm trong SKIP_PROVIDERS (vd Udacity) — chặn trước API ②.
+SKIP_PROVIDER_STAGE = "skipped_provider"
 SKIP_STAGES = (SKIP_STAGE, SKIP_UNSUPPORTED_FILE_STAGE, SKIP_INVALID_LINK_STAGE,
-               SKIP_MANUAL_STAGE, SKIP_MULTI_COURSE_STAGE)
+               SKIP_MANUAL_STAGE, SKIP_MULTI_COURSE_STAGE, SKIP_PROVIDER_STAGE)
 
 
 def skipped_ids(user_course_ids, db_path=None) -> set:

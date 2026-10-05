@@ -84,6 +84,13 @@ def is_valid_course_link(link) -> bool:
     return parts.scheme in ("http", "https") and "." in host.strip(".")
 
 
+# providerName có nằm trong danh sách bỏ qua (SKIP_PROVIDERS) không. Đọc
+# settings trong thân hàm để sửa cấu hình lúc đang chạy có tác dụng ngay.
+def is_skipped_provider(provider) -> bool:
+    wanted = {p.strip().lower() for p in settings.skip_providers.split(",") if p.strip()}
+    return str(provider or "").strip().lower() in wanted
+
+
 # Gọi eLIS, thử lại khi lỗi tạm thời (502, timeout).
 # Tối đa RETRY_COUNT lần, cách nhau RETRY_DELAY_SECONDS giây.
 def call_with_retry(func, *args, **kwargs):
@@ -378,6 +385,11 @@ def handle_one_certificate(info: dict, azure_client,
                            position: int, total: int) -> CertOutcome:
     uc_id = info["id"]
 
+    # Nhà cung cấp bị loại (vd Udacity) -> BỎ QUA trước mọi lời gọi.
+    if is_skipped_provider(info.get("providerName")):
+        skip_provider(info, position, total)
+        return CertOutcome(False, False)
+
     # Link khóa học không hợp lệ -> BỎ QUA trước mọi lời gọi (trùng, tải, LLM).
     if not is_valid_course_link(info.get("courseLink")):
         skip_invalid_course_link(info, position, total)
@@ -487,6 +499,25 @@ def skip_unsupported_file(info: dict, downloaded: dict,
             provider=info.get("providerName"), course_name=info.get("courseName"))
     except Exception as e:
         logger.warning("Ghi log ca file sai định dạng lỗi: %s", e)
+
+
+# Ca BỎ QUA vì nhà cung cấp nằm trong SKIP_PROVIDERS: KHÔNG tra trùng, KHÔNG
+# tải file, KHÔNG gọi LLM, KHÔNG nộp API ③ — ở lại WAITING chờ người duyệt.
+def skip_provider(info: dict, position: int, total: int) -> None:
+    reason = (f"Nhà cung cấp {info.get('providerName')!r} không xử lý tự động"
+              " — chờ người duyệt")
+    logger.info("[%d/%d] [BỎ QUA] %s (%s) | %s | stage: %s",
+                position, total, info.get("employeeName") or "?",
+                info.get("employeeId") or info.get("id"), reason,
+                database.SKIP_PROVIDER_STAGE)
+    try:
+        database.write_failure_log(
+            user_course_id=info["id"], employee_id=info.get("employeeId"),
+            verdict=Verdict.WAITING.value, reason=reason,
+            stage=database.SKIP_PROVIDER_STAGE,
+            provider=info.get("providerName"), course_name=info.get("courseName"))
+    except Exception as e:
+        logger.warning("Ghi log ca bỏ qua theo nhà cung cấp lỗi: %s", e)
 
 
 # Ca BỎ QUA vì courseLink không phải URL: KHÔNG tra trùng, KHÔNG tải file,

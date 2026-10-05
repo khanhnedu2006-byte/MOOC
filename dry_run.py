@@ -397,6 +397,19 @@ def handle_one(info: dict, azure_client, position: int, total: int,
     try:
         out.json("00_info.json", info)
 
+        # ---- Bước 0: nhà cung cấp bị loại ----
+        if run.is_skipped_provider(info.get("providerName")):
+            reason = f"Nhà cung cấp {info.get('providerName')!r} không xử lý tự động"
+            out.json("07_result.json", {"result": {
+                "verdict": Verdict.WAITING.value,
+                "stage": database.SKIP_PROVIDER_STAGE, "reason": reason},
+                "skip": True})
+            out.json("08_submit.json", {"sent": False,
+                                        "note": "Ca BỎ QUA (nhà cung cấp bị loại) "
+                                                "— job thật để WAITING"})
+            return finish(Verdict.WAITING.value, database.SKIP_PROVIDER_STAGE,
+                          reason, False)
+
         # ---- Bước 0: link khóa học ----
         if not run.is_valid_course_link(info.get("courseLink")):
             reason = f"Link khóa học không hợp lệ ({info.get('courseLink')!r})"

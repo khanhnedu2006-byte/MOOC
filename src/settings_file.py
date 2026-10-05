@@ -60,6 +60,7 @@ CONFIG_GROUPS = [
         ("valid_to", "Ngày hợp lệ đến"),
         ("duplicate_check", "Chặn nộp trùng khóa"),
         ("multi_course_check", "Bỏ qua ảnh danh sách nhiều khóa"),
+        ("skip_providers", "Bỏ qua nhà cung cấp (cách nhau dấu phẩy)"),
     ]),
     ("Vận hành", [
         ("poll_interval_seconds", "Nghỉ giữa hai vòng (giây)"),

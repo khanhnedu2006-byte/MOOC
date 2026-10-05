@@ -174,6 +174,12 @@ class Settings(BaseSettings):
     # Gemma (~1 giây) mỗi chứng chỉ. Tắt = pipeline chạy như trước.
     multi_course_check: bool = Field(default=True)
 
+    # ===== Bỏ qua theo nhà cung cấp =====
+    # Chứng chỉ của các provider này (so getCert.providerName, không phân biệt
+    # hoa/thường) -> BỎ QUA ngay, không tải file, không gọi LLM, giữ WAITING
+    # chờ người duyệt. Nhiều provider cách nhau dấu phẩy; rỗng = tắt.
+    skip_providers: str = Field(default="Udacity")
+
 
     # ===== Email cảnh báo lỗi hệ thống =====
     # KHÁC mail_to (báo cáo định kỳ): trộn chung thì cảnh báo bị chìm.
