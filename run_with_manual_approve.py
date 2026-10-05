@@ -485,6 +485,9 @@ def main() -> int:
 
     run.handle_one_certificate = _wrap_handle(run.handle_one_certificate, review_dir)
     run.scan_certificate = _wrap_scan(run.scan_certificate)
+    llm_vision.detect_course_list = _wrap_step(
+        llm_vision.detect_course_list, "01_0_course_list",
+        _save_extracted("01_0_course_list"))
     llm_vision.extract_from_image = _wrap_step(
         llm_vision.extract_from_image, "01a_llm1", _save_extracted("01a_llm1"))
     ocr_azure.ocr_images = _wrap_step(ocr_azure.ocr_images, "01b_ocr", _save_ocr)

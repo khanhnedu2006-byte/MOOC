@@ -168,6 +168,12 @@ class Settings(BaseSettings):
     # KHÓA HỌC; API ① nhận tham số `employeeEmail` nên hỏi thẳng từng người.
     duplicate_check: bool = Field(default=True)
 
+    # ===== Lọc ảnh danh sách nhiều khóa học =====
+    # Ảnh chụp trang hồ sơ liệt kê NHIỀU khóa ("Registrations", "Enrollments"...)
+    # -> BỎ QUA trước LLM1, giữ WAITING chờ người duyệt. Tốn thêm một lượt
+    # Gemma (~1 giây) mỗi chứng chỉ. Tắt = pipeline chạy như trước.
+    multi_course_check: bool = Field(default=True)
+
 
     # ===== Email cảnh báo lỗi hệ thống =====
     # KHÁC mail_to (báo cáo định kỳ): trộn chung thì cảnh báo bị chìm.

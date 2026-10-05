@@ -14,7 +14,7 @@ from langchain_core.messages import HumanMessage
 
 from config import get_llm
 import llm_error
-from schemas import ExtractedInfo
+from schemas import ExtractedInfo, ImageKind
 
 PROMPT = """Bạn là công cụ trích xuất dữ liệu từ ảnh chứng chỉ/bằng cấp.
 Ảnh có thể là tiếng Việt, tiếng Anh hoặc lẫn cả hai.
@@ -119,16 +119,13 @@ def _strip_json_fence(text: str) -> str:
     return text.strip()
 
 
-def extract_from_image(image_bytes: bytes, llm=None) -> ExtractedInfo:
-    """Gửi ảnh cho Gemma, trả về ExtractedInfo.
-
-    Truyền sẵn llm để test hoặc tái dùng client; không thì tự tạo.
-    """
+def _ask_json(prompt: str, image_bytes: bytes, llm, label: str) -> dict:
+    """Gửi prompt + ảnh cho Gemma, trả về JSON đã parse."""
     if llm is None:
         llm = get_llm()
 
     message = HumanMessage(content=[
-        {"type": "text", "text": PROMPT},
+        {"type": "text", "text": prompt},
         {"type": "image_url", "image_url": {"url": _image_to_data_url(image_bytes)}},
     ])
 
@@ -136,19 +133,70 @@ def extract_from_image(image_bytes: bytes, llm=None) -> ExtractedInfo:
     # viễn (hết tiền, sai key). Bảng phân loại để chung ở llm_error cho
     # llm_vision và llm_text dùng một bản, tránh hai bên lệch nhau.
     try:
-        phan_hoi = llm_error.call_with_retry(
-            lambda: llm.invoke([message]), "LLM1 (Gemma đọc ảnh)")
+        phan_hoi = llm_error.call_with_retry(lambda: llm.invoke([message]), label)
     except Exception as e:
         raise LlmVisionError(llm_error.describe(e, llm_error.MAX_ATTEMPTS)) from e
 
     content = _strip_json_fence(phan_hoi.content)
 
     try:
-        data_bytes = json.loads(content)
+        return json.loads(content)
     except json.JSONDecodeError as e:
         raise LlmVisionError(f"Gemma trả về không phải JSON hợp lệ: {content[:200]}") from e
 
+
+def extract_from_image(image_bytes: bytes, llm=None) -> ExtractedInfo:
+    """Gửi ảnh cho Gemma, trả về ExtractedInfo.
+
+    Truyền sẵn llm để test hoặc tái dùng client; không thì tự tạo.
+    """
+    data_bytes = _ask_json(PROMPT, image_bytes, llm, "LLM1 (Gemma đọc ảnh)")
     try:
         return ExtractedInfo.model_validate(data_bytes)
+    except Exception as e:
+        raise LlmVisionError(f"JSON không khớp schema: {e}") from e
+
+
+# Prompt RIÊNG cho bước lọc ảnh nhiều khóa học, KHÔNG gộp vào PROMPT của LLM1:
+# đổi PROMPT là phải đánh giá lại toàn bộ bước trích xuất. Gọi riêng tốn thêm
+# một lượt Gemma (~1 giây) mỗi chứng chỉ.
+#
+# Hai tín hiệu, pipeline đòi CẢ HAI: page_type là "course_list" VÀ có từ 2
+# tên khóa trở lên. Chứng chỉ chương trình (Specialization, Learning Path...)
+# in danh sách khóa con nhưng vẫn là MỘT chứng chỉ — prompt dặn rõ ca này.
+COURSE_LIST_PROMPT = """Bạn phân loại ảnh người học nộp làm bằng chứng hoàn thành khóa học.
+
+Trả về ĐÚNG một object JSON, không giải thích, không markdown:
+
+{
+  "page_type": "certificate" | "course_list" | "other",
+  "course_titles": ["tên từng khóa học RIÊNG BIỆT hiện trên ảnh"]
+}
+
+page_type:
+- "certificate": MỘT chứng chỉ / giấy chứng nhận / trang xác nhận hoàn thành
+  cho MỘT khóa học (hoặc một chương trình). Chứng chỉ chương trình
+  (Specialization, Professional Certificate, Learning Path, Nanodegree...)
+  có in danh sách các khóa con BÊN TRONG nó vẫn là "certificate".
+- "course_list": ảnh chụp màn hình một DANH SÁCH / BẢNG / LƯỚI nhiều khóa học
+  khác nhau, mỗi khóa là một dòng hoặc một thẻ riêng có trạng thái / ngày /
+  nút riêng — ví dụ trang hồ sơ "Registrations", "My learning", "My courses",
+  "Đã hoàn thành", trang quản lý khóa học, dashboard, lịch sử học tập.
+  Cũng tính là "course_list" khi ghép NHIỀU chứng chỉ của các khóa KHÁC NHAU
+  vào một ảnh.
+- "other": không thuộc hai loại trên.
+
+course_titles: chép nguyên văn tên các khóa học mà ảnh trình bày như những
+mục RIÊNG BIỆT ngang hàng nhau. KHÔNG tính: khóa con nằm trong một chứng chỉ
+chương trình, khóa "gợi ý / đề xuất / liên quan" ở thanh bên, tên trên tab
+trình duyệt. Chứng chỉ thường thì danh sách chỉ có 1 phần tử."""
+
+
+def detect_course_list(image_bytes: bytes, llm=None) -> ImageKind:
+    """Hỏi Gemma ảnh là một chứng chỉ hay danh sách nhiều khóa học."""
+    data = _ask_json(COURSE_LIST_PROMPT, image_bytes, llm,
+                     "Lọc ảnh nhiều khóa học (Gemma)")
+    try:
+        return ImageKind.model_validate(data)
     except Exception as e:
         raise LlmVisionError(f"JSON không khớp schema: {e}") from e

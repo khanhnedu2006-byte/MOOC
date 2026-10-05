@@ -50,6 +50,20 @@ class ExtractedInfo(BaseModel):
     )
 
 
+class ImageKind(BaseModel):
+    """Bước lọc TRƯỚC LLM1: ảnh là một chứng chỉ hay danh sách nhiều khóa học.
+
+    Gặp thật: người học chụp trang hồ sơ "Registrations" (Anthropic/Skilljar),
+    "Enrollments" (Udacity)... liệt kê nhiều khóa, rồi nộp CÙNG một ảnh cho
+    từng khóa. Ảnh đó không phải chứng chỉ của riêng khóa nào.
+    """
+
+    # "certificate" | "course_list" | "other". Để str (không Enum) cho model
+    # trả giá trị lạ cũng không vỡ — giá trị lạ coi như không phải danh sách.
+    page_type: str | None = None
+    course_titles: list[str] = Field(default_factory=list)
+
+
 class InputInfo(BaseModel):
     """Thông tin nhân viên nhập trên ELIS, dùng để đối chiếu với ảnh."""
 

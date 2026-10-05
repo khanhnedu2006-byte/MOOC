@@ -2,6 +2,9 @@
 
 Nối các module theo đúng sơ đồ ba lần so:
 
+  0. Lọc trước (nếu bật): ảnh là DANH SÁCH nhiều khóa học -> BỎ QUA (WAITING),
+     không gọi LLM1/Azure.
+
   1. Gemma (LLM1) đọc ảnh -> so tên + khóa học với input người nhập.
      Cả hai khớp -> APPROVED (dừng, không tốn Azure).
      Cả hai khớp nhưng NGÀY trượt -> Azure OCR + LLM2 đọc lại ngày; ngày LLM2
@@ -31,6 +34,38 @@ logger = logging.getLogger(__name__)
 # KHÔNG phải hỏng kỹ thuật (thử lại không bao giờ khỏi) và KHÔNG phải kết luận
 # nghiệp vụ (không nộp gì về eLIS). Xem run.py mục 2.
 SKIP_STAGE = "skipped_external_email"
+
+# Ca BỎ QUA: ảnh là DANH SÁCH nhiều khóa học (trang hồ sơ "Registrations",
+# "Enrollments"...) chứ không phải chứng chỉ của riêng khóa này. Phát hiện
+# TRƯỚC LLM1. Cùng hằng số với database.SKIP_MULTI_COURSE_STAGE.
+SKIP_MULTI_COURSE_STAGE = "skipped_multi_course"
+
+
+def _course_list_reason(images, detect_course_list) -> str | None:
+    """Lý do bỏ qua nếu ảnh là danh sách nhiều khóa học, không thì None.
+
+    Đòi CẢ HAI tín hiệu: page_type "course_list" VÀ từ 2 tên khóa trở lên.
+    Chỉ một tín hiệu thì đi tiếp như cũ — bỏ qua nhầm một chứng chỉ thật tệ
+    hơn để lọt một ảnh danh sách (lọt thì pipeline vẫn đối chiếu như trước).
+
+    Bước lọc lỗi (Gemma hỏng, JSON lạ) -> đi tiếp, KHÔNG tính hỏng kỹ thuật:
+    đây chỉ là bộ lọc phụ, không đáng chặn cả hàng đợi.
+    """
+    if detect_course_list is None:
+        return None
+    try:
+        kind = detect_course_list(images[0])
+    except Exception as e:
+        logger.warning("Bước lọc ảnh nhiều khóa học lỗi, bỏ qua bước này: %s", e)
+        return None
+
+    titles = list(dict.fromkeys(
+        t.strip() for t in kind.course_titles if t and t.strip()))
+    if (kind.page_type or "").strip().lower() != "course_list" or len(titles) < 2:
+        return None
+    shown = ", ".join(titles[:5]) + (", ..." if len(titles) > 5 else "")
+    return (f"Ảnh là danh sách {len(titles)} khóa học ({shown}), không phải "
+            f"chứng chỉ riêng của khóa này — chờ người duyệt")
 
 
 def _both_fields_match(extracted: ExtractedInfo, given: InputInfo) -> bool:
@@ -229,6 +264,7 @@ def process(
     ocr_images,  # hàm ocr_azure.ocr_images
     extract_from_text,  # hàm llm_text.extract_from_text
     azure_client,
+    detect_course_list=None,  # hàm llm_vision.detect_course_list; None = tắt
 ) -> ProcessResult:
     """Xử lý một chứng chỉ, trả về ProcessResult (APPROVED / REJECTED).
 
@@ -243,6 +279,11 @@ def process(
             reason=reason,
             stage=stage,
         )
+
+    # ===== Bước lọc: ảnh danh sách nhiều khóa học -> BỎ QUA =====
+    skip = _course_list_reason(images, detect_course_list)
+    if skip:
+        return verdict(Verdict.WAITING, skip, SKIP_MULTI_COURSE_STAGE)
 
     # ===== Tầng 1: Gemma đọc ảnh =====
     # Chứng chỉ có thể nhiều trang (PDF); dùng trang đầu để đọc, vì thông tin

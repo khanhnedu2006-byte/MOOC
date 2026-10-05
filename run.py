@@ -611,6 +611,8 @@ def scan_certificate(image_bytes: bytes, info: dict, azure_client) -> ProcessRes
         ocr_images=ocr_azure.ocr_images,
         extract_from_text=llm_text.extract_from_text,
         azure_client=azure_client,
+        detect_course_list=(llm_vision.detect_course_list
+                            if settings.multi_course_check else None),
     )
 
 #5. Chuyển kết quả thành câu chữ cho elis

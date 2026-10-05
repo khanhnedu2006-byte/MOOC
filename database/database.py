@@ -221,8 +221,11 @@ SKIP_INVALID_LINK_STAGE = "skipped_invalid_course_link"
 # Người vận hành bấm `s` trong run_with_manual_approve.py: đã xem và chủ động
 # không nộp. Vòng sau (kể cả job thật run.py) không tải/quét lại.
 SKIP_MANUAL_STAGE = "skipped_manual"
+# Ảnh nộp lên là DANH SÁCH nhiều khóa học (trang "Registrations",
+# "Enrollments"...), không phải chứng chỉ riêng — phát hiện trước LLM1.
+SKIP_MULTI_COURSE_STAGE = "skipped_multi_course"
 SKIP_STAGES = (SKIP_STAGE, SKIP_UNSUPPORTED_FILE_STAGE, SKIP_INVALID_LINK_STAGE,
-               SKIP_MANUAL_STAGE)
+               SKIP_MANUAL_STAGE, SKIP_MULTI_COURSE_STAGE)
 
 
 def skipped_ids(user_course_ids, db_path=None) -> set:

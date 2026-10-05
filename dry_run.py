@@ -327,6 +327,10 @@ def scan_with_trace(image_bytes: bytes, info: dict, azure_client,
         extract_from_text=traced("06_llm2.json", llm_text.extract_from_text,
                                  dump_extracted("06_llm2.json")),
         azure_client=azure_client,
+        detect_course_list=(
+            traced("04a_course_list.json", llm_vision.detect_course_list,
+                   dump_extracted("04a_course_list.json"))
+            if settings.multi_course_check else None),
     )
 
 
