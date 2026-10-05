@@ -31,7 +31,7 @@ TRƯỚC KHI HỎI, mỗi chứng chỉ có một thư mục riêng để mở x
             certificate.<đuôi>          file chứng chỉ tải về (API ②)
             01_result.json              AI đọc được gì + kết luận pipeline
             01a_llm1.json               Gemma (LLM1) đọc ảnh: kết quả + số giây
-            01b_ocr.txt                 text Azure OCR (chỉ khi tới tầng 2)
+            01b_ocr.txt                 text OCR (chỉ khi tới tầng 2)
             01c_llm2.json               LLM2 đọc text OCR (chỉ khi tới tầng 2)
                                         bước nào lỗi -> <tên bước>_error.json
             01_history.json             (chỉ ca nộp trùng) mọi khóa của nhân viên
@@ -68,7 +68,7 @@ import run  # noqa: E402  (dùng lại luật của job thật, tránh hai bản
 import archive  # noqa: E402
 import llm_text  # noqa: E402
 import llm_vision  # noqa: E402
-import ocr_azure  # noqa: E402
+import ocr  # noqa: E402
 from config import settings  # noqa: E402
 from database import database  # noqa: E402
 
@@ -109,14 +109,14 @@ _round_dir: dict = {}
 
 
 def _wrap_handle(original, review_dir: Path):
-    def wrapper(info, azure_client, position, total):
+    def wrapper(info, ocr_client, position, total):
         _current.clear()
         base = _round_dir.get("dir", review_dir)
         folder = base / f"{position:02d}_{_safe_name(info['id'])}"
         folder.mkdir(parents=True, exist_ok=True)
         _current.update(info=info, position=position, total=total, folder=folder)
         _save_json("00_info.json", info)
-        return original(info, azure_client, position, total)
+        return original(info, ocr_client, position, total)
     return wrapper
 
 
@@ -160,7 +160,7 @@ def _wrap_skip_link(original):
 
 
 # Ghi kết quả TỪNG TẦNG của pipeline. run.scan_certificate tra
-# llm_vision.extract_from_image / ocr_azure.ocr_images / llm_text.extract_from_text
+# llm_vision.extract_from_image / ocr.ocr_images / llm_text.extract_from_text
 # lúc gọi, nên thay thuộc tính module là đủ. pipeline.process nuốt lỗi của các
 # hàm này, nên phải ghi lỗi TRƯỚC khi ném tiếp.
 def _wrap_step(original, step: str, save):
@@ -195,14 +195,14 @@ def _save_ocr(text: str, secs: float) -> None:
 
 
 def _wrap_scan(original):
-    def wrapper(image_bytes, info, azure_client):
+    def wrapper(image_bytes, info, ocr_client):
         path = _current["folder"] / f"certificate{archive._file_extension(image_bytes)}"
         try:
             path.write_bytes(image_bytes)
             _current["file"] = path
         except OSError as e:
             logger.warning("Không lưu được file để xem: %s", e)
-        result = original(image_bytes, info, azure_client)
+        result = original(image_bytes, info, ocr_client)
         _current["result"] = result
         _save_json("01_result.json", {
             "result": result.model_dump(mode="json"),
@@ -441,7 +441,7 @@ def _record(path: Path, row: dict) -> None:
 # Luật nghỉ GIỐNG run_forever: chỉ làm vòng kế NGAY khi eLIS vừa nhận ít nhất
 # một kết quả. Mốc khác (vd số đã quét) thì ca eLIS từ chối nhận (failList)
 # vẫn WAITING, bị quét + hỏi lại liên tục không nghỉ, đốt tiền LLM.
-def _run_loop(azure_client, review_dir: Path) -> None:
+def _run_loop(ocr_client, review_dir: Path) -> None:
     sleep_seconds = max(1, settings.poll_interval_seconds)
     logger.info("Chạy liên tục: hết việc thì hỏi lại eLIS mỗi %d giây. "
                 "Ctrl+C hoặc q để dừng.", sleep_seconds)
@@ -451,7 +451,7 @@ def _run_loop(azure_client, review_dir: Path) -> None:
         round_no += 1
         _round_dir["dir"] = review_dir / f"vong_{round_no:02d}"
         try:
-            result = run.process_one_round(azure_client)
+            result = run.process_one_round(ocr_client)
         except StopRound:
             raise
         except Exception as e:
@@ -500,7 +500,7 @@ def main() -> int:
         _save_extracted("01_0_course_list"))
     llm_vision.extract_from_image = _wrap_step(
         llm_vision.extract_from_image, "01a_llm1", _save_extracted("01a_llm1"))
-    ocr_azure.ocr_images = _wrap_step(ocr_azure.ocr_images, "01b_ocr", _save_ocr)
+    ocr.ocr_images = _wrap_step(ocr.ocr_images, "01b_ocr", _save_ocr)
     llm_text.extract_from_text = _wrap_step(
         llm_text.extract_from_text, "01c_llm2", _save_extracted("01c_llm2"))
     run.skip_unsupported_file = _wrap_skip_file(run.skip_unsupported_file)
@@ -539,12 +539,12 @@ def main() -> int:
     logger.info("Mỗi chứng chỉ được lưu vào thư mục con của: %s", review_dir)
 
     database.init_db()
-    azure_client = ocr_azure.create_client()
+    ocr_client = ocr.create_client()
     try:
         if mode == "loop":
-            _run_loop(azure_client, review_dir)
+            _run_loop(ocr_client, review_dir)
         else:
-            result = run.process_one_round(azure_client, ignore_cooldown=(mode == "retry"))
+            result = run.process_one_round(ocr_client, ignore_cooldown=(mode == "retry"))
             logger.info("Xong. Đã xử lý %d chứng chỉ, eLIS nhận %d.",
                         result.scanned_count, result.accepted_count)
     except StopRound:

@@ -39,7 +39,7 @@ def runner(monkeypatch):
     monkeypatch.setattr(app_runner.database, "count_by_verdict",
                         lambda: dict(ghi["counts"]))
 
-    def gia_process(azure_client, items=None, ignore_cooldown=False):
+    def gia_process(ocr_client, items=None, ignore_cooldown=False):
         ghi["process"].append((items, ignore_cooldown))
         return FakeRoundResult(scanned=len(items or []), accepted=len(items or []))
 
@@ -230,7 +230,7 @@ def test_run_thoat_ngay_khi_khong_tao_duoc_client_azure(runner, monkeypatch):
     """Sai key Azure là hỏng ngay từ đầu, lặp mỗi 5 giây cũng vô ích."""
     def no():
         raise RuntimeError("401 Unauthorized")
-    monkeypatch.setattr(app_runner.ocr_azure, "create_client", no)
+    monkeypatch.setattr(app_runner.ocr, "create_client", no)
 
     runner.run()        # chạy thẳng trong luồng test, phải trả về ngay
     data = runner.state.snapshot()

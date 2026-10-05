@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 import file_utils
 import llm_text
 import llm_vision
-import ocr_azure
+import ocr
 import pipeline
 from schemas import InputInfo
 
@@ -63,7 +63,7 @@ def main():
     )
 
     # 3. Tạo client Azure (chỉ tạo 1 lần)
-    azure_client = ocr_azure.create_client()
+    ocr_client = ocr.create_client()
 
     # 4. Chạy pipeline — ghép các hàm THẬT vào
     print("Đang xử lý (Gemma đọc ảnh, nếu cần thì Azure + LLM2)...\n")
@@ -71,9 +71,9 @@ def main():
         images=images,
         given=given,
         extract_from_image=llm_vision.extract_from_image,
-        ocr_images=ocr_azure.ocr_images,
+        ocr_images=ocr.ocr_images,
         extract_from_text=llm_text.extract_from_text,
-        azure_client=azure_client,
+        ocr_client=ocr_client,
     )
 
     # 5. In kết quả

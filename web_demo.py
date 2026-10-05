@@ -27,20 +27,20 @@ from PIL import Image
 import file_utils
 import llm_text
 import llm_vision
-import ocr_azure
+import ocr
 import pipeline
 import process_data
 from config import settings
 from schemas import InputInfo
 
-_azure_client = None
+_ocr_client = None
 
 
-def _get_azure():
-    global _azure_client
-    if _azure_client is None:
-        _azure_client = ocr_azure.create_client()
-    return _azure_client
+def _get_ocr():
+    global _ocr_client
+    if _ocr_client is None:
+        _ocr_client = ocr.create_client()
+    return _ocr_client
 
 
 def _image_for_display(image_path):
@@ -81,9 +81,9 @@ def process_demo(image_path, name, code, course):
             images=images,
             given=given,
             extract_from_image=llm_vision.extract_from_image,
-            ocr_images=ocr_azure.ocr_images,
+            ocr_images=ocr.ocr_images,
             extract_from_text=llm_text.extract_from_text,
-            azure_client=_get_azure(),
+            ocr_client=_get_ocr(),
         )
     except Exception as e:
         return display_image, f"Lỗi khi xử lý: {e}"

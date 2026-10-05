@@ -17,8 +17,11 @@ unidecode
 dateparser
 
 # ===== Xử lý file =====
-python-magic
-python-magic-bin; sys_platform == "win32"   # Windows cần bản này để có libmagic
+# puremagic thay cho python-magic: python-magic nạp DLL libmagic qua ctypes,
+# và trên Windows có phần mềm bảo mật doanh nghiệp cú nạp đó làm SẬP tiến
+# trình (exit -1073740791 = STATUS_STACK_BUFFER_OVERRUN), không traceback.
+# puremagic thuần Python, không DLL, chạy giống nhau trên mọi hệ điều hành.
+puremagic
 pypdfium2
 pillow
 

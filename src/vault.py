@@ -23,7 +23,8 @@ SERVICE = "MOOC"
 
 # Chỉ bốn giá trị này là bí mật. URL, số phút, luật nghiệp vụ để file thường
 # cho dễ đối chiếu khi chuyển UAT/production.
-SECRET_NAMES = ("FPT_API_KEY", "AZURE_KEY", "ELIS_API_KEY", "SMTP_PASSWORD")
+SECRET_NAMES = ("FPT_API_KEY", "AZURE_KEY", "ELIS_API_KEY",
+                "SMTP_PASSWORD", "OCRSPACE_API_KEY")
 
 
 class VaultError(RuntimeError):

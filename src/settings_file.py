@@ -54,6 +54,11 @@ CONFIG_GROUPS = [
         ("llm_max_tokens", "Giới hạn token"),
         ("azure_endpoint", "Endpoint Azure OCR"),
     ]),
+    ("OCR tầng 2", [
+        ("ocr_provider", "Nhà cung cấp OCR"),
+        ("ocrspace_engine", "Engine OCR.space (1 không có tiếng Việt)"),
+        ("ocrspace_language", "Ngôn ngữ OCR.space (auto = tự nhận diện)"),
+    ]),
     ("Luật nghiệp vụ", [
         ("course_match_mode", "Cách so tên khóa học"),
         ("valid_from", "Ngày hợp lệ từ"),
@@ -94,6 +99,8 @@ CONFIG_GROUPS = [
 # S thì pydantic nhận, nhưng pipeline so bằng == nên luật siết không bật.
 CONFIG_CHOICES = {
     "course_match_mode": ["loose", "strict"],
+    "ocr_provider": ["azure", "ocrspace"],
+    "ocrspace_engine": ["2", "3"],
     "report_schedule": ["off", "daily", "weekly", "monthly"],
 }
 

@@ -142,7 +142,7 @@ def _chay(items, bad_ids):
         da_nop.extend(dtos)
         return {"successList": [{"id": d["id"]} for d in dtos], "failList": []}
 
-    def quet(image_bytes, info, azure_client):
+    def quet(image_bytes, info, ocr_client):
         da_quet.append(info["id"])
         return ProcessResult(verdict=Verdict.APPROVED, reason="Khớp", stage="llm1")
 

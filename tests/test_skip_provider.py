@@ -64,7 +64,7 @@ def _chay(items):
         goi["nop"] += [d["id"] for d in dtos]
         return {"successList": [{"id": d["id"]} for d in dtos], "failList": []}
 
-    def quet(image_bytes, info, azure_client):
+    def quet(image_bytes, info, ocr_client):
         goi["quet"].append(info["id"])
         return ProcessResult(verdict=Verdict.APPROVED, reason="Khớp", stage="llm1")
 

@@ -87,7 +87,7 @@ def _run(llm1, llm2):
     return pipeline.process(images=[b"x"], given=GIVEN,
                             extract_from_image=lambda i: llm1,
                             ocr_images=lambda c, i: "ocr",
-                            extract_from_text=lambda t: llm2, azure_client=None)
+                            extract_from_text=lambda t: llm2, ocr_client=None)
 
 
 def test_pipeline_ca_hai_may_deu_null():

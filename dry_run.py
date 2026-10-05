@@ -73,7 +73,7 @@ import client  # noqa: E402
 import file_utils  # noqa: E402
 import llm_text  # noqa: E402
 import llm_vision  # noqa: E402
-import ocr_azure  # noqa: E402
+import ocr  # noqa: E402
 import pipeline  # noqa: E402
 import scheduler  # noqa: E402
 from config import settings  # noqa: E402
@@ -265,7 +265,7 @@ def check_duplicate(info: dict, approved_this_round: set, out: StepWriter) -> bo
 # Như run.scan_certificate, nhưng bọc ba hàm gọi model để ghi lại kết quả
 # trung gian của từng tầng. pipeline.process nuốt lỗi của chúng, nên phải ghi
 # trước khi ném tiếp.
-def scan_with_trace(image_bytes: bytes, info: dict, azure_client,
+def scan_with_trace(image_bytes: bytes, info: dict, ocr_client,
                     out: StepWriter) -> ProcessResult:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as tmp:
         tmp.write(image_bytes)
@@ -323,10 +323,10 @@ def scan_with_trace(image_bytes: bytes, info: dict, azure_client,
         given=given,
         extract_from_image=traced("04_llm1.json", llm_vision.extract_from_image,
                                   dump_extracted("04_llm1.json")),
-        ocr_images=traced("05_ocr_error.json", ocr_azure.ocr_images, dump_ocr),
+        ocr_images=traced("05_ocr_error.json", ocr.ocr_images, dump_ocr),
         extract_from_text=traced("06_llm2.json", llm_text.extract_from_text,
                                  dump_extracted("06_llm2.json")),
-        azure_client=azure_client,
+        ocr_client=ocr_client,
         detect_course_list=(
             traced("04a_course_list.json", llm_vision.detect_course_list,
                    dump_extracted("04a_course_list.json"))
@@ -366,7 +366,7 @@ def submit_approved(out: StepWriter, result: ProcessResult, info: dict) -> tuple
     return bool(succeeded), message
 
 
-def handle_one(info: dict, azure_client, position: int, total: int,
+def handle_one(info: dict, ocr_client, position: int, total: int,
                folder: Path, approved_this_round: set,
                send_approved: bool = False) -> CertReport:
     uc_id = info["id"]
@@ -478,7 +478,7 @@ def handle_one(info: dict, azure_client, position: int, total: int,
                           reason, False)
 
         # ---- Bước 3: pipeline ----
-        result = scan_with_trace(content, info, azure_client, out)
+        result = scan_with_trace(content, info, ocr_client, out)
         technical = run.is_technical_failure(result)
         out.json("07_result.json", {"result": result, "technical_failure": technical,
                                     "skip": run.is_skip(result)})
@@ -629,11 +629,11 @@ def main() -> int:
 
     reports: list[CertReport] = []
     if ready:
-        azure_client = ocr_azure.create_client()
+        ocr_client = ocr.create_client()
         approved_this_round: set[tuple[str, str]] = set()
         for position, info in enumerate(ready, start=1):
             folder = run_dir / "certs" / f"{position:02d}_{_safe_name(info['id'])}"
-            report = handle_one(info, azure_client, position, len(ready),
+            report = handle_one(info, ocr_client, position, len(ready),
                                 folder, approved_this_round, args.submit_approved)
             reports.append(report)
             if report.technical and not args.keep_going:

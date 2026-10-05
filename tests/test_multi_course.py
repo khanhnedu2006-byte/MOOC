@@ -61,7 +61,7 @@ def _process(detect, llm1=None):
     result = pipeline.process(
         images=[b"x"], given=_given(),
         extract_from_image=llm1_fn, ocr_images=ocr_fn,
-        extract_from_text=lambda t: _khop(), azure_client=None,
+        extract_from_text=lambda t: _khop(), ocr_client=None,
         detect_course_list=detect)
     return result, goi
 
@@ -139,7 +139,7 @@ def test_bo_loc_chi_doc_trang_DAU_nhu_llm1():
     pipeline.process(
         images=[b"trang1", b"trang2"], given=_given(),
         extract_from_image=lambda img: _khop(), ocr_images=lambda c, i: "",
-        extract_from_text=lambda t: _khop(), azure_client=None,
+        extract_from_text=lambda t: _khop(), ocr_client=None,
         detect_course_list=lambda img: seen.append(img) or ImageKind())
     assert seen == [b"trang1"]
 

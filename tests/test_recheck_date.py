@@ -39,7 +39,7 @@ def _run(llm1, llm2=None, ocr_error=None):
         extract_from_image=lambda img: llm1,
         ocr_images=ocr,
         extract_from_text=lambda text: llm2,
-        azure_client=None)
+        ocr_client=None)
     return result, calls
 
 

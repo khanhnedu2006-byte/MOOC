@@ -143,7 +143,7 @@ def test_KHONG_doi_phan_quyet():
     r = pipeline.process(images=[b"x"], given=GIVEN_HIEU,
                          extract_from_image=lambda i: doc,
                          ocr_images=lambda c, i: "ocr",
-                         extract_from_text=lambda t: doc, azure_client=None)
+                         extract_from_text=lambda t: doc, ocr_client=None)
     assert r.verdict.value == "REJECTED"
     assert r.reason == "Không tìm thấy ngày hoàn thành chứng chỉ"
 
@@ -186,6 +186,6 @@ def test_khong_ten_qua_pipeline_van_REJECTED():
     r = pipeline.process(images=[b"x"], given=GIVEN_ANH,
                          extract_from_image=lambda i: doc,
                          ocr_images=lambda c, i: "ocr",
-                         extract_from_text=lambda t: doc, azure_client=None)
+                         extract_from_text=lambda t: doc, ocr_client=None)
     assert r.verdict.value == "REJECTED"
     assert r.reason == "Không tìm thấy tên người học trên chứng chỉ"

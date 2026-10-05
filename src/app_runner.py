@@ -13,7 +13,7 @@ import time
 
 import alert
 import client
-import ocr_azure
+import ocr
 import run
 import scheduler
 from config import settings
@@ -90,7 +90,7 @@ class JobRunner(threading.Thread):
     # -- vòng đời luồng --
     def run(self) -> None:
         try:
-            azure_client = ocr_azure.create_client()
+            ocr_client = ocr.create_client()
         except Exception as e:
             # Sai key Azure là hỏng ngay từ đầu. Báo lên giao diện rồi dừng,
             # lặp mỗi 5 giây cũng vô ích.
@@ -116,13 +116,13 @@ class JobRunner(threading.Thread):
             ignore_cooldown = self.ignore_cooldown_once
             self.ignore_cooldown_once = False
             try:
-                self._one_round(azure_client, ignore_cooldown)
+                self._one_round(ocr_client, ignore_cooldown)
             except Exception as e:
                 logger.exception("Lỗi trong vòng xử lý: %s", e)
 
             self._sleep_between_rounds()
 
-    def _one_round(self, azure_client, ignore_cooldown: bool) -> None:
+    def _one_round(self, ocr_client, ignore_cooldown: bool) -> None:
         snapshot = self.state.snapshot()
         self.state.update(phase="running",
                           round_index=snapshot["round_index"] + 1)
@@ -153,7 +153,7 @@ class JobRunner(threading.Thread):
             skipped = set()
         self.state.update(skipped_now=len(skipped))
 
-        result = run.process_one_round(azure_client, items=items,
+        result = run.process_one_round(ocr_client, items=items,
                                        ignore_cooldown=ignore_cooldown)
 
         counts = {}

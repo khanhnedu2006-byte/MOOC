@@ -6,11 +6,12 @@ Nối các module theo đúng sơ đồ ba lần so:
      không gọi LLM1/Azure.
 
   1. Gemma (LLM1) đọc ảnh -> so tên + khóa học với input người nhập.
-     Cả hai khớp -> APPROVED (dừng, không tốn Azure).
-     Cả hai khớp nhưng NGÀY trượt -> Azure OCR + LLM2 đọc lại ngày; ngày LLM2
+     Cả hai khớp -> APPROVED (dừng, không tốn lượt OCR).
+     Cả hai khớp nhưng NGÀY trượt -> OCR + LLM2 đọc lại ngày; ngày LLM2
      trong khoảng -> APPROVED, ngoài khoảng -> REJECTED.
 
-  2. Không khớp -> Azure OCR + LLM2 đọc lại từ ảnh.
+  2. Không khớp -> OCR + LLM2 đọc lại từ ảnh. Nhà cung cấp OCR do
+     OCR_PROVIDER chọn (Azure hoặc OCR.space) — xem src/ocr.py.
 
   3. So LLM1 với LLM2 (chặt tuyệt đối):
      Giống nhau -> REJECTED (hai máy đồng thuận: ảnh khác input).
@@ -226,7 +227,7 @@ def _mismatch_reason(extracted: ExtractedInfo, given: InputInfo,
     return "; ".join(errors) if errors else "Không khớp"
 
 
-# Tên + khóa học đã khớp ở LLM1, chỉ NGÀY trượt -> đọc lại ngày bằng Azure OCR
+# Tên + khóa học đã khớp ở LLM1, chỉ NGÀY trượt -> đọc lại ngày bằng OCR
 # + LLM2 trước khi từ chối.
 #
 # VÌ SAO: ngày in chữ nhỏ (bảng xác thực, ảnh chụp màn hình) và Gemma từng đọc
@@ -237,11 +238,11 @@ def _mismatch_reason(extracted: ExtractedInfo, given: InputInfo,
 # Tầng 2 hỏng -> stage2_error (hỏng kỹ thuật, WAITING, thử lại sau), không
 # từ chối dựa trên một bản đọc ngày duy nhất.
 def _recheck_date(llm1, given, images, ocr_images, extract_from_text,
-                  azure_client, verdict) -> ProcessResult:
+                  ocr_client, verdict) -> ProcessResult:
     logger.info("LLM1 khớp tên + khóa nhưng ngày %r ngoài khoảng -> đọc lại "
                 "ngày bằng OCR + LLM2.", llm1.issue_date)
     try:
-        llm2 = extract_from_text(ocr_images(azure_client, images))
+        llm2 = extract_from_text(ocr_images(ocr_client, images))
     except Exception as e:
         logger.warning("Tầng 2 lỗi khi đọc lại ngày: %s", e)
         return verdict(Verdict.REJECTED, f"Tầng 2 lỗi (đọc lại ngày): {e}",
@@ -251,7 +252,7 @@ def _recheck_date(llm1, given, images, ocr_images, extract_from_text,
     merged = llm1.model_copy(update={"issue_date": llm2.issue_date})
     if _date_in_range(llm2):
         return verdict(Verdict.APPROVED,
-                       "Tên, khóa học khớp (LLM1); thời gian khớp khi Azure đọc "
+                       "Tên, khóa học khớp (LLM1); thời gian khớp khi OCR đọc "
                        f"lại (LLM1 đọc ngày sai: {llm1.issue_date!r})",
                        "llm2", merged)
     return verdict(Verdict.REJECTED, _date_reason(llm2, llm1), "llm2", merged)
@@ -261,9 +262,9 @@ def process(
     images: list[bytes],
     given: InputInfo,
     extract_from_image,   # hàm llm_vision.extract_from_image
-    ocr_images,  # hàm ocr_azure.ocr_images
+    ocr_images,  # hàm ocr.ocr_images
     extract_from_text,  # hàm llm_text.extract_from_text
-    azure_client,
+    ocr_client,
     detect_course_list=None,  # hàm llm_vision.detect_course_list; None = tắt
 ) -> ProcessResult:
     """Xử lý một chứng chỉ, trả về ProcessResult (APPROVED / REJECTED).
@@ -299,7 +300,7 @@ def process(
         if _date_in_range(llm1):
             return verdict(Verdict.APPROVED, "Tên, khóa học và thời gian đều khớp (LLM1)", "llm1", llm1)
         return _recheck_date(llm1, given, images, ocr_images, extract_from_text,
-                             azure_client, verdict)
+                             ocr_client, verdict)
 
     # ===== Tầng 2: Azure OCR + LLM2 =====
     logger.info(
@@ -309,7 +310,7 @@ def process(
         given.employee_name, given.course_name)
 
     try:
-        ocr_text = ocr_images(azure_client, images)
+        ocr_text = ocr_images(ocr_client, images)
         llm2 = extract_from_text(ocr_text)
     except Exception as e:
         logger.warning("Tầng 2 lỗi: %s", e)
@@ -332,7 +333,7 @@ def process(
             return verdict(Verdict.REJECTED,
                            _mismatch_reason(llm2, given, llm1), "llm2", llm2)
         return verdict(Verdict.APPROVED,
-                       "Khớp ở LLM2 (Azure đọc lại, LLM1 đọc sai)", "llm2", llm2)
+                       "Khớp ở LLM2 (OCR đọc lại, LLM1 đọc sai)", "llm2", llm2)
 
     skip = _unverifiable_identity(llm2, given)
     if skip:
