@@ -14,7 +14,7 @@ from langchain_core.messages import HumanMessage
 
 from config import get_llm
 import llm_error
-from schemas import ExtractedInfo, ImageKind
+from schemas import ExtractedInfo, ExtractionParseError, ImageKind
 
 PROMPT = """Bạn là công cụ trích xuất dữ liệu từ ảnh chứng chỉ/bằng cấp.
 Ảnh có thể là tiếng Việt, tiếng Anh hoặc lẫn cả hai.
@@ -85,6 +85,10 @@ class LlmVisionError(Exception):
     """Lỗi khi gọi Gemma hoặc parse kết quả."""
 
 
+class LlmVisionParseError(LlmVisionError, ExtractionParseError):
+    """Gemma trả lời nhưng không phải JSON hợp lệ / sai schema."""
+
+
 # Chữ ký byte đầu file -> kiểu MIME. Nhận theo nội dung, không theo đuôi file:
 # file_utils.compress_to_fit() có thể đã đổi ảnh sang JPEG cho lọt giới hạn.
 _MIME_SIGNATURES = (
@@ -142,7 +146,8 @@ def _ask_json(prompt: str, image_bytes: bytes, llm, label: str) -> dict:
     try:
         return json.loads(content)
     except json.JSONDecodeError as e:
-        raise LlmVisionError(f"Gemma trả về không phải JSON hợp lệ: {content[:200]}") from e
+        raise LlmVisionParseError(
+            f"Gemma trả về không phải JSON hợp lệ: {content[:200]}") from e
 
 
 def extract_from_image(image_bytes: bytes, llm=None) -> ExtractedInfo:
@@ -154,7 +159,7 @@ def extract_from_image(image_bytes: bytes, llm=None) -> ExtractedInfo:
     try:
         return ExtractedInfo.model_validate(data_bytes)
     except Exception as e:
-        raise LlmVisionError(f"JSON không khớp schema: {e}") from e
+        raise LlmVisionParseError(f"JSON không khớp schema: {e}") from e
 
 
 # Prompt RIÊNG cho bước lọc ảnh nhiều khóa học, KHÔNG gộp vào PROMPT của LLM1:

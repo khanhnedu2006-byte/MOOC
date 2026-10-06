@@ -27,7 +27,8 @@ import logging
 import compare
 import process_data
 from config import settings
-from schemas import Verdict, ProcessResult, InputInfo, ExtractedInfo
+from schemas import (Verdict, ProcessResult, InputInfo, ExtractedInfo,
+                     ExtractionParseError)
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +259,31 @@ def _recheck_date(llm1, given, images, ocr_images, extract_from_text,
     return verdict(Verdict.REJECTED, _date_reason(llm2, llm1), "llm2", merged)
 
 
+# LLM1 không cho bản đọc nào dùng được -> kết luận CHỈ dựa trên OCR + LLM2.
+# Không có bước so đồng thuận LLM1/LLM2 (không có gì để so). OCR hoặc LLM2
+# hỏng -> stage2_error, hỏng kỹ thuật như mọi ca tầng 2 hỏng.
+def _stage2_only(given, images, ocr_images, extract_from_text,
+                 ocr_client, verdict) -> ProcessResult:
+    try:
+        llm2 = extract_from_text(ocr_images(ocr_client, images))
+    except Exception as e:
+        logger.warning("Tầng 2 lỗi (LLM1 đã hỏng JSON): %s", e)
+        return verdict(Verdict.REJECTED, f"Tầng 2 lỗi: {e}", "stage2_error")
+
+    if _both_fields_match(llm2, given):
+        if not _date_in_range(llm2):
+            return verdict(Verdict.REJECTED, _mismatch_reason(llm2, given),
+                           "llm2", llm2)
+        return verdict(Verdict.APPROVED,
+                       "Khớp ở LLM2 (OCR đọc lại, LLM1 trả về không đọc được)",
+                       "llm2", llm2)
+
+    skip = _unverifiable_identity(llm2, given)
+    if skip:
+        return verdict(Verdict.WAITING, skip, SKIP_STAGE, llm2)
+    return verdict(Verdict.REJECTED, _mismatch_reason(llm2, given), "llm2", llm2)
+
+
 def process(
     images: list[bytes],
     given: InputInfo,
@@ -292,6 +318,12 @@ def process(
     # mở rộng sau.
     try:
         llm1 = extract_from_image(images[0])
+    except ExtractionParseError as e:
+        # Gemma trả lời nhưng không đọc được (JSON hỏng / sai schema): chỉ MỘT
+        # bản đọc hỏng, không phải sự cố hạ tầng -> đọc lại bằng OCR + LLM2.
+        logger.warning("LLM1 trả về không đọc được, chuyển sang OCR + LLM2: %s", e)
+        return _stage2_only(given, images, ocr_images, extract_from_text,
+                            ocr_client, verdict)
     except Exception as e:
         logger.warning("LLM1 lỗi: %s", e)
         return verdict(Verdict.REJECTED, f"LLM1 lỗi: {e}", "llm1_error")

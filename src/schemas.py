@@ -74,6 +74,15 @@ class InputInfo(BaseModel):
     employee_code: str
 
 
+class ExtractionParseError(Exception):
+    """Model TRẢ LỜI được nhưng câu trả lời không đọc được (JSON hỏng, sai
+    schema). Khác lỗi gọi API (mạng, hết tiền, sai key): ở đây chỉ một bản đọc
+    hỏng, pipeline chuyển sang OCR + LLM2 thay vì coi là hỏng kỹ thuật.
+
+    Đặt ở schemas để pipeline nhận ra mà không phải import llm_vision.
+    """
+
+
 class Verdict(str, Enum):
     """Trạng thái của một chứng chỉ.
 
